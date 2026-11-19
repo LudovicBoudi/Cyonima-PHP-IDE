@@ -15,6 +15,7 @@ final class SymbolsEmitter
         private readonly string $library,
         private readonly string $version,
         private readonly array $declarations,
+        private readonly ?string $initFunction = null,
     ) {
     }
 
@@ -27,6 +28,7 @@ final class SymbolsEmitter
             'typedef int (*CyonimaSignalHandler)(void*, void*, void*, void*, void*);',
             '',
             'int           gtk_init_check(void);',
+            ...($this->initFunction === null ? [] : ['void          ' . $this->initFunction . '(void);']),
             'void         *g_object_ref_sink(void *object);',
             'void          g_object_unref(void *object);',
             'unsigned long g_signal_connect_data(void *instance, const char *signal, CyonimaSignalHandler handler, void *data, void *destroy, int flags);',
@@ -74,6 +76,7 @@ final class SymbolsEmitter
             '        if (self::get()->gtk_init_check() === 0) {',
             "            throw new \\RuntimeException(\"GTK4 : impossible d'initialiser le display (DISPLAY/Wayland absents ?)\");",
             '        }',
+            ...($this->initFunction === null ? [] : ['', '        self::get()->' . $this->initFunction . '();']),
             '    }',
             '}',
             '',

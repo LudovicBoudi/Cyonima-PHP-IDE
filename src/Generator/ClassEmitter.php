@@ -23,6 +23,7 @@ final class ClassEmitter
         private readonly string $rawNamespace,
         private readonly string $version,
         private readonly TypeMapper $mapper,
+        private readonly string $constructorName = 'new',
     ) {
     }
 
@@ -95,7 +96,9 @@ final class ClassEmitter
         $returnType = $this->mapper->phpType($method->returnType);
         $isStatic = $method->isConstructor() || (!$method->isMethod() && !$method->isConstructor());
 
-        $name = self::methodName($method->name);
+        $name = $method->isConstructor() && $method->name === 'new'
+            ? $this->constructorName
+            : self::methodName($method->name);
 
         if ($method->isConstructor()) {
             return [
@@ -138,9 +141,10 @@ final class ClassEmitter
             ),
             '    {',
             sprintf(
-                '        return $this->connectSignal(self::SIGNAL_%s, $handler, %d);',
+                '        return $this->connectSignal(self::SIGNAL_%s, $handler, %d, %s);',
                 self::constantName($signal->name),
                 $arity,
+                $signal->returnType->isVoid() ? 'true' : 'false',
             ),
             '    }',
         ];

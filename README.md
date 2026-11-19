@@ -14,8 +14,10 @@ Deux axes, un même socle :
 | Jalon | État |
 |---|---|
 | M0 — Spike de faisabilité | ✅ terminé |
-| M1 — Générateur de bindings | 🟡 tranche verticale livrée (Gtk Window/Box/Label/Button/CssProvider/StyleContext) |
-| M2 — Runtime + façade OO | 🟡 façade minimale et boucle d'événements en place |
+| M1 — Générateur de bindings | ✅ tranche verticale Gtk (7 classes, 54 méthodes, différentiel PyGObject) |
+| M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
+| M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
+| M4 — GtkSourceView / VTE | ⏭ prochain |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
 
@@ -25,54 +27,94 @@ Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland
 composer install
 
 # Génère les bindings depuis les .typelib (aucun paquet -dev requis)
-php -d ffi.enable=true bin/cyonima-gen generate
+composer generate
 
-# Fenêtre GTK4 réelle pilotée par PHP (--auto = scénario scripté)
-php -d ffi.enable=true examples/counter.php --auto
+# Applications de démonstration (--auto = scénario scripté)
+composer demo -- --auto
+composer demo:async -- --auto
+composer demo:adw -- --auto
 
 # Tests
-php -d ffi.enable=true tests/run.php
+composer test
 ```
 
-Exemple :
+## Exemple : UI native + handler PHP
 
 ```php
-use Cyonima\Runtime\Loop;
-use Cyonima\UI\{Box, Button, Label, Window};
+use Cyonima\Runtime\Application;
+use Cyonima\UI\{Box, Button, Label};
 
+$app = new Application('com.example.counter');
 $count = 0;
+
 $label = new Label('0');
-$button = (new Button('Incrémenter'))
-    ->onClicked(function () use (&$count, $label) {
-        $count++;
-        $label->text((string) $count);
-    });
+$button = (new Button('Incrémenter'))->onClicked(function () use (&$count, $label) {
+    $count++;
+    $label->text((string) $count);
+});
 
-$window = new Window('Démo', 420, 220);
-$window->setChild(new Box(spacing: 12)->append($label, $button))
-       ->onCloseRequest(fn () => Loop::quit())
-       ->present();
+$window = $app->window('Démo', 420, 220);
+$window->setChild(new Box(spacing: 12)->append($label, $button))->present();
+$app->run();   // retourne à la fermeture de la dernière fenêtre
+```
 
-Loop::run();
+## Exemple : asynchrone sans figer l'UI
+
+```php
+use Cyonima\Runtime\{Async, Process};
+
+$button->onClicked(function () use ($status) {
+    $status->text('Tâche en cours…');
+
+    // Sous-processus : le calcul ne bloque pas la boucle GTK.
+    $result = Async::await(Process::php('usleep(900000); echo "OK";'));
+
+    $status->text('Terminé : ' . $result->output());
+});
+```
+
+Deux niveaux : **fibres coopératives** pour l'I/O et les séquences,
+**sous-processus** pour le CPU. Détail dans [`docs/runtime.md`](docs/runtime.md).
+
+## Exemple : fenêtre libadwaita
+
+```php
+use Cyonima\Runtime\AdwApplication;
+use Cyonima\UI\{ActionRow, Clamp, PreferencesGroup, PreferencesPage, SwitchRow};
+
+$app = new AdwApplication('com.example.reglages');
+$page = (new PreferencesPage('Réglages', 'Construit depuis PHP'))
+    ->add((new PreferencesGroup('Apparence'))
+        ->add(new SwitchRow('Mode compact', 'Réduit les marges')));
+
+$window = $app->window('Cyonima', 'libadwaita · GTK4 · PHP');
+$window->content(new Clamp($page, 560))->present();
+$app->run();
 ```
 
 ## Architecture
 
 ```
-app PHP  →  Cyonima\UI       façade typée, écrite à la main
-         →  Cyonima\Gtk\Raw  bindings générés depuis les .typelib
-         →  FFI              un seul cdef, un seul dlopen
+app PHP  →  Cyonima\UI         façade typée, écrite à la main
+         →  Cyonima\Gtk\Raw    bindings générés depuis les .typelib
+         →  FFI                un seul cdef, un seul dlopen
          →  GTK4 · Adw · GtkSourceView · VTE
+
+runtime  →  Loop (un tick GLib)  →  Scheduler (fibres)
+                                 →  Process (sous-processus)
+                                 →  Errors (report unique)
 ```
 
-Le typelib est la source de vérité : une méthode absente de l'API fait échouer
-la génération, et un test différentiel contre PyGObject vérifie l'interprétation.
+Le typelib est la source de vérité des bindings : une méthode absente de l'API
+fait échouer la génération, et un test différentiel contre PyGObject vérifie
+l'interprétation.
 
 ## Documents
 
 - [`docs/etude-faisabilite.md`](docs/etude-faisabilite.md) — mesures, risques, plan
 - [`docs/decisions.md`](docs/decisions.md) — ADR et règles techniques (R1/R2)
 - [`docs/generateur.md`](docs/generateur.md) — fonctionnement du générateur
+- [`docs/runtime.md`](docs/runtime.md) — boucle, fibres, processus, erreurs
 - [`spike/`](spike/README.md) — POC de faisabilité et mesures de fuite
 
 ## Décisions actées

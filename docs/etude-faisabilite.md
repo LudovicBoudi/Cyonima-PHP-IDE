@@ -162,8 +162,8 @@ plus depuis PHP-GTK.
 |---|---|---|
 | **M0 — Spike** ✅ | Fenêtre, signaux, entry, liste, CSS | fait |
 | **M1 — Générateur de bindings** | `.typelib` → PHP. 🟡 Tranche verticale livrée sur Gtk (7 classes, 54 méthodes, tests + différentiel PyGObject) ; extension Adw/GtkSource/Vte à suivre | 6–10 semaines |
-| **M2 — Runtime + façade OO** | boucle d'événements, sources GLib uniques, fibers, gestion d'erreurs, helpers de composition | 2–4 semaines |
-| **M3 — App de démonstration** | app Adw complète : éditeur GtkSourceView, terminal VTE, dialogues, préférences | 2–3 semaines |
+| **M2 — Runtime + façade OO** | ✅ Livré : boucle à source unique, timers PHP, fibres, sous-processus, erreurs centralisées, `Application` | 2–4 semaines |
+| **M3 — App de démonstration** | ✅ Adw livré (HeaderBar, Preferences, SwitchRow, Toast) ; éditeur GtkSourceView et terminal VTE à suivre | 2–3 semaines |
 | **M4 — IDE MVP** | arborescence projet, client LSP, runner de build, Xdebug, onglets | 3–5 mois |
 | **M5 — Packaging** | PHP statique + FFI, Flatpak (IDE), AppImage (apps), `.desktop` | 3–4 semaines |
 

@@ -1,7 +1,7 @@
 # Générateur de bindings
 
-> État : tranche verticale M1 livrée (7 classes, 54 méthodes, 2 signaux, 2 enums).
-> Cible suivante : étendre la spec à Adw, GtkSourceView et VTE.
+> État M3 : 2 namespaces (Gtk, Adw), 23 classes, 113 méthodes, 3 signaux, 3 enums.
+> Cible suivante : GtkSourceView 5 et VTE.
 
 ## Principe
 
@@ -59,7 +59,7 @@ php -d ffi.enable=true examples/counter.php --auto
 
 ## Format de spec
 
-`spec/gtk-slice.php` :
+`spec/desktop.php` :
 
 ```php
 return [
@@ -70,6 +70,12 @@ return [
             'version' => '4.0',
             'library' => 'libgtk-4.so.1',
             'raw_namespace' => 'Cyonima\\Gtk\\Raw',
+        ],
+        'Adw' => [
+            'version' => '1',
+            'library' => 'libadwaita-1.so.0',
+            'raw_namespace' => 'Cyonima\\Adw\\Raw',
+            'init' => 'adw_init',   // appelée au premier widget Adw
         ],
     ],
 
@@ -102,6 +108,27 @@ API lisible, car le typelib ne les stocke pas.
 | `new_with_label` | `newWithLabel()` |
 | signal `close-request` | `SIGNAL_CLOSE_REQUEST` + `onCloseRequest()` |
 | enum `GTK_ORIENTATION_VERTICAL` | `Orientation::VERTICAL` |
+| constructeur en conflit avec un ancêtre | `create()` au lieu de `new()` |
+
+### Constructeurs et héritage PHP
+
+En C, `gtk_window_new()` et `gtk_application_window_new()` sont deux symboles
+indépendants. En PHP, `new()` est une méthode statique héritée : deux signatures
+différentes dans la même chaîne sont une erreur fatale. Le générateur détecte le
+conflit et renomme le constructeur en `create()`.
+
+```php
+Gtk\Raw\Window::new();                       // aucun ancêtre avec new()
+Gtk\Raw\ApplicationWindow::create($app);      // conflit avec Window::new()
+Adw\Raw\ApplicationWindow::create($app);      // idem, via Gtk\ApplicationWindow
+```
+
+### Chaîne d'héritage
+
+Le générateur remonte les ancêtres jusqu'au premier **généré**. Exemple :
+`Adw\PreferencesRow` → `Gtk\ListBoxRow` (non généré) → `Gtk\Widget` (généré).
+La classe PHP étend donc directement `Gtk\Widget`, ce qui préserve l'usage des
+paramètres typés `GtkWidget*`.
 
 ## Gestion mémoire
 
@@ -122,6 +149,8 @@ API lisible, car le typelib ne les stocke pas.
 | Interfaces non générées (`GtkStyleProvider`, `GdkDisplay`…) | type opaque `\FFI\CData` |
 | Objet retourné par un getter | typé selon la signature déclarée, pas le type dynamique |
 | `GObject.Object` | non généré : PHP réserve le nom de classe `Object`, `RawObject` sert de racine |
+| Ancêtre intermédiaire non généré | sauté vers l'ancêtre généré le plus proche |
+| Constructeur en conflit d'héritage | renommé `create()` |
 
 Le rapport de génération liste explicitement chaque méthode ignorée et sa
 raison ; rien n'est écarté en silence.
@@ -143,7 +172,7 @@ typelib : si notre interprétation diverge de la référence, le test casse.
 
 ## Étendre la surface
 
-1. Ajouter la classe / la méthode dans `spec/gtk-slice.php`.
+1. Ajouter la classe / la méthode dans `spec/desktop.php`.
 2. Lancer la génération : une méthode absente ou un nombre de paramètres
    incorrect échoue immédiatement.
 3. Ajouter si besoin les helpers correspondants dans `src/UI/`.

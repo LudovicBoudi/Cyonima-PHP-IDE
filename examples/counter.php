@@ -6,33 +6,25 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 
 use Cyonima\Gtk\Raw\Align;
 use Cyonima\Gtk\Raw\Orientation;
+use Cyonima\Runtime\Application;
 use Cyonima\Runtime\Loop;
 use Cyonima\UI\Box;
 use Cyonima\UI\Button;
 use Cyonima\UI\Label;
-use Cyonima\UI\Window;
 
 $auto = in_array('--auto', $argv, true);
 
-$window = new Window('Cyonima — compteur natif', 520, 300);
+$app = new Application('com.cyonima.counter');
 
-$window->addCss(<<<'CSS'
+$app->addCss(<<<'CSS'
 window { background: #101418; }
-.card {
-    background: #1b2027;
-    border-radius: 16px;
-    padding: 24px;
-}
+.card { background: #1b2027; border-radius: 16px; padding: 24px; }
 .count { color: #3ddc97; font-size: 64px; font-weight: 800; }
 .hint { color: #7d8794; font-size: 12px; }
-button {
-    background: #3ddc97;
-    color: #06231a;
-    border-radius: 10px;
-    padding: 10px 22px;
-    font-weight: 700;
-}
+button { background: #3ddc97; color: #06231a; border-radius: 10px; padding: 10px 22px; font-weight: 700; }
 CSS);
+
+$window = $app->window('Cyonima — compteur natif', 520, 300);
 
 $count = 0;
 
@@ -52,19 +44,16 @@ $box = (new Box(Orientation::VERTICAL, 14))
     ->cssClass('card')
     ->margin(28);
 
-$window
-    ->setChild($box)
-    ->onCloseRequest(fn () => Loop::quit())
-    ->present();
+// La boucle s'arrête seule à la fermeture de la dernière fenêtre.
+$window->setChild($box)->present();
 
 if ($auto) {
-    // Scénario scripté : trois clics synthétiques, puis fermeture.
     Loop::after(300, fn () => $button->click());
     Loop::after(450, fn () => $button->click());
     Loop::after(600, fn () => $button->click());
     Loop::after(1400, fn () => $window->raw()->close());
 }
 
-Loop::run();
+$app->run();
 
 printf("Compteur final : %d (affiché : %s)\n", $count, $counter->getText());

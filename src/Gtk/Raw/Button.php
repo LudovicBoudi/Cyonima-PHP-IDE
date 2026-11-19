@@ -40,6 +40,6 @@ class Button extends \Cyonima\Gtk\Raw\Widget
 
     public function onClicked(callable $handler): int
     {
-        return $this->connectSignal(self::SIGNAL_CLICKED, $handler, 0);
+        return $this->connectSignal(self::SIGNAL_CLICKED, $handler, 0, true);
     }
 }

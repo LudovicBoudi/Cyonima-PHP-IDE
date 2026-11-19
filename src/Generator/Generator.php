@@ -48,6 +48,7 @@ final class Generator
         }
 
         $mapper = new TypeMapper($generatedClasses);
+        $constructors = $this->constructorSignatures($objects, $mapper);
         $files = [];
         $symbolsByNamespace = [];
 
@@ -59,12 +60,7 @@ final class Generator
             $config = $this->spec->namespaceConfig($namespace);
             $rawNamespace = $config['raw_namespace'];
 
-            $parent = 'RawObject';
-            if ($object->parentFqcn !== null && isset($generatedClasses[$object->parentFqcn])) {
-                $parent = $generatedClasses[$object->parentFqcn];
-            } elseif ($rawNamespace !== 'Cyonima\\Gtk\\Raw') {
-                $parent = '\\Cyonima\\Gtk\\Raw\\RawObject';
-            }
+            $parent = $this->resolveParent($object, $objects, $generatedClasses, $rawNamespace);
 
             [$methods, $signals] = $this->resolveMembers($object, $selection, $mapper, $report);
 
@@ -76,6 +72,7 @@ final class Generator
                 rawNamespace: $rawNamespace,
                 version: $config['version'],
                 mapper: $mapper,
+                constructorName: $this->constructorName($fqcn, $objects, $constructors),
             ))->emit();
 
             $report->classes++;
@@ -85,6 +82,7 @@ final class Generator
             $symbolsByNamespace[$rawNamespace] ??= [
                 'library' => $config['library'],
                 'version' => $config['version'],
+                'init' => $config['init'] ?? null,
                 'declarations' => [],
             ];
 
@@ -112,6 +110,7 @@ final class Generator
                 library: $data['library'],
                 version: $data['version'],
                 declarations: $declarations,
+                initFunction: $data['init'],
             ))->emit();
         }
 
@@ -173,6 +172,93 @@ final class Generator
         return [$methods, $signals];
     }
 
+    /**
+     * Signature PHP des constructeurs déclarés dans la spec, par classe.
+     *
+     * @param array<string, ObjectInfo> $objects
+     * @return array<string, list<string>>
+     */
+    private function constructorSignatures(array $objects, TypeMapper $mapper): array
+    {
+        $signatures = [];
+
+        foreach (array_keys($this->spec->classes) as $fqcn) {
+            $object = $objects[$fqcn] ?? null;
+            if ($object === null) {
+                continue;
+            }
+            foreach ($object->methods as $method) {
+                if ($method->isConstructor() && $method->name === 'new') {
+                    $signatures[$fqcn] = array_map(
+                        static fn ($parameter): string => $mapper->phpType($parameter->type),
+                        $method->parameters,
+                    );
+                    break;
+                }
+            }
+        }
+
+        return $signatures;
+    }
+
+    /**
+     * Un constructeur qui redéfinit un constructeur ancêtre avec une signature
+     * différente ne peut pas s'appeler `new` en PHP (LSP). Il devient `create`.
+     *
+     * @param array<string, ObjectInfo> $objects
+     * @param array<string, list<string>> $constructors
+     */
+    private function constructorName(string $fqcn, array $objects, array $constructors): string
+    {
+        $signature = $constructors[$fqcn] ?? null;
+        if ($signature === null) {
+            return 'new';
+        }
+
+        $seen = [];
+        $parent = $objects[$fqcn]->parentFqcn ?? null;
+
+        while ($parent !== null && !isset($seen[$parent])) {
+            $seen[$parent] = true;
+            if (isset($constructors[$parent]) && $constructors[$parent] !== $signature) {
+                return 'create';
+            }
+            $parent = $objects[$parent]->parentFqcn ?? null;
+        }
+
+        return 'new';
+    }
+
+    /**
+     * Remonte la chaîne d'héritage jusqu'au premier ancêtre effectivement
+     * généré. Exemple : Adw\PreferencesRow (Gtk\ListBoxRow non généré) doit
+     * tout de même étendre Gtk\Widget.
+     *
+     * @param array<string, ObjectInfo> $objects
+     * @param array<string, string> $generatedClasses
+     */
+    private function resolveParent(
+        ObjectInfo $object,
+        array $objects,
+        array $generatedClasses,
+        string $rawNamespace,
+    ): string {
+        $seen = [];
+        $parent = $object->parentFqcn;
+
+        while ($parent !== null && !isset($seen[$parent])) {
+            $seen[$parent] = true;
+            if (isset($generatedClasses[$parent])) {
+                return $generatedClasses[$parent];
+            }
+            $parent = $objects[$parent]->parentFqcn ?? null;
+        }
+
+        return $rawNamespace === 'Cyonima\\Gtk\\Raw'
+            ? 'RawObject'
+            : '\\Cyonima\\Gtk\\Raw\\RawObject';
+    }
+
     private function unsupportedReason(CallableInfo $method, TypeMapper $mapper): ?string
     {
         if (!$method->hasOnlyInputParameters()) {
@@ -214,12 +300,17 @@ final class Generator
 
     private function emitEnum(EnumInfo $enum, string $rawNamespace): string
     {
-        $prefix = strtoupper($enum->namespace) . '_' . strtoupper($enum->name) . '_';
+        $identifiers = [];
+        foreach ($enum->values as $nick => $value) {
+            $identifiers[$nick] = $enum->identifiers[$nick] ?? strtoupper($nick);
+        }
+
+        $prefix = $this->commonIdentifierPrefix(array_values($identifiers));
 
         $constants = [];
         foreach ($enum->values as $nick => $value) {
-            $identifier = $enum->identifiers[$nick] ?? strtoupper($nick);
-            $name = str_starts_with($identifier, $prefix)
+            $identifier = $identifiers[$nick];
+            $name = $prefix !== '' && str_starts_with($identifier, $prefix)
                 ? substr($identifier, strlen($prefix))
                 : $identifier;
             $constants[$name] = $value;
@@ -248,6 +339,30 @@ final class Generator
         $lines[] = '';
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Plus long préfixe commun, tronqué au dernier `_` : les identifiants C
+     * (`ADW_CENTERING_POLICY_LOOSE`) ne suivent pas toujours le nom du type
+     * (`CenteringPolicy`).
+     *
+     * @param list<string> $identifiers
+     */
+    private function commonIdentifierPrefix(array $identifiers): string
+    {
+        if ($identifiers === []) {
+            return '';
+        }
+
+        $prefix = $identifiers[0];
+        foreach ($identifiers as $identifier) {
+            while ($prefix !== '' && !str_starts_with($identifier, $prefix)) {
+                $prefix = substr($prefix, 0, -1);
+            }
+        }
+
+        $cut = strrpos($prefix, '_');
+        return $cut === false ? '' : substr($prefix, 0, $cut + 1);
     }
 
     private function pathFor(string $rawNamespace, string $name): string

@@ -22,6 +22,7 @@ use Throwable;
 abstract class RawObject
 {
     private static ?\Closure $errorHandler = null;
+    private static ?\Closure $signalDispatcher = null;
     private static int $nextSignalId = 0;
 
     /** @var array<int, \Closure> */
@@ -68,11 +69,26 @@ abstract class RawObject
     }
 
     /**
+     * Installe le dispatcher des handlers de signaux asynchrones.
+     *
+     * Signature attendue : function (callable $handler, array $arguments, string $signal): void
+     * Sans dispatcher, les handlers de signaux void restent synchrones.
+     */
+    public static function dispatchSignalsThrough(?callable $dispatcher): void
+    {
+        self::$signalDispatcher = $dispatcher === null ? null : $dispatcher(...);
+    }
+
+    /**
      * Connecte un handler PHP à un signal GObject.
+     *
+     * Avec $async, le handler s'exécute dans une Fiber : il peut suspendre
+     * (`Async::sleep()`, `Async::await()`) sans bloquer l'UI. Il démarre
+     * immédiatement et se comporte de façon synchrone tant qu'il ne suspend pas.
      *
      * @param int $arity nombre de paramètres du signal (hors instance)
      */
-    public function connectSignal(string $signal, callable $handler, int $arity = 0): int
+    public function connectSignal(string $signal, callable $handler, int $arity = 0, bool $async = true): int
     {
         $id = ++self::$nextSignalId;
 
@@ -82,10 +98,22 @@ abstract class RawObject
             mixed $a2 = null,
             mixed $a3 = null,
             mixed $a4 = null,
-        ) use ($handler, $arity, $signal): int {
+        ) use ($handler, $arity, $signal, $async): int {
+            $arguments = array_slice([$this, $a1, $a2, $a3, $a4], 0, 1 + $arity);
+
+            // Le runtime peut installer un dispatcher (typiquement le scheduler
+            // de fibres) ; sinon on reste strictement synchrone.
+            if ($async && self::$signalDispatcher !== null) {
+                try {
+                    (self::$signalDispatcher)($handler, $arguments, $signal);
+                } catch (Throwable $exception) {
+                    self::reportError($exception, $signal);
+                }
+                return 0;
+            }
+
             try {
-                $arguments = [$this, $a1, $a2, $a3, $a4];
-                $result = $handler(...array_slice($arguments, 0, 1 + $arity));
+                $result = $handler(...$arguments);
 
                 if (is_bool($result)) {
                     return $result ? 1 : 0;

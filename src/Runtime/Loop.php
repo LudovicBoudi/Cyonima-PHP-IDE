@@ -8,17 +8,17 @@ use FFI;
 use FFI\CData;
 
 /**
- * Boucle d'événements GLib.
+ * Boucle d'événements GLib et ordonnanceur de timers.
  *
- * Infrastructure du runtime, pas des bindings générés : GLib n'est pas un
- * toolkit orienté objet et ses fonctions (timeout, idle) prennent des callbacks,
- * ce qui sort du périmètre du générateur pour la tranche M1.
- *
- * Règle R1 : `after()` convertit une closure en pointeur C (~450 octets non
- * récupérés). Utilisation ponctuelle uniquement, jamais dans une boucle.
+ * Règle R1 : une seule source GLib est enregistrée, au démarrage. Les timers
+ * applicatifs vivent dans une file PHP et sont déclenchés par ce tick unique.
+ * Enregistrer un `g_timeout_add` par événement fuiterait ~450 octets à chaque
+ * appel (mesuré), soit des dizaines de Mo par heure pour une UI active.
  */
 final class Loop
 {
+    private const TICK_MS = 16;
+
     private const CDEF = <<<'C'
 typedef int (*CyonimaSourceFunc)(void*);
 void         *g_main_loop_new(void *context, int is_running);
@@ -30,17 +30,50 @@ C;
 
     private static ?FFI $ffi = null;
     private static ?CData $loop = null;
-    private static int $nextId = 0;
+    private static bool $running = false;
+    private static ?\Closure $tickAdapter = null;
 
-    /** @var array<int, \Closure> */
-    private static array $callbacks = [];
+    /** @var array<int, array{at: float, callback: callable}> */
+    private static array $timers = [];
+
+    /** @var list<callable> */
+    private static array $tickListeners = [];
 
     /** @var list<\Closure> */
     private static array $onQuit = [];
 
+    private static int $nextTimerId = 0;
+
     private static function ffi(): FFI
     {
         return self::$ffi ??= FFI::cdef(self::CDEF, 'libglib-2.0.so.0');
+    }
+
+    public static function now(): float
+    {
+        return hrtime(true) / 1e6;
+    }
+
+    /** Abonnement appelé à chaque tick (scheduler, processus, animations…). */
+    public static function onTick(callable $listener): void
+    {
+        self::$tickListeners[] = $listener;
+    }
+
+    /** Exécute un callback après un délai, une seule fois. Aucune allocation C. */
+    public static function after(int $milliseconds, callable $callback): int
+    {
+        $id = ++self::$nextTimerId;
+        self::$timers[$id] = [
+            'at' => self::now() + max(0, $milliseconds),
+            'callback' => $callback,
+        ];
+        return $id;
+    }
+
+    public static function cancelTimer(int $id): void
+    {
+        unset(self::$timers[$id]);
     }
 
     /**
@@ -54,9 +87,15 @@ C;
             self::$onQuit[] = $onQuit(...);
         }
 
+        self::$running = true;
         self::$loop = self::ffi()->g_main_loop_new(null, 0);
+
+        self::ensureTickSource();
         self::ffi()->g_main_loop_run(self::$loop);
+
         self::$loop = null;
+        self::$running = false;
+        self::$timers = [];
 
         foreach (self::$onQuit as $callback) {
             $callback();
@@ -71,24 +110,56 @@ C;
         }
     }
 
-    /** Exécute un callback après un délai, une seule fois. */
-    public static function after(int $milliseconds, callable $callback): int
+    public static function isRunning(): bool
     {
-        $id = ++self::$nextId;
-
-        $adapter = function (mixed $data) use ($callback, $id): int {
-            unset(self::$callbacks[$id]);
-            $callback();
-            return 0; // G_SOURCE_REMOVE
-        };
-
-        self::$callbacks[$id] = $adapter;
-        return self::ffi()->g_timeout_add($milliseconds, $adapter, null);
+        return self::$running;
     }
 
-    public static function cancel(int $tag): void
+    /** Réinitialise l'état runtime (tests, redémarrage logique). */
+    public static function reset(): void
     {
-        self::ffi()->g_source_remove($tag);
-        unset(self::$callbacks[$tag]);
+        self::$timers = [];
+        self::$tickListeners = [];
+        self::$onQuit = [];
+    }
+
+    /**
+     * Source GLib unique. Elle se retire d'elle-même quand la boucle s'arrête.
+     */
+    private static function ensureTickSource(): void
+    {
+        if (self::$tickAdapter === null) {
+            self::$tickAdapter = static function (mixed $data): int {
+                self::tick();
+                return self::$running ? 1 : 0; // G_SOURCE_CONTINUE / G_SOURCE_REMOVE
+            };
+        }
+
+        self::ffi()->g_timeout_add(self::TICK_MS, self::$tickAdapter, null);
+    }
+
+    private static function tick(): void
+    {
+        $now = self::now();
+
+        foreach (self::$timers as $id => $timer) {
+            if ($timer['at'] > $now) {
+                continue;
+            }
+            unset(self::$timers[$id]);
+            try {
+                ($timer['callback'])();
+            } catch (\Throwable $exception) {
+                Errors::report($exception, 'timer');
+            }
+        }
+
+        foreach (self::$tickListeners as $listener) {
+            try {
+                $listener($now);
+            } catch (\Throwable $exception) {
+                Errors::report($exception, 'tick');
+            }
+        }
     }
 }

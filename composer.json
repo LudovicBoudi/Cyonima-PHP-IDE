@@ -20,7 +20,9 @@
     "scripts": {
         "generate": "php -d ffi.enable=true bin/cyonima-gen generate",
         "demo": "php -d ffi.enable=true examples/counter.php",
-        "test": "php -d ffi.enable=true tests/run.php"
+        "test": "php -d ffi.enable=true tests/run.php",
+        "demo:async": "php -d ffi.enable=true examples/async.php",
+        "demo:adw": "php -d ffi.enable=true examples/adw.php"
     },
     "config": {
         "sort-packages": true

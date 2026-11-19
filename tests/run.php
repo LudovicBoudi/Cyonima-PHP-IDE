@@ -16,7 +16,14 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 use Cyonima\Generator\Generator;
 use Cyonima\Generator\Spec;
 use Cyonima\Gtk\Raw;
+use Cyonima\Runtime\AdwApplication;
+use Cyonima\Runtime\Application;
+use Cyonima\Runtime\Async;
+use Cyonima\Runtime\Errors;
+use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
+use Cyonima\Runtime\Process;
+use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 
 final class T
@@ -111,7 +118,7 @@ T::same('clicked', Raw\Button::SIGNAL_CLICKED, 'constante de signal clicked');
 // ---------------------------------------------------------------------------
 T::section('2. Générateur : déterminisme');
 
-$spec = Spec::fromFile(dirname(__DIR__) . '/spec/gtk-slice.php');
+$spec = Spec::fromFile(dirname(__DIR__) . '/spec/desktop.php');
 $first = (new Generator($spec))->generate();
 $hashesFirst = [];
 foreach ($first->files as $file) {
@@ -125,7 +132,7 @@ foreach ($second->files as $file) {
     }
 }
 T::ok($stable, 'une seconde génération produit exactement les mêmes fichiers');
-T::ok($first->classes === 7, '7 classes générées', (string) $first->classes);
+T::ok($first->classes === 23, '23 classes générées', (string) $first->classes);
 T::ok($first->methods >= 50, 'au moins 50 méthodes générées', (string) $first->methods);
 T::same(0, count($first->skipped), 'aucune méthode de la spec ignorée');
 
@@ -208,7 +215,186 @@ T::same(2, $clicked, 'deux clics traités pendant la boucle');
 T::ok($elapsed < 3.0, 'la boucle se termine sur close-request', sprintf('%.0f ms', $elapsed * 1000));
 
 // ---------------------------------------------------------------------------
-T::section('5. Différentiel PyGObject (si disponible)');
+T::section('5. Runtime : timers, fibres, processus, application');
+
+// 5.1 Timers PHP ordonnés, sans enregistrement GLib par événement.
+Loop::reset();
+$ticks = [];
+Loop::after(80, function () use (&$ticks): void { $ticks[] = 'b'; });
+Loop::after(20, function () use (&$ticks): void { $ticks[] = 'a'; });
+Loop::after(200, function () use (&$ticks): void { $ticks[] = 'c'; });
+Loop::after(350, fn () => Loop::quit());
+Loop::run();
+T::same(['a', 'b', 'c'], $ticks, 'timers PHP déclenchés dans l\'ordre, sans fuite GLib');
+
+// 5.2 Fibres coopératives : deux tâches qui dorment en parallèle.
+Loop::reset();
+Scheduler::reset();
+$order = [];
+$taskA = Async::run(function () use (&$order): void {
+    $order[] = 'a1';
+    Async::sleep(120);
+    $order[] = 'a2';
+});
+Async::run(function () use (&$order): void {
+    $order[] = 'b1';
+    Async::sleep(40);
+    $order[] = 'b2';
+});
+Loop::onTick(fn () => Scheduler::tick());
+Loop::after(300, fn () => Loop::quit());
+Loop::run();
+T::same(['a1', 'b1', 'b2', 'a2'], $order, 'deux tâches dorment en parallèle et reprennent dans l\'ordre');
+T::ok($taskA->isDone(), 'la tâche A est terminée');
+
+// 5.3 await : une tâche attend le résultat d'une autre.
+Loop::reset();
+Scheduler::reset();
+$awaited = null;
+Async::run(function () use (&$awaited): void {
+    $inner = Async::run(function () {
+        Async::sleep(40);
+        return 42;
+    });
+    $awaited = Async::await($inner);
+});
+Loop::onTick(fn () => Scheduler::tick());
+Loop::after(200, fn () => Loop::quit());
+Loop::run();
+T::same(42, $awaited, 'Async::await() retourne le résultat de la tâche attendue');
+
+// 5.4 Exception dans une tâche : reportée, pas fatale.
+Errors::reset();
+Async::run(function (): void {
+    throw new RuntimeException('boom-task');
+});
+T::same('boom-task', Errors::last()?->getMessage(), 'une exception de tâche est reportée sans planter');
+
+// 5.5 Sous-processus : résultat et parallélisme réel.
+Loop::reset();
+Scheduler::reset();
+$processResults = [];
+Async::run(function () use (&$processResults): void {
+    $first = Process::php('usleep(250000); echo "un";');
+    $second = Process::php('usleep(250000); echo "deux";');
+    $a = $first->await();
+    $b = $second->await();
+    $processResults = [$a->output(), $b->output(), $a->exitCode, $b->exitCode];
+    Loop::quit();
+});
+Loop::onTick(fn () => Scheduler::tick());
+Loop::onTick(fn () => Process::poll());
+$processStart = microtime(true);
+Loop::after(2000, fn () => Loop::quit());
+Loop::run();
+$processElapsed = microtime(true) - $processStart;
+T::same(['un', 'deux', 0, 0], $processResults, 'deux processus rendent leur sortie et leur code');
+T::ok($processElapsed < 0.8, 'deux processus de 250 ms tournent en parallèle', sprintf('%.0f ms', $processElapsed * 1000));
+
+// 5.6 Un handler de signal peut suspendre sans bloquer l'UI.
+Loop::reset();
+Scheduler::reset();
+Raw\Widget::dispatchSignalsThrough(static function (callable $handler, array $arguments, string $signal): void {
+    Scheduler::spawn(static fn () => $handler(...$arguments));
+});
+$asyncEvents = [];
+$asyncButton = Raw\Button::newWithLabel('async');
+$asyncButton->onClicked(function () use (&$asyncEvents): void {
+    $asyncEvents[] = 'start';
+    Async::sleep(80);
+    $asyncEvents[] = 'end';
+});
+$asyncButton->emit(Raw\Button::SIGNAL_CLICKED);
+T::same(['start'], $asyncEvents, 'le handler démarre immédiatement puis suspend');
+Loop::onTick(fn () => Scheduler::tick());
+Loop::after(200, fn () => Loop::quit());
+Loop::run();
+T::same(['start', 'end'], $asyncEvents, 'le handler reprend après sa suspension');
+Raw\Widget::dispatchSignalsThrough(null);
+
+// 5.7 Cycle de vie applicatif : dernière fenêtre fermée = boucle terminée.
+Loop::reset();
+Scheduler::reset();
+Errors::reset();
+$app = new Application('com.cyonima.tests');
+$closed = 0;
+$appWindow = $app->window('Tests app', 240, 140);
+$appWindow->onCloseRequest(function () use (&$closed): void {
+    $closed++;
+});
+$appWindow->present();
+Loop::after(120, fn () => $appWindow->raw()->close());
+$appStart = microtime(true);
+$app->run();
+$appElapsed = microtime(true) - $appStart;
+T::same(1, $closed, 'le handler close-request de la fenêtre est appelé');
+T::ok($appElapsed < 1.5, 'la boucle s\'arrête à la fermeture de la dernière fenêtre', sprintf('%.0f ms', $appElapsed * 1000));
+T::same(0, count($app->windows()), 'l\'application ne suit plus aucune fenêtre');
+Raw\Widget::dispatchSignalsThrough(null);
+
+// ---------------------------------------------------------------------------
+T::section('6. libadwaita : widgets, enums et cycle de vie');
+
+T::ok(class_exists(Cyonima\Adw\Raw\ApplicationWindow::class), 'classe Adw\ApplicationWindow chargée');
+T::ok(class_exists(Cyonima\Adw\Raw\PreferencesPage::class), 'classe Adw\PreferencesPage chargée');
+T::same('AdwApplicationWindow', Cyonima\Adw\Raw\ApplicationWindow::TYPE_NAME, 'TYPE_NAME Adw correct');
+T::ok(
+    is_subclass_of(Cyonima\Adw\Raw\PreferencesRow::class, Cyonima\Gtk\Raw\Widget::class),
+    'un parent non généré (GtkListBoxRow) est sauté vers Gtk\Widget',
+);
+T::ok(
+    is_subclass_of(Cyonima\Adw\Raw\ActionRow::class, Cyonima\Adw\Raw\PreferencesRow::class),
+    'Adw\ActionRow hérite de PreferencesRow',
+);
+T::same(0, Cyonima\Adw\Raw\CenteringPolicy::LOOSE, 'CenteringPolicy::LOOSE');
+T::same(1, Cyonima\Adw\Raw\CenteringPolicy::STRICT, 'CenteringPolicy::STRICT');
+
+Kernel::reset();
+Loop::reset();
+Scheduler::reset();
+Errors::reset();
+
+$adwApp = new AdwApplication('com.cyonima.tests.adw');
+$adwWindow = $adwApp->window('Adw test', 'sous-titre');
+
+$switchChanges = 0;
+$switchRow = (new UI\SwitchRow('Compact', 'test'))->onChanged(function () use (&$switchChanges): void {
+    $switchChanges++;
+});
+$stateRow = new UI\ActionRow('État', 'prêt');
+$aboutButton = (new UI\Button('À propos'))->onClicked(function () use ($adwWindow): void {
+    $adwWindow->toast('Test de toast');
+});
+
+$page = (new UI\PreferencesPage('Réglages', 'description'))
+    ->add((new UI\PreferencesGroup('Apparence'))->add($switchRow, $stateRow));
+
+$closedAdw = 0;
+$adwWindow->addCss('window { background: #101418; }');
+$adwWindow->headerEnd($aboutButton)
+    ->content(new UI\Clamp($page, 480))
+    ->onCloseRequest(function () use (&$closedAdw): void {
+        $closedAdw++;
+    })
+    ->present();
+
+Loop::after(150, fn () => $switchRow->active(true));
+Loop::after(250, fn () => $aboutButton->click());
+Loop::after(150, fn () => $switchRow->raw()->setActive(true));
+Loop::after(400, fn () => $adwWindow->raw()->close());
+
+$adwStart = microtime(true);
+$adwApp->run();
+$adwElapsed = microtime(true) - $adwStart;
+
+T::ok($switchChanges >= 1, 'SwitchRow : notify::active déclenche le handler PHP', (string) $switchChanges);
+T::ok($switchRow->isActive(), 'SwitchRow::isActive() reflète l\'état');
+T::same(1, $closedAdw, 'close-request Adw appelé une fois');
+T::same(0, count($adwApp->windows()), 'plus aucune fenêtre Adw suivie');
+T::ok($adwElapsed < 2.0, 'boucle Adw terminée proprement', sprintf('%.0f ms', $adwElapsed * 1000));
+
+// ---------------------------------------------------------------------------
+T::section('7. Différentiel PyGObject (si disponible)');
 
 $py = python('import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; print(int(Gtk.Orientation.VERTICAL), int(Gtk.Align.CENTER))');
 if ($py === null) {
@@ -225,6 +411,9 @@ if ($py === null) {
 
     $methods = python('import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; print(",".join(m for m in ("set_title", "present", "close", "set_default_size") if hasattr(Gtk.Window, m)))');
     T::same('set_title,present,close,set_default_size', $methods, 'les méthodes de Window existent côté PyGObject');
+
+    $adw = python('import gi; gi.require_version("Adw", "1"); from gi.repository import Adw; print(int(Adw.CenteringPolicy.LOOSE), int(Adw.CenteringPolicy.STRICT), int(hasattr(Adw, "ApplicationWindow")))');
+    T::same('0 1 1', $adw, 'enums et fenêtre Adw identiques à PyGObject');
 }
 
 exit(T::report());

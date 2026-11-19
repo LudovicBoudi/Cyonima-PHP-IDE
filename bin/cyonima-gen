@@ -134,7 +134,7 @@ try {
             break;
 
         case 'generate':
-            $specPath = $argv[2] ?? dirname(__DIR__) . '/spec/gtk-slice.php';
+            $specPath = $argv[2] ?? dirname(__DIR__) . '/spec/desktop.php';
             $generator = new \Cyonima\Generator\Generator(
                 \Cyonima\Generator\Spec::fromFile($specPath),
             );

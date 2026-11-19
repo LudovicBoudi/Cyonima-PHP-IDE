@@ -175,6 +175,27 @@ Trois écarts assumés par rapport au miroir strict du C :
 3. **`Symbols::ensureInitialized()`** est appelé par chaque constructeur généré :
    `gtk_init_check()` doit précéder toute création de widget, sinon segfault.
 
+## Notes d'implémentation issues du runtime (M2)
+
+4. **Un seul tick GLib de 16 ms** : tous les timers applicatifs vivent dans une
+   file PHP (`Loop::after`), ce qui rend R1 structurel et non déclaratif.
+5. **Le dispatcher de signaux est installé par `Application`** : les signaux
+   void deviennent des fibres, les signaux à retour booléen restent synchrones.
+   `Cyonima\Gtk\Raw` ne dépend pas du runtime : il expose un point d'injection.
+6. **Deux niveaux d'asynchrone** : fibres coopératives pour l'I/O et les
+   séquences, sous-processus pour le CPU. Une fibre sans point de suspension
+   fige l'UI, c'est assumé et documenté.
+
+### Notes d'implémentation Adw (M3)
+
+7. **`g_application_register()` sans `g_application_run()`** : Adw exige le
+   signal `startup` avant de créer une `AdwApplicationWindow`, mais on conserve
+   la boucle du runtime. `AdwWindow` utilise `AdwToolbarView` + `AdwHeaderBar`
+   (`set_titlebar()` est interdit par libadwaita sur ce type de fenêtre).
+8. **Deux namespaces = deux `Symbols`** : un handle libffi par bibliothèque
+   (`libgtk-4.so.1`, `libadwaita-1.so.0`), avec `adw_init()` dans le bootstrap
+   du namespace Adw.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |
