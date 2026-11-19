@@ -25,8 +25,14 @@ abstract class RawObject
     private static ?\Closure $signalDispatcher = null;
     private static int $nextSignalId = 0;
 
+    /** @var array<string, \FFI> handles FFI par signature de callback */
+    private static array $signalHandles = [];
+
     /** @var array<int, \Closure> */
     private array $signalHandlers = [];
+
+    /** @var array<int, int> identifiant interne => handler GLib */
+    private array $glibHandlerIds = [];
 
     public function __construct(
         protected CData $handle,
@@ -82,38 +88,37 @@ abstract class RawObject
     /**
      * Connecte un handler PHP à un signal GObject.
      *
-     * Avec $async, le handler s'exécute dans une Fiber : il peut suspendre
-     * (`Async::sleep()`, `Async::await()`) sans bloquer l'UI. Il démarre
-     * immédiatement et se comporte de façon synchrone tant qu'il ne suspend pas.
-     *
-     * @param int $arity nombre de paramètres du signal (hors instance)
+     * @param list<string> $parameterTypes types C des paramètres du signal
+     *        (hors instance), par exemple ['int'] pour child-exited.
+     * @param bool $async exécute le handler dans une fibre si un dispatcher
+     *        est installé (les signaux à retour doivent rester synchrones).
      */
-    public function connectSignal(string $signal, callable $handler, int $arity = 0, bool $async = true): int
-    {
+    public function connectSignal(
+        string $signal,
+        callable $handler,
+        array $parameterTypes = [],
+        bool $async = true,
+    ): int {
         $id = ++self::$nextSignalId;
 
-        $adapter = function (
-            mixed $instance,
-            mixed $a1 = null,
-            mixed $a2 = null,
-            mixed $a3 = null,
-            mixed $a4 = null,
-        ) use ($handler, $arity, $signal, $async): int {
-            $arguments = array_slice([$this, $a1, $a2, $a3, $a4], 0, 1 + $arity);
+        $adapter = function (mixed $instance, mixed ...$arguments) use ($handler, $signal, $async): int {
+            $callArguments = [$this, ...$arguments];
 
-            // Le runtime peut installer un dispatcher (typiquement le scheduler
-            // de fibres) ; sinon on reste strictement synchrone.
             if ($async && self::$signalDispatcher !== null) {
                 try {
-                    (self::$signalDispatcher)($handler, $arguments, $signal);
+                    (self::$signalDispatcher)($handler, $callArguments, $signal);
+                    return 0;
+                } catch (\FiberError) {
+                    // Pendant une destruction, aucune fibre ne peut démarrer :
+                    // on exécute le handler de façon synchrone.
                 } catch (Throwable $exception) {
                     self::reportError($exception, $signal);
+                    return 0;
                 }
-                return 0;
             }
 
             try {
-                $result = $handler(...$arguments);
+                $result = $handler(...$callArguments);
 
                 if (is_bool($result)) {
                     return $result ? 1 : 0;
@@ -126,14 +131,53 @@ abstract class RawObject
         };
 
         $this->signalHandlers[$id] = $adapter;
-        Symbols::get()->g_signal_connect_data($this->handle, $signal, $adapter, null, null, 0);
+        $glibId = self::signalHandle($parameterTypes)->g_signal_connect_data(
+            $this->handle,
+            $signal,
+            $adapter,
+            null,
+            null,
+            0,
+        );
+        $this->glibHandlerIds[$id] = (int) $glibId;
 
         return $id;
     }
 
-    /** Libère la garde PHP du handler (le signal reste connecté côté GTK). */
+    /**
+     * Un cdef par signature de callback : libffi doit connaître le type exact
+     * des paramètres, sans quoi un `gint` arrive en `void*` (CData).
+     *
+     * @param list<string> $parameterTypes
+     */
+    private static function signalHandle(array $parameterTypes): \FFI
+    {
+        $key = implode(',', $parameterTypes);
+
+        if (!isset(self::$signalHandles[$key])) {
+            $parameters = $parameterTypes === []
+                ? 'void*'
+                : 'void*, ' . implode(', ', $parameterTypes);
+
+            self::$signalHandles[$key] = \FFI::cdef(
+                sprintf(
+                    'unsigned long g_signal_connect_data(void*, const char*, int (*)(%s), void*, void*, int);',
+                    $parameters,
+                ),
+                'libgtk-4.so.1',
+            );
+        }
+
+        return self::$signalHandles[$key];
+    }
+
+    /** Déconnecte le signal et libère la garde PHP du handler. */
     public function forgetSignal(int $id): void
     {
+        if (isset($this->glibHandlerIds[$id])) {
+            Symbols::get()->g_signal_handler_disconnect($this->handle, $this->glibHandlerIds[$id]);
+            unset($this->glibHandlerIds[$id]);
+        }
         unset($this->signalHandlers[$id]);
     }
 
@@ -163,8 +207,13 @@ abstract class RawObject
 
     public function __destruct()
     {
-        // Les handlers doivent disparaître avant l'unref : la destruction peut
-        // émettre des signaux et rappeler du code PHP.
+        // Un wrapper peut mourir alors que l'objet GObject survit (enfant d'un
+        // conteneur) : sans déconnexion, la trampoline C pointerait vers une
+        // closure PHP libérée.
+        foreach ($this->glibHandlerIds as $glibId) {
+            Symbols::get()->g_signal_handler_disconnect($this->handle, $glibId);
+        }
+        $this->glibHandlerIds = [];
         $this->signalHandlers = [];
 
         if ($this->owned) {

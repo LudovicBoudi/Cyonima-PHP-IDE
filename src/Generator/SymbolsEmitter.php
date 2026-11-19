@@ -33,6 +33,7 @@ final class SymbolsEmitter
             'void          g_object_unref(void *object);',
             'unsigned long g_signal_connect_data(void *instance, const char *signal, CyonimaSignalHandler handler, void *data, void *destroy, int flags);',
             'int           g_signal_emit_by_name(void *instance, const char *signal, ...);',
+            'void          g_signal_handler_disconnect(void *instance, unsigned long handler_id);',
             '',
             ...$declarations,
         ]);

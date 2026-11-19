@@ -86,6 +86,6 @@ class Window extends \Cyonima\Gtk\Raw\Widget
 
     public function onCloseRequest(callable $handler): int
     {
-        return $this->connectSignal(self::SIGNAL_CLOSE_REQUEST, $handler, 0, false);
+        return $this->connectSignal(self::SIGNAL_CLOSE_REQUEST, $handler, [], false);
     }
 }

@@ -22,6 +22,7 @@ use Cyonima\Runtime\Async;
 use Cyonima\Runtime\Errors;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
+use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
@@ -132,8 +133,14 @@ foreach ($second->files as $file) {
     }
 }
 T::ok($stable, 'une seconde génération produit exactement les mêmes fichiers');
-T::ok($first->classes === 23, '23 classes générées', (string) $first->classes);
-T::ok($first->methods >= 50, 'au moins 50 méthodes générées', (string) $first->methods);
+$expectedClasses = count($spec->classes);
+T::ok($first->classes === $expectedClasses, "{$expectedClasses} classes générées", (string) $first->classes);
+
+$expectedMethods = array_sum(array_map(
+    static fn (array $class): int => count($class['methods']),
+    $spec->classes,
+));
+T::ok($first->methods === $expectedMethods, "{$expectedMethods} méthodes générées", (string) $first->methods);
 T::same(0, count($first->skipped), 'aucune méthode de la spec ignorée');
 
 // ---------------------------------------------------------------------------
@@ -394,7 +401,123 @@ T::same(0, count($adwApp->windows()), 'plus aucune fenêtre Adw suivie');
 T::ok($adwElapsed < 2.0, 'boucle Adw terminée proprement', sprintf('%.0f ms', $adwElapsed * 1000));
 
 // ---------------------------------------------------------------------------
-T::section('7. Différentiel PyGObject (si disponible)');
+T::section('7. Éditeur GtkSourceView et terminal VTE');
+
+T::ok(class_exists(Cyonima\GtkSource\Raw\View::class), 'classe GtkSource\View chargée');
+T::ok(
+    is_subclass_of(Cyonima\GtkSource\Raw\View::class, Cyonima\Gtk\Raw\TextView::class),
+    'GtkSource\View étend Gtk\TextView',
+);
+T::ok(
+    is_subclass_of(Cyonima\GtkSource\Raw\Buffer::class, Cyonima\Gtk\Raw\TextBuffer::class),
+    'GtkSource\Buffer étend Gtk\TextBuffer',
+);
+T::ok(
+    is_subclass_of(Cyonima\Vte\Raw\Terminal::class, Cyonima\Gtk\Raw\Widget::class),
+    'Vte\Terminal est un Gtk\Widget',
+);
+
+Kernel::reset();
+Loop::reset();
+Scheduler::reset();
+
+$code = "<?php\n\necho \"bonjour\";\n";
+$editor = new UI\CodeEditor('php', $code);
+T::same(strlen($code), $editor->charCount(), 'le buffer contient exactement le texte fourni');
+T::ok($editor->lineCount() >= 3, 'lineCount cohérent', (string) $editor->lineCount());
+T::ok($editor->buffer()->getLanguage() !== null, 'langage PHP appliqué au buffer');
+T::ok($editor->buffer()->getHighlightSyntax(), 'coloration syntaxique active');
+
+$roundTrip = "<?php\n// éàü ← accents\n";
+$editor->setText($roundTrip);
+T::same($roundTrip, $editor->text(), 'texte relu à l\'identique (UTF-8)');
+$changes = 0;
+$editor->onChanged(function () use (&$changes): void {
+    $changes++;
+});
+$editor->setText($roundTrip . "// modifié\n");
+T::ok($changes >= 1, 'onChanged notifié sur modification du buffer', (string) $changes);
+$editor->scheme('Adwaita');
+T::ok(true, 'schéma de couleurs appliqué sans erreur');
+
+$paned = (new UI\Paned(Cyonima\Gtk\Raw\Orientation::VERTICAL, 200))
+    ->start(new UI\ScrolledWindow($editor))
+    ->end(new UI\Label('zone basse'));
+T::ok($paned->raw() instanceof Cyonima\Gtk\Raw\Paned, 'Paned + ScrolledWindow construits');
+
+$proof = sys_get_temp_dir() . '/cyonima_vte_' . getmypid();
+@unlink($proof);
+
+$vteWindow = new UI\Window('VTE', 420, 220);
+$terminal = new UI\Terminal();
+$vteWindow->setChild($terminal)
+    ->onCloseRequest(fn () => Loop::quit())
+    ->present();
+
+$exitStatus = null;
+$terminal->onChildExited(function ($term, $status) use (&$exitStatus): void {
+    $exitStatus = $status;
+    Loop::quit();
+});
+
+$terminal->spawn(['/bin/bash', '-lc', 'echo ok > ' . escapeshellarg($proof)]);
+Loop::after(2000, fn () => Loop::quit());
+Loop::run();
+
+T::same('ok', trim((string) @file_get_contents($proof)), 'le terminal exécute réellement le processus');
+T::ok(is_int($exitStatus), 'le statut de sortie arrive typé en int', get_debug_type($exitStatus));
+T::same(0, is_int($exitStatus) ? $exitStatus >> 8 : -1, 'code de sortie 0');
+@unlink($proof);
+
+// ---------------------------------------------------------------------------
+T::section('8. Navigateur de fichiers et client LSP');
+
+Kernel::reset();
+Loop::reset();
+Scheduler::reset();
+
+$examples = dirname(__DIR__) . '/examples';
+$opened = null;
+$browser = new UI\FileBrowser($examples, function (string $path) use (&$opened): void {
+    $opened = $path;
+});
+T::same(realpath($examples), $browser->root(), 'racine du navigateur');
+T::ok($browser->entryCount() > 0, 'entrées listées', (string) $browser->entryCount());
+$browser->open($examples . '/hello.php');
+T::same($examples . '/hello.php', $opened, 'ouverture d\'un fichier via le navigateur');
+
+$lsp = LspClient::start([PHP_BINARY, __DIR__ . '/fixtures/fake_lsp.php']);
+$lsp->attach();
+
+$initialized = null;
+$diagnostic = null;
+
+$lsp->on('textDocument/publishDiagnostics', function (array $params) use (&$diagnostic): void {
+    $diagnostic = $params;
+    Loop::quit();
+});
+
+$lsp->initialize('file://' . dirname(__DIR__), function (mixed $result) use (&$initialized, $lsp): void {
+    $initialized = $result;
+    $lsp->didOpen('file:///tmp/cyonima_test.php', 'php', "<?php echo 1;\n");
+});
+
+Loop::after(3000, fn () => Loop::quit());
+Loop::run();
+
+T::ok(
+    is_array($initialized) && ($initialized['capabilities']['textDocumentSync'] ?? null) === 1,
+    'initialize échangé avec le serveur LSP',
+);
+T::same(
+    'diagnostic factice',
+    $diagnostic['diagnostics'][0]['message'] ?? null,
+    'notification publishDiagnostics reçue',
+);
+$lsp->stop();
+
+// ---------------------------------------------------------------------------
+T::section('9. Différentiel PyGObject (si disponible)');
 
 $py = python('import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; print(int(Gtk.Orientation.VERTICAL), int(Gtk.Align.CENTER))');
 if ($py === null) {
@@ -414,6 +537,12 @@ if ($py === null) {
 
     $adw = python('import gi; gi.require_version("Adw", "1"); from gi.repository import Adw; print(int(Adw.CenteringPolicy.LOOSE), int(Adw.CenteringPolicy.STRICT), int(hasattr(Adw, "ApplicationWindow")))');
     T::same('0 1 1', $adw, 'enums et fenêtre Adw identiques à PyGObject');
+
+    $gtkSource = python('import gi; gi.require_version("GtkSource", "5"); from gi.repository import GtkSource; print(int(hasattr(GtkSource, "View")), int(hasattr(GtkSource, "LanguageManager")))');
+    T::same('1 1', $gtkSource, 'GtkSourceView expose View et LanguageManager côté PyGObject');
+
+    $vte = python('import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Vte", "3.91"); from gi.repository import Gtk, GObject, Vte; Gtk.init(); t = Vte.Terminal(); print(int(hasattr(Vte, "Terminal")), int(GObject.signal_lookup("child-exited", t) > 0))');
+    T::same('1 1', $vte, 'Vte\Terminal et son signal child-exited existent côté PyGObject');
 }
 
 exit(T::report());

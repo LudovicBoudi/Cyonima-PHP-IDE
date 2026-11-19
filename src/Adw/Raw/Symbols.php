@@ -22,6 +22,7 @@ void         *g_object_ref_sink(void *object);
 void          g_object_unref(void *object);
 unsigned long g_signal_connect_data(void *instance, const char *signal, CyonimaSignalHandler handler, void *data, void *destroy, int flags);
 int           g_signal_emit_by_name(void *instance, const char *signal, ...);
+void          g_signal_handler_disconnect(void *instance, unsigned long handler_id);
 
 const char* adw_action_row_get_subtitle(void *self);
 int adw_switch_row_get_active(void *self);

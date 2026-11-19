@@ -24,6 +24,16 @@ return [
             'raw_namespace' => 'Cyonima\\Adw\\Raw',
             'init' => 'adw_init',
         ],
+        'GtkSource' => [
+            'version' => '5',
+            'library' => 'libgtksourceview-5.so.0',
+            'raw_namespace' => 'Cyonima\\GtkSource\\Raw',
+        ],
+        'Vte' => [
+            'version' => '3.91',
+            'library' => 'libvte-2.91-gtk4.so.0',
+            'raw_namespace' => 'Cyonima\\Vte\\Raw',
+        ],
     ],
 
     'classes' => [
@@ -81,6 +91,68 @@ return [
         'Gtk\\ApplicationWindow' => [
             'methods' => [
                 'new' => ['application'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\TextView' => [
+            'methods' => [
+                'get_buffer' => [],
+                'set_monospace' => ['monospace'],
+                'set_editable' => ['editable'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\TextBuffer' => [
+            'methods' => [
+                'set_text' => ['text', 'length'],
+                'get_char_count' => [],
+                'get_line_count' => [],
+                'set_modified' => ['modified'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\ScrolledWindow' => [
+            'methods' => [
+                'new' => [],
+                'set_child' => ['child'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\ListBox' => [
+            'methods' => [
+                'new' => [],
+                'append' => ['child'],
+                'remove' => ['child'],
+                'remove_all' => [],
+                'select_row' => ['row'],
+                'set_selection_mode' => ['mode'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\ListBoxRow' => [
+            'methods' => [
+                'new' => [],
+                'set_child' => ['child'],
+                'get_child' => [],
+                'set_activatable' => ['activatable'],
+                'set_selectable' => ['selectable'],
+            ],
+            'signals' => ['activate'],
+        ],
+
+        'Gtk\\Paned' => [
+            'methods' => [
+                'new' => ['orientation'],
+                'set_start_child' => ['child'],
+                'set_end_child' => ['child'],
+                'set_position' => ['position'],
+                'set_resize_start_child' => ['resize'],
+                'set_shrink_start_child' => ['shrink'],
             ],
             'signals' => false,
         ],
@@ -278,6 +350,61 @@ return [
                 'set_child' => ['child'],
             ],
             'signals' => false,
+        ],
+        // --- GtkSourceView 5 -----------------------------------------------
+        'GtkSource\\View' => [
+            'methods' => [
+                'new' => [],
+                'new_with_buffer' => ['buffer'],
+                'set_show_line_numbers' => ['showLineNumbers'],
+                'set_highlight_current_line' => ['highlightCurrentLine'],
+                'set_tab_width' => ['tabWidth'],
+                'set_auto_indent' => ['autoIndent'],
+                'set_indent_width' => ['indentWidth'],
+                'set_insert_spaces_instead_of_tabs' => ['insertSpaces'],
+                'set_show_right_margin' => ['showRightMargin'],
+                'set_right_margin_position' => ['rightMarginPosition'],
+                'get_show_line_numbers' => [],
+            ],
+            'signals' => false,
+        ],
+
+        'GtkSource\\Buffer' => [
+            'methods' => [
+                'new' => ['tagTable'],
+                'set_language' => ['language'],
+                'get_language' => [],
+                'set_highlight_syntax' => ['highlightSyntax'],
+                'get_highlight_syntax' => [],
+                'set_style_scheme' => ['styleScheme'],
+                'get_style_scheme' => [],
+            ],
+            'signals' => false,
+        ],
+
+        'GtkSource\\LanguageManager' => [
+            'methods' => [
+                'get_default' => [],
+                'get_language' => ['languageId'],
+            ],
+            'signals' => false,
+        ],
+
+        'GtkSource\\StyleSchemeManager' => [
+            'methods' => [
+                'get_default' => [],
+                'get_scheme' => ['schemeId'],
+            ],
+            'signals' => false,
+        ],
+
+        // --- VTE -----------------------------------------------------------
+        'Vte\\Terminal' => [
+            'methods' => [
+                'new' => [],
+                'set_scrollback_lines' => ['lines'],
+            ],
+            'signals' => ['child-exited'],
         ],
     ],
 

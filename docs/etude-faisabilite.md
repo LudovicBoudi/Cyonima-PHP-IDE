@@ -164,7 +164,8 @@ plus depuis PHP-GTK.
 | **M1 — Générateur de bindings** | `.typelib` → PHP. 🟡 Tranche verticale livrée sur Gtk (7 classes, 54 méthodes, tests + différentiel PyGObject) ; extension Adw/GtkSource/Vte à suivre | 6–10 semaines |
 | **M2 — Runtime + façade OO** | ✅ Livré : boucle à source unique, timers PHP, fibres, sous-processus, erreurs centralisées, `Application` | 2–4 semaines |
 | **M3 — App de démonstration** | ✅ Adw livré (HeaderBar, Preferences, SwitchRow, Toast) ; éditeur GtkSourceView et terminal VTE à suivre | 2–3 semaines |
-| **M4 — IDE MVP** | arborescence projet, client LSP, runner de build, Xdebug, onglets | 3–5 mois |
+| **M4 — Éditeur + terminal** | ✅ GtkSourceView 5 (coloration PHP) et VTE (PTY réel) livrés | — |
+| **M5 — IDE MVP** | 🟡 navigateur, ouverture/sauvegarde, terminal, client LSP ; restent complétion, Xdebug, recherche | 3–5 mois |
 | **M5 — Packaging** | PHP statique + FFI, Flatpak (IDE), AppImage (apps), `.desktop` | 3–4 semaines |
 
 Total réaliste pour un MVP utilisable en solo : **9 à 15 mois**. En équipe de

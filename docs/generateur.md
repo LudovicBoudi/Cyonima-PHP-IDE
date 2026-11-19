@@ -1,7 +1,7 @@
 # Générateur de bindings
 
-> État M3 : 2 namespaces (Gtk, Adw), 23 classes, 113 méthodes, 3 signaux, 3 enums.
-> Cible suivante : GtkSourceView 5 et VTE.
+> État M5 : 4 namespaces (Gtk, Adw, GtkSource, Vte), 34 classes, 163 méthodes,
+> 5 signaux, 3 enums.
 
 ## Principe
 
@@ -123,6 +123,25 @@ Gtk\Raw\ApplicationWindow::create($app);      // conflit avec Window::new()
 Adw\Raw\ApplicationWindow::create($app);      // idem, via Gtk\ApplicationWindow
 ```
 
+### Signaux et prototypes typés
+
+Un pointeur de callback générique (`void*` partout) est ABI-compatible mais
+transmet un `gint` comme `CData` au lieu d'un `int`. Le runtime crée donc un
+cdef **par signature de signal**, mis en cache, et le générateur passe la liste
+des types C :
+
+```php
+// connectSignal(string $signal, callable $handler, array $cTypes, bool $async)
+$button->connectSignal('clicked', $handler, [], true);
+$terminal->connectSignal('child-exited', $handler, ['int'], false);
+```
+
+Les signaux à retour booléen (`close-request`) restent synchrones.
+
+Un wrapper détruit **déconnecte** ses handlers (`g_signal_handler_disconnect`)
+avant de relâcher sa référence : un widget parenté peut survivre à son wrapper
+PHP, et une trampoline C ne doit jamais pointer vers une closure libérée.
+
 ### Chaîne d'héritage
 
 Le générateur remonte les ancêtres jusqu'au premier **généré**. Exemple :
@@ -151,6 +170,9 @@ paramètres typés `GtkWidget*`.
 | `GObject.Object` | non généré : PHP réserve le nom de classe `Object`, `RawObject` sert de racine |
 | Ancêtre intermédiaire non généré | sauté vers l'ancêtre généré le plus proche |
 | Constructeur en conflit d'héritage | renommé `create()` |
+| `Vte.Terminal.spawn_async` (tableaux `char**` + callbacks) | pont runtime `Cyonima\Runtime\Vte` |
+| `GtkTextIter` (struct de 80 octets) | pont runtime `Cyonima\Runtime\GtkText` (blob aligné) |
+| Getter retournant un sous-type (`View::get_buffer()`) | construction explicite (`Buffer::new()` + `View::new_with_buffer()`) |
 
 Le rapport de génération liste explicitement chaque méthode ignorée et sa
 raison ; rien n'est écarté en silence.

@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 namespace Cyonima\Adw\Raw;
 
-class PreferencesRow extends \Cyonima\Gtk\Raw\Widget
+class PreferencesRow extends \Cyonima\Gtk\Raw\ListBoxRow
 {
     public const TYPE_NAME = 'AdwPreferencesRow';
 

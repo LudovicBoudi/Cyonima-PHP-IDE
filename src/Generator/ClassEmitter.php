@@ -133,7 +133,20 @@ final class ClassEmitter
     /** @return list<string> */
     private function signalLines(SignalInfo $signal): array
     {
-        $arity = count($signal->parameters);
+        $types = [];
+        foreach ($signal->parameters as $parameter) {
+            try {
+                $types[] = $this->mapper->cType($parameter->type);
+            } catch (\Throwable) {
+                $types[] = 'void*';
+            }
+        }
+
+        $typeList = '[' . implode(', ', array_map(
+            static fn (string $type): string => "'" . $type . "'",
+            $types,
+        )) . ']';
+
         return [
             sprintf(
                 '    public function on%s(callable $handler): int',
@@ -141,9 +154,9 @@ final class ClassEmitter
             ),
             '    {',
             sprintf(
-                '        return $this->connectSignal(self::SIGNAL_%s, $handler, %d, %s);',
+                '        return $this->connectSignal(self::SIGNAL_%s, $handler, %s, %s);',
                 self::constantName($signal->name),
-                $arity,
+                $typeList,
                 $signal->returnType->isVoid() ? 'true' : 'false',
             ),
             '    }',

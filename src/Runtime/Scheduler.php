@@ -133,6 +133,18 @@ final class Scheduler
 
         try {
             $value = $fiber->isStarted() ? $fiber->resume() : $fiber->start();
+        } catch (\FiberError $exception) {
+            // Contexte interdit (destruction, arrêt) : l'appelant décide.
+            if (!$fiber->isStarted()) {
+                throw $exception;
+            }
+            if (!$task->isSettled()) {
+                $task->error = $exception;
+                $task->state = Task::FAILED;
+                $task->settle();
+            }
+            Errors::report($exception, 'task');
+            return;
         } catch (\Throwable $exception) {
             if (!$task->isSettled()) {
                 $task->error = $exception;

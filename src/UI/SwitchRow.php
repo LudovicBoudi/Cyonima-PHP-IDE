@@ -45,7 +45,7 @@ final class SwitchRow extends Widget
      */
     public function onChanged(callable $handler): static
     {
-        $this->raw()->connectSignal('notify::active', fn () => $handler($this), 1);
+        $this->raw()->connectSignal('notify::active', fn () => $handler($this), ['void*']);
         return $this;
     }
 }

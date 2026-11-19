@@ -196,6 +196,29 @@ Trois écarts assumés par rapport au miroir strict du C :
    (`libgtk-4.so.1`, `libadwaita-1.so.0`), avec `adw_init()` dans le bootstrap
    du namespace Adw.
 
+### Notes d'implémentation GtkSourceView/VTE (M4)
+
+9. **Un cdef par signature de signal** : les callbacks libffi doivent connaître
+   le type exact des paramètres, sinon un `gint` arrive en `CData`. Les cdefs
+   sont générés à la demande et mis en cache par signature.
+10. **Constructeurs explicites plutôt que downcast** : `View::get_buffer()`
+    renvoie le type déclaré (`GtkTextBuffer`), pas le type réel. On construit
+    donc `GtkSourceBuffer` puis on l'injecte via `View::new_with_buffer()`.
+11. **Pont VTE** : `spawn_async` (tableaux + callbacks) reste hors du
+    générateur ; `Runtime\Vte` construit `argv` en mémoire C et gère la
+    callback de spawn.
+
+### Notes d'implémentation IDE (M5)
+
+12. **Lecture du buffer sans shim C** : `GtkTextIter` est une struct publique de
+    80 octets, alignement 8 (vérifié via GObject Introspection). `GtkText`
+    déclare un blob aligné de cette taille pour appeler `get_text`.
+13. **Déconnexion des signaux à la destruction du wrapper** : un GObject
+    parenté survit à son wrapper PHP ; sans `g_signal_handler_disconnect`, la
+    trampoline C pointerait vers une closure libérée.
+14. **LSP sur stdio** : client JSON-RPC minimal, non bloquant, branché sur le
+    tick. Aucune dépendance à un serveur particulier.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

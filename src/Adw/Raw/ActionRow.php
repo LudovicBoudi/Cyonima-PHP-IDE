@@ -50,6 +50,6 @@ class ActionRow extends \Cyonima\Adw\Raw\PreferencesRow
 
     public function onActivated(callable $handler): int
     {
-        return $this->connectSignal(self::SIGNAL_ACTIVATED, $handler, 0, true);
+        return $this->connectSignal(self::SIGNAL_ACTIVATED, $handler, [], true);
     }
 }

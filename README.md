@@ -17,7 +17,9 @@ Deux axes, un même socle :
 | M1 — Générateur de bindings | ✅ tranche verticale Gtk (7 classes, 54 méthodes, différentiel PyGObject) |
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
-| M4 — GtkSourceView / VTE | ⏭ prochain |
+| M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
+| M5 — IDE MVP | 🟡 navigateur de projet, ouverture/sauvegarde, client LSP ; restent complétion, Xdebug, recherche |
+| M6 — Packaging | ⏭ Flatpak, AppImage, PHP statique |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
 
@@ -33,6 +35,11 @@ composer generate
 composer demo -- --auto
 composer demo:async -- --auto
 composer demo:adw -- --auto
+composer demo:ide -- --auto
+
+# LSP optionnel (ici avec le faux serveur des tests)
+CYONIMA_LSP="php tests/fixtures/fake_lsp.php" \
+  php -d ffi.enable=true examples/ide.php --auto
 
 # Tests
 composer test
@@ -108,6 +115,31 @@ runtime  →  Loop (un tick GLib)  →  Scheduler (fibres)
 Le typelib est la source de vérité des bindings : une méthode absente de l'API
 fait échouer la génération, et un test différentiel contre PyGObject vérifie
 l'interprétation.
+
+## Exemple : mini IDE
+
+`examples/ide.php` assemble : navigateur de projet (`FileBrowser`), éditeur
+GtkSourceView avec ouverture/sauvegarde réelles, terminal VTE, exécution du
+fichier courant, et client LSP optionnel (`CYONIMA_LSP`).
+
+```php
+use Cyonima\Runtime\AdwApplication;
+use Cyonima\UI\{CodeEditor, Paned, ScrolledWindow, Terminal};
+
+$app = new AdwApplication('com.example.ide');
+$editor = new CodeEditor('php', $source);
+$terminal = new Terminal();
+$terminal->spawn(['/bin/bash']);
+
+$window = $app->window('Éditeur', 'GtkSourceView · VTE');
+$window->content(
+    (new Paned())->start(new ScrolledWindow($editor))->end($terminal),
+)->present();
+$app->run();
+```
+
+Le bouton « Exécuter » de `examples/ide.php` écrit le contenu de l'éditeur dans
+un fichier temporaire et l'envoie au shell du terminal.
 
 ## Documents
 

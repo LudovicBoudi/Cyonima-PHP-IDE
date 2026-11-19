@@ -137,6 +137,64 @@ sous-processus sont identiques aux applications GTK.
 `content()` (enveloppé dans un `ToastOverlay`), `toast()`, `onCloseRequest()`,
 `addCss()`.
 
+### Éditeur et terminal
+
+```php
+$editor = new CodeEditor('php', $source);   // GtkSourceView 5
+$editor->language('php')->scheme('Adwaita')->text($source);
+$editor->charCount();
+$editor->lineCount();
+
+$terminal = new Terminal();                  // VTE
+$terminal->spawn(['/bin/bash'], getcwd());
+$terminal->write("php script.php\n");
+$terminal->onChildExited(fn (Terminal $t, int $status) => ...);
+```
+
+`Terminal::spawn()` passe par `Runtime\Vte`, un pont FFI minimal : le typelib
+expose `spawn_async` avec des `char**` et deux callbacks, hors du périmètre du
+générateur. `child-exited` fournit le statut d'attente (`code << 8`), et il est
+connecté en synchrone : c'est une notification courte, pas une tâche.
+
+VTE 0.76 émet un `GLib-CRITICAL: g_utf8_make_valid` au démarrage d'un enfant.
+C'est du bruit amont, sans effet sur l'exécution (vérifié : le processus fils
+s'exécute et rend son code de sortie).
+
+### Navigateur de fichiers
+
+```php
+$browser = new FileBrowser($racine, function (string $path): void {
+    $editor->setText(file_get_contents($path));
+});
+$browser->refresh();
+$browser->open($path);   // équivaut à un clic
+```
+
+Une liste plate par répertoire (navigation par activation) évite
+`GtkTreeView` et ses iters. Les rows sont gardées en vie par le composant,
+donc leurs handlers aussi.
+
+### Client LSP
+
+```php
+$lsp = LspClient::start(['phpactor', 'language-server']);
+$lsp->attach();                     // lecture branchée sur le tick
+
+$lsp->on('textDocument/publishDiagnostics', function (array $params): void {
+    // params['diagnostics']
+});
+
+$lsp->initialize('file://' . $racine, function (array $result): void {
+    // capabilities
+});
+$lsp->didOpen('file:///chemin/fichier.php', 'php', $source);
+```
+
+JSON-RPC 2.0 sur stdio, framing `Content-Length`, transport non bloquant : la
+boucle GTK n'est jamais bloquée. `tests/fixtures/fake_lsp.php` sert de serveur
+de test reproductible ; n'importe quel serveur LSP réel peut être branché via
+`CYONIMA_LSP`.
+
 ## Pièges
 
 | Piège | Conséquence | Solution |
