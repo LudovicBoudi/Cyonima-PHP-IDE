@@ -8,8 +8,10 @@ use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
+use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\Button;
 use Cyonima\UI\CodeEditor;
+use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\FileBrowser;
 use Cyonima\UI\Paned;
 use Cyonima\UI\ScrolledWindow;
@@ -43,6 +45,9 @@ $loading = false;
 $lsp = null;
 $lspReady = false;
 $diagnosticCount = 0;
+$completionItems = 0;
+
+$popup = new CompletionPopup($editor);
 
 $terminal
     ->spawn(['/bin/bash'], $root, function (int $pid, ?string $error) use (&$spawnPid): void {
@@ -81,6 +86,7 @@ $openFile = function (string $path) use (
     $loading = true;
     $editor->language($language);
     $editor->setText((string) file_get_contents($path));
+    $editor->moveCursorToEnd();
     $loading = false;
 
     $currentFile = $path;
@@ -151,6 +157,121 @@ if ($lspCommand !== false && trim($lspCommand) !== '') {
     });
 }
 
+$complete = function () use (
+    $editor,
+    $lsp,
+    $popup,
+    $window,
+    &$lspReady,
+    &$currentFile,
+    &$completionItems,
+): void {
+    if ($lsp === null || !$lspReady || $currentFile === null) {
+        $window->toast('Complétion : LSP indisponible');
+        return;
+    }
+
+    $cursor = $editor->cursor();
+    $prefix = $editor->wordPrefix();
+
+    $lsp->request('textDocument/completion', [
+        'textDocument' => ['uri' => 'file://' . $currentFile],
+        'position' => ['line' => $cursor['line'], 'character' => $cursor['character']],
+    ], function (mixed $result) use ($editor, $popup, $prefix, &$completionItems): void {
+        $items = LspClient::normalizeCompletion($result);
+        $completionItems = count($items);
+        if ($items === []) {
+            return;
+        }
+
+        $popup->show($items, function (array $item) use ($editor, $prefix): void {
+            $length = function_exists('mb_strlen')
+                ? mb_strlen($prefix, 'UTF-8')
+                : strlen($prefix);
+            $editor->replacePrefix($length, $item['insertText'] ?? $item['label']);
+        });
+    });
+};
+
+// Ctrl+Espace déclenche la complétion ; le popover capte ensuite les flèches,
+// Entrée et Échap.
+$editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use ($popup, $complete): bool {
+    $control = ($state & 4) !== 0; // GDK_CONTROL_MASK
+
+    if ($control && $keyval === 0x20) { // Ctrl+Espace
+        $complete();
+        return true;
+    }
+
+    if (!$popup->visible()) {
+        return false;
+    }
+
+    return match ($keyval) {
+        0xff1b => $popup->hide() ?? true,          // Échap
+        0xff0d, 0xff8d => $popup->chooseCurrent() ?? true, // Entrée
+        0xff52 => $popup->move(-1) ?? true,        // Haut
+        0xff54 => $popup->move(1) ?? true,         // Bas
+        default => false,
+    };
+});
+
+$debugPort = (int) (getenv('CYONIMA_XDEBUG_PORT') ?: XdebugClient::DEFAULT_PORT);
+$debug = null;
+
+$debugButton = (new Button('Déboguer'))->onClicked(function () use (
+    $debugPort,
+    $window,
+    $editor,
+    $openFile,
+    &$debug,
+    &$currentFile,
+): void {
+    if ($debug !== null && $debug->isConnected()) {
+        $debug->run();
+        $window->toast('Reprise de l\'exécution');
+        return;
+    }
+
+    if ($debug === null) {
+        $debug = XdebugClient::listen($debugPort);
+        $debug->attach();
+
+        $debug->on('connect', function () use ($debug, $window, $editor, &$currentFile): void {
+            if ($currentFile !== null) {
+                $debug->setBreakpoint('file://' . $currentFile, $editor->cursor()['line'] + 1);
+            }
+            $window->toast('Xdebug connecté');
+        });
+
+        $debug->on('break', function (?string $fileUri, ?int $line) use (
+            $window,
+            $editor,
+            $openFile,
+            &$currentFile,
+        ): void {
+            if ($fileUri === null || $line === null) {
+                return;
+            }
+
+            $path = XdebugClient::localPath($fileUri);
+            if ($path !== $currentFile && is_file($path)) {
+                $openFile($path);
+            }
+
+            $editor->moveCursorToLine(max(0, $line - 1));
+            $window->subtitle(basename($path) . ' : ligne ' . $line);
+            $window->toast('Pause en ' . basename($path) . ':' . $line);
+        });
+
+        $debug->on('stop', function () use ($window): void {
+            $window->toast('Session de débogage terminée');
+        });
+    }
+
+    $window->toast('Xdebug en attente sur 127.0.0.1:' . $debugPort);
+});
+
 $browser = new FileBrowser($root, $openFile);
 
 $sidebar = (new ScrolledWindow($browser))->cssClass('sidebar');
@@ -166,14 +287,20 @@ $layout = (new Paned(Orientation::HORIZONTAL, 230))
     ->end($mainArea);
 
 $window
-    ->headerEnd($saveButton, $run)
+    ->headerEnd($saveButton, $debugButton, $run)
     ->content($layout)
     ->present();
 
+$sample = null;
+
 if ($auto) {
-    $sample = $root . '/hello.php';
+    // On travaille sur une copie : le scénario automatique sauvegarde.
+    $sample = sys_get_temp_dir() . '/cyonima_ide_demo.php';
+    copy($root . '/hello.php', $sample);
     Loop::after(300, fn () => $openFile($sample));
     Loop::after(500, fn () => $run->click());
+    Loop::after(800, fn () => $complete());
+    Loop::after(1100, fn () => $popup->chooseCurrent());
     Loop::after(1500, fn () => $save());
     Loop::after(1900, fn () => $window->raw()->close());
 }
@@ -181,13 +308,19 @@ if ($auto) {
 $app->run();
 
 $lsp?->stop();
+$debug?->close();
+
+if ($sample !== null && is_file($sample)) {
+    @unlink($sample);
+}
 
 printf(
-    "Fichier : %s | lignes : %d | caractères : %d | modifié : %s | pid terminal : %s | diagnostics LSP : %d\n",
+    "Fichier : %s | lignes : %d | caractères : %d | modifié : %s | terminal : %s | diagnostics : %d | propositions : %d\n",
     $currentFile ?? 'aucun',
     $editor->lineCount(),
     $editor->charCount(),
     $dirty ? 'oui' : 'non',
     $spawnPid ?? 'aucun',
     $diagnosticCount,
+    $completionItems,
 );

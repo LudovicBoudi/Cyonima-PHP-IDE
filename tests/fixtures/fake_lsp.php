@@ -85,6 +85,30 @@ while (($message = readMessage()) !== null) {
             ]);
             break;
 
+        case 'textDocument/completion':
+            sendMessage([
+                'jsonrpc' => '2.0',
+                'id' => $id,
+                'result' => [
+                    'isIncomplete' => false,
+                    'items' => [
+                        [
+                            'label' => 'strlen',
+                            'kind' => 3,
+                            'detail' => 'int strlen(string $string)',
+                            'insertText' => 'strlen',
+                        ],
+                        [
+                            'label' => 'str_replace',
+                            'kind' => 3,
+                            'detail' => 'string str_replace(...)',
+                            'insertText' => 'str_replace',
+                        ],
+                    ],
+                ],
+            ]);
+            break;
+
         case 'shutdown':
             sendMessage(['jsonrpc' => '2.0', 'id' => $id, 'result' => null]);
             break;

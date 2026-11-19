@@ -1,5 +1,8 @@
 [
     "Gtk/Raw/Widget.php",
+    "Gtk/Raw/EventController.php",
+    "Gtk/Raw/EventControllerKey.php",
+    "Gtk/Raw/Popover.php",
     "Gtk/Raw/Window.php",
     "Gtk/Raw/Application.php",
     "Gtk/Raw/ApplicationWindow.php",

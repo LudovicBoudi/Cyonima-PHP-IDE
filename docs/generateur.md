@@ -1,7 +1,7 @@
 # Générateur de bindings
 
-> État M5 : 4 namespaces (Gtk, Adw, GtkSource, Vte), 34 classes, 163 méthodes,
-> 5 signaux, 3 enums.
+> État M5 : 4 namespaces (Gtk, Adw, GtkSource, Vte), 37 classes, 174 méthodes,
+> 6 signaux, 3 enums.
 
 ## Principe
 

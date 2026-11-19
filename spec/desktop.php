@@ -58,6 +58,33 @@ return [
                 'get_width' => [],
                 'get_height' => [],
                 'get_parent' => [],
+                'get_visible' => [],
+                'add_controller' => ['controller'],
+                'set_parent' => ['parent'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\EventController' => [
+            'methods' => [],
+            'signals' => false,
+        ],
+
+        'Gtk\\EventControllerKey' => [
+            'methods' => [
+                'new' => [],
+            ],
+            'signals' => ['key-pressed'],
+        ],
+
+        'Gtk\\Popover' => [
+            'methods' => [
+                'new' => [],
+                'set_child' => ['child'],
+                'set_has_arrow' => ['hasArrow'],
+                'set_autohide' => ['autohide'],
+                'popup' => [],
+                'popdown' => [],
             ],
             'signals' => false,
         ],
@@ -129,6 +156,7 @@ return [
                 'remove' => ['child'],
                 'remove_all' => [],
                 'select_row' => ['row'],
+                'get_selected_row' => [],
                 'set_selection_mode' => ['mode'],
             ],
             'signals' => false,

@@ -175,6 +175,41 @@ final class LspClient
         }
     }
 
+    /**
+     * Normalise une réponse `textDocument/completion` (liste ou CompletionList).
+     *
+     * @return list<array{label: string, insertText: ?string, detail: string, kind: int}>
+     */
+    public static function normalizeCompletion(mixed $result): array
+    {
+        if (!is_array($result)) {
+            return [];
+        }
+
+        $items = $result['items'] ?? $result;
+        if (!is_array($items)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($items as $item) {
+            if (!is_array($item) || !isset($item['label'])) {
+                continue;
+            }
+
+            $normalized[] = [
+                'label' => (string) $item['label'],
+                'insertText' => isset($item['insertText']) && is_string($item['insertText'])
+                    ? $item['insertText']
+                    : null,
+                'detail' => isset($item['detail']) && is_string($item['detail']) ? $item['detail'] : '',
+                'kind' => (int) ($item['kind'] ?? 0),
+            ];
+        }
+
+        return $normalized;
+    }
+
     /** @return list<string> dernières lignes de stderr du serveur */
     public function stderr(): array
     {

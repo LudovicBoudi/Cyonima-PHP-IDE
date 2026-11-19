@@ -106,4 +106,20 @@ class Widget extends RawObject
         $result = Symbols::get()->gtk_widget_get_parent($this->handle);
         return $result === null ? null : \Cyonima\Gtk\Raw\Widget::wrap($result, false);
     }
+
+    public function getVisible(): bool
+    {
+        $result = Symbols::get()->gtk_widget_get_visible($this->handle);
+        return ($result) !== 0;
+    }
+
+    public function addController(?\Cyonima\Gtk\Raw\EventController $controller): void
+    {
+        Symbols::get()->gtk_widget_add_controller($this->handle, $controller?->handle());
+    }
+
+    public function setParent(?\Cyonima\Gtk\Raw\Widget $parent): void
+    {
+        Symbols::get()->gtk_widget_set_parent($this->handle, $parent?->handle());
+    }
 }

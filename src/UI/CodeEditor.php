@@ -7,6 +7,7 @@ namespace Cyonima\UI;
 use Cyonima\GtkSource\Raw\Buffer as RawBuffer;
 use Cyonima\GtkSource\Raw\LanguageManager;
 use Cyonima\GtkSource\Raw\StyleSchemeManager;
+use Cyonima\Gtk\Raw\EventControllerKey as RawEventControllerKey;
 use Cyonima\GtkSource\Raw\View as RawView;
 use Cyonima\Runtime\GtkText;
 
@@ -20,6 +21,7 @@ use Cyonima\Runtime\GtkText;
 final class CodeEditor extends Widget
 {
     private RawBuffer $buffer;
+    private ?RawEventControllerKey $keyController = null;
 
     public function __construct(string $language = 'php', string $text = '')
     {
@@ -94,6 +96,55 @@ final class CodeEditor extends Widget
     public function onChanged(callable $handler): static
     {
         $this->buffer->connectSignal('changed', fn () => $handler($this), [], true);
+        return $this;
+    }
+
+    /** @return array{offset: int, line: int, character: int} */
+    public function cursor(): array
+    {
+        return GtkText::cursor($this->buffer->handle());
+    }
+
+    /** Mot en cours de frappe avant le curseur. */
+    public function wordPrefix(): string
+    {
+        return GtkText::wordPrefix($this->buffer->handle());
+    }
+
+    public function replacePrefix(int $characters, string $replacement): void
+    {
+        GtkText::replacePrefix($this->buffer->handle(), $characters, $replacement);
+    }
+
+    public function moveCursorToEnd(): static
+    {
+        GtkText::moveCursorToEnd($this->buffer->handle());
+        return $this;
+    }
+
+    /** Ligne 0-indexée (DBGp compte à partir de 1 : soustraire côté appelant). */
+    public function moveCursorToLine(int $line): static
+    {
+        GtkText::moveCursorToLine($this->buffer->handle(), $line);
+        return $this;
+    }
+
+    /**
+     * Handler : function (CodeEditor $editor, int $keyval, int $state): bool
+     * Retourner true consomme la touche.
+     */
+    public function onKeyPressed(callable $handler): static
+    {
+        if ($this->keyController === null) {
+            $this->keyController = RawEventControllerKey::new();
+            $this->raw()->addController($this->keyController);
+        }
+
+        $this->keyController->onKeyPressed(
+            fn ($controller, int $keyval, int $keycode, int $state): bool
+                => (bool) $handler($this, $keyval, $state),
+        );
+
         return $this;
     }
 

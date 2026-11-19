@@ -23,6 +23,7 @@ use Cyonima\Runtime\Errors;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
+use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
@@ -517,7 +518,150 @@ T::same(
 $lsp->stop();
 
 // ---------------------------------------------------------------------------
-T::section('9. Différentiel PyGObject (si disponible)');
+T::section('9. Complétion LSP et popover');
+
+Kernel::reset();
+Loop::reset();
+Scheduler::reset();
+
+$completionWindow = new UI\Window('Completion', 520, 320);
+$completionEditor = new UI\CodeEditor('php', "<?php\nstrl");
+$completionWindow
+    ->setChild($completionEditor)
+    ->onCloseRequest(fn () => Loop::quit())
+    ->present();
+$completionEditor->moveCursorToEnd();
+
+T::same(
+    ['offset' => 10, 'line' => 1, 'character' => 4],
+    $completionEditor->cursor(),
+    'position du curseur (ligne, caractère, offset)',
+);
+T::same('strl', $completionEditor->wordPrefix(), 'préfixe de mot avant le curseur');
+
+$popup = new UI\CompletionPopup($completionEditor);
+$completionLsp = LspClient::start([PHP_BINARY, __DIR__ . '/fixtures/fake_lsp.php']);
+$completionLsp->attach();
+
+$completionItems = [];
+$inserted = false;
+$visibleAfterShow = false;
+$hiddenAfterChoose = false;
+
+$completionLsp->initialize('file://' . dirname(__DIR__), function () use (
+    $completionLsp,
+    $completionEditor,
+    $popup,
+    &$completionItems,
+    &$inserted,
+    &$visibleAfterShow,
+    &$hiddenAfterChoose,
+): void {
+    $cursor = $completionEditor->cursor();
+    $prefix = $completionEditor->wordPrefix();
+
+    $completionLsp->request('textDocument/completion', [
+        'textDocument' => ['uri' => 'file:///tmp/cyonima_completion.php'],
+        'position' => ['line' => $cursor['line'], 'character' => $cursor['character']],
+    ], function (mixed $result) use (
+        $completionEditor,
+        $popup,
+        $prefix,
+        &$completionItems,
+        &$inserted,
+        &$visibleAfterShow,
+        &$hiddenAfterChoose,
+    ): void {
+        $completionItems = LspClient::normalizeCompletion($result);
+        if ($completionItems === []) {
+            Loop::quit();
+            return;
+        }
+
+        $popup->show($completionItems, function (array $item) use ($completionEditor, $prefix, &$inserted): void {
+            $completionEditor->replacePrefix(strlen($prefix), $item['insertText'] ?? $item['label']);
+            $inserted = true;
+            Loop::quit();
+        });
+
+        $visibleAfterShow = $popup->visible();
+        $popup->chooseCurrent();
+        $hiddenAfterChoose = !$popup->visible();
+    });
+});
+
+Loop::after(3000, fn () => Loop::quit());
+Loop::run();
+
+T::same(2, count($completionItems), 'deux propositions normalisées');
+T::ok($visibleAfterShow, 'le popover est visible après show()');
+T::ok($hiddenAfterChoose, 'le popover est fermé après sélection');
+T::ok($inserted, 'callback de sélection exécuté');
+T::same("<?php\nstrlen", $completionEditor->text(), 'le préfixe est remplacé par la proposition');
+
+$completionLsp->stop();
+
+// ---------------------------------------------------------------------------
+T::section('10. Débogueur Xdebug (DBGp)');
+
+Kernel::reset();
+Loop::reset();
+Kernel::boot();
+
+$debug = XdebugClient::listen(0);
+$debug->attach();
+
+$breaks = [];
+$connected = false;
+$stopped = false;
+
+$debug->on('connect', function (?string $fileUri) use ($debug, &$connected): void {
+    $connected = true;
+    $debug->setBreakpoint('file:///tmp/demo.php', 3);
+});
+
+$debug->on('break', function (?string $fileUri, ?int $line) use (&$breaks, $debug): void {
+    $breaks[] = [XdebugClient::localPath((string) $fileUri), (int) $line];
+
+    if (count($breaks) === 1) {
+        $debug->stepInto();
+    } else {
+        $debug->stop();
+    }
+});
+
+$debug->on('stop', function () use (&$stopped): void {
+    $stopped = true;
+    Loop::quit();
+});
+
+$fake = Process::start([
+    PHP_BINARY,
+    __DIR__ . '/fixtures/fake_xdebug.php',
+    (string) $debug->port(),
+]);
+
+Loop::after(3000, fn () => Loop::quit());
+Loop::run();
+
+T::ok($connected, 'Xdebug se connecte et envoie init');
+T::same([['/tmp/demo.php', 4], ['/tmp/demo.php', 5]], $breaks, 'arrêt initial puis pas-à-pas');
+T::ok($stopped, 'la commande stop est honorée');
+T::ok(!$debug->isPaused(), 'plus en pause après stop');
+
+$debug->close();
+Process::terminateAll();
+
+$cursorEditor = new UI\CodeEditor('php', "ligne1\nligne2\nligne3");
+$cursorEditor->moveCursorToLine(1);
+T::same(1, $cursorEditor->cursor()['line'], 'curseur déplacé sur la ligne demandée');
+T::same('', $cursorEditor->wordPrefix(), 'curseur en début de ligne : préfixe vide');
+
+$cursorEditor->moveCursorToEnd();
+T::same('ligne3', $cursorEditor->wordPrefix(), 'préfixe relu en fin de fichier');
+
+// ---------------------------------------------------------------------------
+T::section('11. Différentiel PyGObject (si disponible)');
 
 $py = python('import gi; gi.require_version("Gtk", "4.0"); from gi.repository import Gtk; print(int(Gtk.Orientation.VERTICAL), int(Gtk.Align.CENTER))');
 if ($py === null) {

@@ -195,6 +195,51 @@ boucle GTK n'est jamais bloquée. `tests/fixtures/fake_lsp.php` sert de serveur
 de test reproductible ; n'importe quel serveur LSP réel peut être branché via
 `CYONIMA_LSP`.
 
+### Complétion
+
+```php
+$popup = new CompletionPopup($editor);
+
+$editor->onKeyPressed(function (CodeEditor $e, int $keyval, int $state) use ($popup): bool {
+    if (($state & 4) !== 0 && $keyval === 0x20) { /* Ctrl+Espace */ }
+    // flèches / Entrée / Échap quand le popover est visible
+});
+
+$lsp->request('textDocument/completion', [
+    'textDocument' => ['uri' => $uri],
+    'position' => $editor->cursor(),   // ['line' => …, 'character' => …]
+], function (mixed $result) use ($popup, $editor): void {
+    $items = LspClient::normalizeCompletion($result);
+    $popup->show($items, function (array $item) use ($editor): void {
+        $editor->replacePrefix(mb_strlen($editor->wordPrefix()), $item['insertText'] ?? $item['label']);
+    });
+});
+```
+
+`GtkText` fournit `cursor()`, `wordPrefix()` et `replacePrefix()` en manipulant
+les `GtkTextIter` via le blob aligné de 80 octets. C'est ce qui permet de
+remplacer le mot en cours sans shim C.
+
+### Débogueur Xdebug
+
+```php
+$debug = XdebugClient::listen(9003);   // l'IDE écoute, Xdebug se connecte
+$debug->attach();
+
+$debug->on('connect', function (string $fileUri, ?string $ideKey): void { /* … */ });
+$debug->on('break', function (string $fileUri, int $line): void { /* pause */ });
+$debug->on('stop', function (): void { /* session terminée */ });
+
+$debug->setBreakpoint('file:///chemin/script.php', 12);
+$debug->stepOver();
+$debug->run();
+```
+
+Protocole DBGp : paquets XML terminés par un octet NUL, transport non
+bloquant branché sur le tick. L'IDE pose les points d'arrêt, reçoit les pauses
+(`status="break"` + `<xdebug:message filename lineno>`), puis reprend ou
+avance. `tests/fixtures/fake_xdebug.php` simule un moteur pour les tests.
+
 ## Pièges
 
 | Piège | Conséquence | Solution |

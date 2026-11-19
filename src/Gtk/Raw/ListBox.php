@@ -40,6 +40,12 @@ class ListBox extends \Cyonima\Gtk\Raw\Widget
         Symbols::get()->gtk_list_box_select_row($this->handle, $row?->handle());
     }
 
+    public function getSelectedRow(): ?\Cyonima\Gtk\Raw\ListBoxRow
+    {
+        $result = Symbols::get()->gtk_list_box_get_selected_row($this->handle);
+        return $result === null ? null : \Cyonima\Gtk\Raw\ListBoxRow::wrap($result, false);
+    }
+
     public function setSelectionMode(int $mode): void
     {
         Symbols::get()->gtk_list_box_set_selection_mode($this->handle, $mode);

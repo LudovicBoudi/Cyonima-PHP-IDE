@@ -219,6 +219,18 @@ Trois écarts assumés par rapport au miroir strict du C :
 14. **LSP sur stdio** : client JSON-RPC minimal, non bloquant, branché sur le
     tick. Aucune dépendance à un serveur particulier.
 
+15. **Complétion sans widget dédié** : `GtkPopover` + `GtkListBox` + un
+    `GtkEventControllerKey` sur l'éditeur. Le popover ne prend pas le focus,
+    donc les flèches/Entrée/Échap restent gérées par l'éditeur.
+
+16. **Parsing DBGp** : sur un nœud d'un namespace non par défaut, l'accès
+    tableau SimpleXML (`$node['attr']`) ne résout pas les attributs ; il faut
+    `$node->attributes()`. Les événements du client Xdebug sont émis avec des
+    arguments positionnels (PHP 8 interpréterait un tableau à clés string
+    comme des arguments nommés).
+17. **Le débogueur n'ajoute aucun binding** : DBGp est du XML sur TCP, hors du
+    périmètre du générateur. `XdebugClient` est un composant runtime.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

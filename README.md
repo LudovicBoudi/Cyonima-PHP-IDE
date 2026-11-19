@@ -18,7 +18,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 navigateur de projet, ouverture/sauvegarde, client LSP ; restent complétion, Xdebug, recherche |
+| M5 — IDE MVP | 🟡 navigateur, édition/sauvegarde, terminal, LSP (diagnostics + complétion), débogueur Xdebug ; restent variables, recherche |
 | M6 — Packaging | ⏭ Flatpak, AppImage, PHP statique |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -121,6 +121,24 @@ l'interprétation.
 `examples/ide.php` assemble : navigateur de projet (`FileBrowser`), éditeur
 GtkSourceView avec ouverture/sauvegarde réelles, terminal VTE, exécution du
 fichier courant, et client LSP optionnel (`CYONIMA_LSP`).
+
+Avec un serveur LSP, `Ctrl+Espace` ouvre le popover de complétion ; les flèches
+naviguent, `Entrée` insère, `Échap` ferme. Sans serveur, le reste de l'IDE
+fonctionne normalement.
+
+## Débogage Xdebug
+
+L'IDE écoute sur `127.0.0.1:9003` (`CYONIMA_XDEBUG_PORT` pour changer). Avec
+Xdebug installé :
+
+```bash
+XDEBUG_MODE=debug XDEBUG_SESSION=1 php chemin/script.php
+```
+
+Cliquer « Déboguer » dans l'IDE : la session se connecte, un point d'arrêt est
+posé sur le fichier courant, et chaque pause ouvre le fichier à la bonne ligne.
+Pas-à-pas (`step_into`/`step_over`/`step_out`), reprise et arrêt sont pilotés
+par le protocole DBGp.
 
 ```php
 use Cyonima\Runtime\AdwApplication;
