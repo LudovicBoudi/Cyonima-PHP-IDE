@@ -1,0 +1,28 @@
+{
+    "name": "cyonima/php-ide",
+    "description": "IDE PHP 8 et runtime d'applications desktop natives GTK4",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.3",
+        "ext-ffi": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cyonima\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Cyonima\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "generate": "php -d ffi.enable=true bin/cyonima-gen generate",
+        "demo": "php -d ffi.enable=true examples/counter.php",
+        "test": "php -d ffi.enable=true tests/run.php"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

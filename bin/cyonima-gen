@@ -1,0 +1,155 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Cyonima\Introspection\CallableInfo;
+use Cyonima\Introspection\EnumInfo;
+use Cyonima\Introspection\Gi;
+use Cyonima\Introspection\ObjectInfo;
+use Cyonima\Introspection\Reader;
+
+$argv = $_SERVER['argv'];
+$command = $argv[1] ?? 'help';
+
+function describeCallable(CallableInfo $callable, bool $withFlags = false): string
+{
+    $params = array_map(
+        static fn ($p) => sprintf(
+            '%s%s: %s%s',
+            $p->isOut() ? 'out ' : '',
+            $p->name,
+            $p->type->describe(),
+            $p->optional ? ' = ?' : '',
+        ),
+        $callable->parameters,
+    );
+
+    $flags = '';
+    if ($withFlags) {
+        $list = [];
+        if ($callable->isConstructor()) {
+            $list[] = 'ctor';
+        }
+        if ($callable->isMethod()) {
+            $list[] = 'method';
+        }
+        if ($callable->isGetter()) {
+            $list[] = 'getter';
+        }
+        if ($callable->isSetter()) {
+            $list[] = 'setter';
+        }
+        if ($callable->throws) {
+            $list[] = 'throws';
+        }
+        $flags = $list === [] ? '' : ' [' . implode(',', $list) . ']';
+    }
+
+    return sprintf(
+        '%s%s(%s) → %s',
+        $callable->name,
+        $flags,
+        implode(', ', $params),
+        $callable->returnType->describe(),
+    );
+}
+
+function showObject(ObjectInfo $object): void
+{
+    printf("%s (%s)\n", $object->fqcn(), $object->isInterface() ? 'interface' : 'class');
+    if ($object->parentFqcn !== null) {
+        printf("  parent: %s\n", $object->parentFqcn);
+    }
+    if ($object->deprecated) {
+        echo "  [deprecated]\n";
+    }
+    printf("  méthodes: %d\n", count($object->methods));
+    foreach ($object->methods as $method) {
+        printf("    %s\n", describeCallable($method, true));
+    }
+    printf("  signaux: %d\n", count($object->signals));
+    foreach ($object->signals as $signal) {
+        printf(
+            "    %s(%s) → %s\n",
+            $signal->name,
+            implode(', ', array_map(
+                static fn ($p) => $p->name . ': ' . $p->type->describe(),
+                $signal->parameters,
+            )),
+            $signal->returnType->describe(),
+        );
+    }
+}
+
+function showEnum(EnumInfo $enum): void
+{
+    printf("%s (%s)\n", $enum->fqcn(), $enum->isFlags ? 'flags' : 'enum');
+    foreach ($enum->values as $name => $value) {
+        printf("  %s = %d\n", $name, $value);
+    }
+}
+
+$reader = new Reader();
+$namespace = $argv[2] ?? 'Gtk';
+$version = $argv[3] ?? '4.0';
+
+try {
+    switch ($command) {
+        case 'inspect':
+            $reader->gi()->require($namespace, $version);
+            $scan = $reader->scan($namespace, $version);
+            $wanted = $argv[4] ?? null;
+            if ($wanted === null) {
+                echo "Types objets :\n";
+                foreach ($scan['objects'] as $object) {
+                    printf("  %-28s %s\n", $object->name, $object->isInterface() ? 'interface' : 'class');
+                }
+                echo "\nEnums/flags :\n";
+                foreach ($scan['enums'] as $enum) {
+                    printf("  %-28s %s\n", $enum->name, $enum->isFlags ? 'flags' : 'enum');
+                }
+                echo "\nFonctions libres : ", count($scan['functions']), "\n";
+                break;
+            }
+            foreach ($scan['objects'] as $object) {
+                if ($object->name === $wanted) {
+                    showObject($object);
+                }
+            }
+            foreach ($scan['enums'] as $enum) {
+                if ($enum->name === $wanted) {
+                    showEnum($enum);
+                }
+            }
+            break;
+
+        case 'functions':
+            $scan = $reader->scan($namespace, $version);
+            foreach ($scan['functions'] as $function) {
+                printf("%s\n", describeCallable($function));
+            }
+            break;
+
+        case 'generate':
+            $specPath = $argv[2] ?? dirname(__DIR__) . '/spec/gtk-slice.php';
+            $generator = new \Cyonima\Generator\Generator(
+                \Cyonima\Generator\Spec::fromFile($specPath),
+            );
+            echo $generator->generate()->render();
+            break;
+
+        default:
+            echo <<<HELP
+            Utilisation :
+              cyonima-gen inspect <Namespace> <version> [Type]   Décrit un namespace ou un type
+              cyonima-gen functions <Namespace> <version>        Liste les fonctions libres
+
+            HELP;
+    }
+} catch (Throwable $e) {
+    fwrite(STDERR, 'Erreur : ' . $e->getMessage() . "\n");
+    exit(1);
+}

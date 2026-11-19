@@ -1,0 +1,12 @@
+[
+    "Gtk/Raw/Widget.php",
+    "Gtk/Raw/Window.php",
+    "Gtk/Raw/Box.php",
+    "Gtk/Raw/Label.php",
+    "Gtk/Raw/Button.php",
+    "Gtk/Raw/CssProvider.php",
+    "Gtk/Raw/StyleContext.php",
+    "Gtk/Raw/Orientation.php",
+    "Gtk/Raw/Align.php",
+    "Gtk/Raw/Symbols.php"
+]
