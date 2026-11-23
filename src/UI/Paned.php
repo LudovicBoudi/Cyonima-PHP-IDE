@@ -42,4 +42,16 @@ final class Paned extends Widget
         $this->raw()->setPosition($pixels);
         return $this;
     }
+
+    public function resizeStart(bool $resize): static
+    {
+        $this->raw()->setResizeStartChild($resize);
+        return $this;
+    }
+
+    public function shrinkStart(bool $shrink): static
+    {
+        $this->raw()->setShrinkStartChild($shrink);
+        return $this;
+    }
 }

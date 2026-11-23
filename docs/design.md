@@ -51,6 +51,28 @@ Composants :
 | Sélection de liste | `#094771` |
 | Survol de liste | `#2a2d2e` |
 
+## Explorateur redimensionnable
+
+La zone latérale et l'éditeur sont dans un `GtkPaned` horizontal (position
+initiale 270 px, largeur minimale 180 px). `resize_start_child=false` : quand on
+redimensionne la fenêtre, c'est l'éditeur qui grandit, pas l'explorateur. Le
+séparateur se glisse à la souris.
+
+## IntelliSense
+
+![Popup IntelliSense](screenshot-intellisense.png)
+
+- déclenchement automatique **180 ms** après une frappe quand le préfixe fait
+  au moins 2 caractères (ou après `.`/`>` quand un serveur LSP est actif) ;
+- `Ctrl+Espace` force la liste ;
+- popup **ancré au curseur** : `gtk_text_view_get_cursor_locations()` +
+  `gtk_popover_set_pointing_to()` ;
+- **sans LSP** : suggestions PHP intégrées (`PhpIntellisense`) — mots-clés et
+  fonctions avec signatures ;
+- **avec LSP** : résultats du serveur, repli local si la réponse est vide ;
+- après insertion, une fenêtre de suppression de 400 ms évite le
+  redéclenchement (le buffer émet deux signaux `changed`).
+
 ## Schéma d'éditeur
 
 `src/UI/Theme.php` embarque un schéma GtkSourceView `vs-dark` (XML) et l'installe

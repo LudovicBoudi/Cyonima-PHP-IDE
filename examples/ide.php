@@ -8,6 +8,7 @@ use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
+use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\Box;
 use Cyonima\UI\CodeEditor;
@@ -121,6 +122,10 @@ $openFile = function (string $path) use (
     }
 };
 
+$complete = null;
+$intellisenseTimer = null;
+$suppressIntellisenseUntil = 0.0;
+
 $editor->onChanged(function () use (
     &$dirty,
     &$loading,
@@ -128,6 +133,10 @@ $editor->onChanged(function () use (
     $window,
     $updateTab,
     $updateCursor,
+    &$complete,
+    &$intellisenseTimer,
+    &$suppressIntellisenseUntil,
+    $editor,
 ): void {
     if ($loading || $currentFile === null) {
         return;
@@ -137,6 +146,41 @@ $editor->onChanged(function () use (
     $window->subtitle(basename($currentFile) . ' •');
     $updateTab($currentFile, true);
     $updateCursor();
+
+    if (Loop::now() < $suppressIntellisenseUntil) {
+        return;
+    }
+
+    if ($intellisenseTimer !== null) {
+        Loop::cancelTimer($intellisenseTimer);
+    }
+
+    $intellisenseTimer = Loop::after(180, function () use (
+        &$intellisenseTimer,
+        &$complete,
+        &$suppressIntellisenseUntil,
+        $editor,
+    ): void {
+        $intellisenseTimer = null;
+
+        if (Loop::now() < $suppressIntellisenseUntil) {
+            return;
+        }
+
+        if ($complete === null) {
+            return;
+        }
+
+        $prefix = $editor->wordPrefix();
+        $before = $editor->charBeforeCursor();
+        $memberAccess = in_array($before, [46, 62, 58, 92], true); // . > : \\
+
+        if (strlen($prefix) < 2 && !$memberAccess) {
+            return;
+        }
+
+        $complete(true);
+    });
 });
 
 $save = function () use ($editor, $window, $updateTab, &$currentFile, &$dirty): bool {
@@ -183,39 +227,81 @@ if ($lspCommand !== false && trim($lspCommand) !== '') {
     });
 }
 
-$complete = function () use (
+$complete = function (bool $auto = false) use (
     $editor,
     $lsp,
     $popup,
-    $window,
     &$lspReady,
     &$currentFile,
     &$completionItems,
+    &$suppressIntellisenseUntil,
+    &$intellisenseTimer,
 ): void {
-    if ($lsp === null || !$lspReady || $currentFile === null) {
-        $window->toast('Complétion : LSP indisponible');
+    if ($currentFile === null) {
+        return;
+    }
+
+    $prefix = $editor->wordPrefix();
+    $caret = $editor->cursorRect();
+
+    $insert = function (array $item) use (
+        $editor,
+        $prefix,
+        &$suppressIntellisenseUntil,
+        &$intellisenseTimer,
+    ): void {
+        $suppressIntellisenseUntil = Loop::now() + 400;
+
+        if ($intellisenseTimer !== null) {
+            Loop::cancelTimer($intellisenseTimer);
+            $intellisenseTimer = null;
+        }
+
+        $length = function_exists('mb_strlen')
+            ? mb_strlen($prefix, 'UTF-8')
+            : strlen($prefix);
+        $editor->replacePrefix($length, $item['insertText'] ?? $item['label']);
+    };
+
+    // Sans serveur LSP : suggestions PHP intégrées.
+    if ($lsp === null || !$lspReady) {
+        if ($auto && strlen($prefix) < 2) {
+            return;
+        }
+
+        $items = PhpIntellisense::suggest($prefix);
+        $completionItems = count($items);
+        if ($items !== []) {
+            $popup->show($items, $insert, $caret);
+        }
         return;
     }
 
     $cursor = $editor->cursor();
-    $prefix = $editor->wordPrefix();
 
     $lsp->request('textDocument/completion', [
         'textDocument' => ['uri' => 'file://' . $currentFile],
         'position' => ['line' => $cursor['line'], 'character' => $cursor['character']],
-    ], function (mixed $result) use ($editor, $popup, $prefix, &$completionItems): void {
+    ], function (mixed $result) use (
+        $popup,
+        $insert,
+        $caret,
+        $prefix,
+        &$completionItems,
+    ): void {
         $items = LspClient::normalizeCompletion($result);
+
+        // Repli local si le serveur ne propose rien.
+        if ($items === [] && $prefix !== '') {
+            $items = PhpIntellisense::suggest($prefix);
+        }
+
         $completionItems = count($items);
         if ($items === []) {
             return;
         }
 
-        $popup->show($items, function (array $item) use ($editor, $prefix): void {
-            $length = function_exists('mb_strlen')
-                ? mb_strlen($prefix, 'UTF-8')
-                : strlen($prefix);
-            $editor->replacePrefix($length, $item['insertText'] ?? $item['label']);
-        });
+        $popup->show($items, $insert, $caret);
     });
 };
 
@@ -229,7 +315,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $control = ($state & 4) !== 0; // GDK_CONTROL_MASK
 
     if ($control && $keyval === 0x20) { // Ctrl+Espace
-        $complete();
+        $complete(false);
         return true;
     }
 
@@ -282,7 +368,7 @@ $panelPages = (new Box(Orientation::VERTICAL, 0))
 $sidePanel = (new Box(Orientation::VERTICAL, 0))
     ->cssClass('side-panel')
     ->append($panelHeader, $panelPages);
-$sidePanel->raw()->setSizeRequest(270, -1);
+$sidePanel->raw()->setSizeRequest(180, -1);
 
 $showExplorer = function () use (
     $explorerPage,
@@ -358,8 +444,15 @@ $mainColumn = (new Box(Orientation::VERTICAL, 0))
     ->append($tabBar, $mainSplit)
     ->expand();
 
+$workspace = (new Paned(Orientation::HORIZONTAL, 270))
+    ->start($sidePanel)
+    ->end($mainColumn)
+    ->expand()
+    ->resizeStart(false)
+    ->shrinkStart(true);
+
 $body = (new Box(Orientation::HORIZONTAL, 0))
-    ->append($activityBar, $sidePanel, $mainColumn)
+    ->append($activityBar, $workspace)
     ->expand();
 
 // --- Barre de statut -------------------------------------------------------
@@ -473,10 +566,14 @@ if ($auto) {
     copy($root . '/hello.php', $sample);
     Loop::after(300, fn () => $openFile($sample));
     Loop::after(500, fn () => $runButton->click());
-    Loop::after(800, fn () => $complete());
-    Loop::after(1100, fn () => $popup->chooseCurrent());
-    Loop::after(1500, fn () => $save());
-    Loop::after(1900, fn () => $window->raw()->close());
+    Loop::after(700, function () use ($editor): void {
+        $editor->setText($editor->text() . "\nstr");
+        $editor->moveCursorToEnd();
+    });
+    Loop::after(950, fn () => $complete(false));
+    Loop::after(1250, fn () => $popup->chooseCurrent());
+    Loop::after(1600, fn () => $save());
+    Loop::after(1950, fn () => $window->raw()->close());
 }
 
 $app->run();

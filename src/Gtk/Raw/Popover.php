@@ -35,6 +35,11 @@ class Popover extends \Cyonima\Gtk\Raw\Widget
         Symbols::get()->gtk_popover_set_autohide($this->handle, ($autohide) ? 1 : 0);
     }
 
+    public function setPointingTo(?\FFI\CData $pointingTo): void
+    {
+        Symbols::get()->gtk_popover_set_pointing_to($this->handle, $pointingTo);
+    }
+
     public function popup(): void
     {
         Symbols::get()->gtk_popover_popup($this->handle);

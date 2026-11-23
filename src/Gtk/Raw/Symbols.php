@@ -67,6 +67,7 @@ void gtk_popover_popup(void *self);
 void gtk_popover_set_autohide(void *self, int arg0);
 void gtk_popover_set_child(void *self, void* arg0);
 void gtk_popover_set_has_arrow(void *self, int arg0);
+void gtk_popover_set_pointing_to(void *self, void* arg0);
 void gtk_scrolled_window_set_child(void *self, void* arg0);
 void gtk_style_context_add_provider_for_display(void* arg0, void* arg1, int arg2);
 void gtk_style_context_remove_provider_for_display(void* arg0, void* arg1);

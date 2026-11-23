@@ -162,9 +162,10 @@ un fichier temporaire et l'envoie au shell du terminal.
 
 ## Design
 
-Interface inspirée de Visual Studio : barre d'activité, panneau latéral,
-onglet d'éditeur, panneau terminal et barre de statut bleue. Détail dans
-[`docs/design.md`](docs/design.md).
+Interface inspirée de Visual Studio : barre d'activité, panneau latéral
+redimensionnable, onglet d'éditeur, panneau terminal et barre de statut bleue.
+IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré).
+Détail dans [`docs/design.md`](docs/design.md).
 
 ![Aperçu de l'IDE](docs/screenshot-ide.png)
 

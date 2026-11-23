@@ -8,6 +8,8 @@ use Cyonima\Gtk\Raw\Label as RawLabel;
 use Cyonima\Gtk\Raw\ListBox as RawListBox;
 use Cyonima\Gtk\Raw\ListBoxRow as RawListBoxRow;
 use Cyonima\Gtk\Raw\Popover as RawPopover;
+use Cyonima\Runtime\GtkRect;
+use FFI;
 
 /**
  * Popover de complétion : liste de propositions, navigation clavier et
@@ -45,10 +47,21 @@ final class CompletionPopup
     /**
      * @param list<array{label: string, insertText: ?string, detail: string, kind: int}> $items
      * @param callable(array): void $onSelect
+     * @param null|array{x: int, y: int, width: int, height: int} $caret rectangle du curseur
      */
-    public function show(array $items, callable $onSelect): void
+    public function show(array $items, callable $onSelect, ?array $caret = null): void
     {
         $this->hide();
+
+        if ($caret !== null) {
+            $rect = GtkRect::create(
+                $caret['x'],
+                $caret['y'],
+                max(1, $caret['width']),
+                max(1, $caret['height']),
+            );
+            $this->popover->setPointingTo(FFI::addr($rect));
+        }
 
         $this->items = $items;
         $this->onSelect = $onSelect(...);

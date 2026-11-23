@@ -83,6 +83,7 @@ return [
                 'set_child' => ['child'],
                 'set_has_arrow' => ['hasArrow'],
                 'set_autohide' => ['autohide'],
+                'set_pointing_to' => ['pointingTo'],
                 'popup' => [],
                 'popdown' => [],
             ],

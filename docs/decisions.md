@@ -269,6 +269,15 @@ Trois écarts assumés par rapport au miroir strict du C :
     `force_rescan()`, avec repli `Adwaita-dark`. Tout le chrome est en CSS
     (constante `Theme::CSS`), sans ressource externe.
 
+26. **IntelliSense** : déclenchement débouncé à la frappe, popup ancré au
+    curseur via `gtk_text_view_get_cursor_locations()` +
+    `gtk_popover_set_pointing_to()`. Repli `PhpIntellisense` sans serveur LSP.
+    Après insertion, suppression de 400 ms car `replacePrefix()` émet deux
+    signaux `changed`.
+27. **Explorateur redimensionnable** : `GtkPaned` horizontal,
+    `resize_start_child=false` pour que l'éditeur absorbe les changements de
+    taille de fenêtre.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

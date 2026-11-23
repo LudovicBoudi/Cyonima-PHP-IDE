@@ -21,6 +21,7 @@ final class GtkText
 
     private const CDEF = <<<'C'
         typedef struct { long _alignment; char data[72]; } CyonimaTextIter;
+        typedef struct { int x, y, width, height; } CyonimaRect;
 
         void         gtk_text_buffer_get_start_iter(void *buffer, CyonimaTextIter *iter);
         void         gtk_text_buffer_get_end_iter(void *buffer, CyonimaTextIter *iter);
@@ -37,6 +38,9 @@ final class GtkText
         int          gtk_text_iter_get_line_offset(const CyonimaTextIter *iter);
         int          gtk_text_iter_backward_chars(CyonimaTextIter *iter, int count);
         unsigned int gtk_text_iter_get_char(const CyonimaTextIter *iter);
+
+        void         gtk_text_view_get_cursor_locations(
+            void *view, const CyonimaTextIter *iter, CyonimaRect *strong, CyonimaRect *weak);
 
         void         gtk_text_buffer_delete(void *buffer, CyonimaTextIter *start, CyonimaTextIter *end);
         void         gtk_text_buffer_insert(void *buffer, CyonimaTextIter *iter, const char *text, int length);
@@ -126,6 +130,42 @@ final class GtkText
         $end = $ffi->new('CyonimaTextIter');
         $ffi->gtk_text_buffer_get_end_iter($buffer, FFI::addr($end));
         $ffi->gtk_text_buffer_place_cursor($buffer, FFI::addr($end));
+    }
+
+    /** @return array{x: int, y: int, width: int, height: int} rectangle du curseur dans la vue */
+    public static function cursorRect(CData $view, CData $buffer): array
+    {
+        $ffi = self::ffi();
+        $iter = self::insertIter($buffer);
+        $strong = $ffi->new('CyonimaRect');
+        $weak = $ffi->new('CyonimaRect');
+
+        $ffi->gtk_text_view_get_cursor_locations(
+            $view,
+            FFI::addr($iter),
+            FFI::addr($strong),
+            FFI::addr($weak),
+        );
+
+        return [
+            'x' => $strong->x,
+            'y' => $strong->y,
+            'width' => $strong->width,
+            'height' => $strong->height,
+        ];
+    }
+
+    /** Point de code Unicode du caractère précédant le curseur (0 en début de buffer). */
+    public static function charBeforeCursor(CData $buffer): int
+    {
+        $ffi = self::ffi();
+        $iter = self::insertIter($buffer);
+
+        if ($ffi->gtk_text_iter_backward_chars(FFI::addr($iter), 1) === 0) {
+            return 0;
+        }
+
+        return (int) $ffi->gtk_text_iter_get_char(FFI::addr($iter));
     }
 
     public static function moveCursorToLine(CData $buffer, int $line): void

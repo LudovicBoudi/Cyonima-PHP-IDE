@@ -23,6 +23,7 @@ use Cyonima\Runtime\Errors;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
+use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
@@ -568,6 +569,7 @@ $completionItems = [];
 $inserted = false;
 $visibleAfterShow = false;
 $hiddenAfterChoose = false;
+$caretRect = null;
 
 $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
     $completionLsp,
@@ -577,7 +579,9 @@ $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
     &$inserted,
     &$visibleAfterShow,
     &$hiddenAfterChoose,
+    &$caretRect,
 ): void {
+    $caretRect = $completionEditor->cursorRect();
     $cursor = $completionEditor->cursor();
     $prefix = $completionEditor->wordPrefix();
 
@@ -619,6 +623,12 @@ T::ok($visibleAfterShow, 'le popover est visible après show()');
 T::ok($hiddenAfterChoose, 'le popover est fermé après sélection');
 T::ok($inserted, 'callback de sélection exécuté');
 T::same("<?php\nstrlen", $completionEditor->text(), 'le préfixe est remplacé par la proposition');
+T::ok(($caretRect['height'] ?? 0) > 0, 'rectangle du curseur disponible pour IntelliSense');
+
+$builtin = PhpIntellisense::suggest('str');
+T::ok(count($builtin) >= 5, 'IntelliSense intégré : plusieurs propositions', (string) count($builtin));
+T::ok(in_array('strlen', array_column($builtin, 'label'), true), 'strlen proposé sans LSP');
+T::same([], PhpIntellisense::suggest('zzzzz'), 'aucune proposition improbable');
 
 $completionLsp->stop();
 

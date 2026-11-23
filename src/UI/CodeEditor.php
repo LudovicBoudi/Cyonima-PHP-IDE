@@ -105,6 +105,18 @@ final class CodeEditor extends Widget
         return GtkText::cursor($this->buffer->handle());
     }
 
+    /** Rectangle du curseur dans la vue (pour ancrer le popover IntelliSense). */
+    public function cursorRect(): array
+    {
+        return GtkText::cursorRect($this->raw()->handle(), $this->buffer->handle());
+    }
+
+    /** Point de code Unicode du caractère avant le curseur. */
+    public function charBeforeCursor(): int
+    {
+        return GtkText::charBeforeCursor($this->buffer->handle());
+    }
+
     /** Mot en cours de frappe avant le curseur. */
     public function wordPrefix(): string
     {
