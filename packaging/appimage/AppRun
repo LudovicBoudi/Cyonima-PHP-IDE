@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# AppRun de l'AppImage : PHP et GTK embarqués.
+
+set -eu
+
+HERE=$(dirname "$(readlink -f "$0")")
+
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$HERE/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$HERE/usr/share/glib-2.0/schemas"
+
+# Cache des loaders GdkPixbuf, généré dans un répertoire inscriptible.
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+CACHE="$RUNTIME_DIR/cyonima-gdk-pixbuf-loaders.cache"
+QUERY="$HERE/usr/lib/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders"
+LOADERS="$HERE/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
+
+if [ -x "$QUERY" ] && [ -d "$LOADERS" ]; then
+    found=0
+    for loader in "$LOADERS"/*.so; do
+        [ -e "$loader" ] || continue
+        found=1
+        break
+    done
+
+    if [ "$found" = 1 ]; then
+        "$QUERY" "$LOADERS"/*.so > "$CACHE" 2>/dev/null || true
+        if [ -s "$CACHE" ]; then
+            export GDK_PIXBUF_MODULE_FILE="$CACHE"
+        fi
+    fi
+fi
+
+exec "$HERE/usr/bin/php" -n -d ffi.enable=1 \
+    "$HERE/usr/share/cyonima/bin/cyonima.php" "$@"

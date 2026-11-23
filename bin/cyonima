@@ -1,0 +1,11 @@
+#!/bin/sh
+#
+# Lanceur Cyonima : garantit l'activation de FFI et résout les chemins
+# indépendamment du répertoire courant.
+
+set -eu
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PHP_BIN="${CYONIMA_PHP:-php}"
+
+exec "$PHP_BIN" -d ffi.enable=1 "$DIR/bin/cyonima.php" "$@"

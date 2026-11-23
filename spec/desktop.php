@@ -158,8 +158,10 @@ return [
                 'select_row' => ['row'],
                 'get_selected_row' => [],
                 'set_selection_mode' => ['mode'],
+                'get_activate_on_single_click' => [],
+                'set_activate_on_single_click' => ['activateOnSingleClick'],
             ],
-            'signals' => false,
+            'signals' => ['row-activated'],
         ],
 
         'Gtk\\ListBoxRow' => [
@@ -169,6 +171,7 @@ return [
                 'get_child' => [],
                 'set_activatable' => ['activatable'],
                 'set_selectable' => ['selectable'],
+                'get_index' => [],
             ],
             'signals' => ['activate'],
         ],

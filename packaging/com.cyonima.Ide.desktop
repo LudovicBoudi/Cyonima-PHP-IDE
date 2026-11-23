@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Cyonima IDE
+GenericName=PHP IDE
+Comment=IDE PHP natif GTK4
+Exec=cyonima
+TryExec=cyonima
+Icon=com.cyonima.Ide
+Terminal=false
+Categories=Development;IDE;
+Keywords=php;ide;editor;gtk;debug;
+StartupNotify=true
+StartupWMClass=com.cyonima.ide-demo

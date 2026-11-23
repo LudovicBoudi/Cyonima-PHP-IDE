@@ -27,7 +27,10 @@ final class AdwApplication
 
     public function __construct(public readonly string $id = 'com.cyonima.application')
     {
-        $this->raw = RawApplication::new($id, 0);
+        // G_APPLICATION_NON_UNIQUE (1 << 5) : chaque instance est autonome.
+        // Sans cela, une seconde instance devient « distante » et
+        // gtk_window_set_application() plante en créant sa fenêtre.
+        $this->raw = RawApplication::new($id, 32);
         GApplication::register($this->raw->handle());
     }
 

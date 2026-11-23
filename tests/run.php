@@ -11,7 +11,7 @@ declare(strict_types=1);
  *   php -d ffi.enable=true tests/run.php
  */
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+require_once dirname(__DIR__) . '/autoload.php';
 
 use Cyonima\Generator\Generator;
 use Cyonima\Generator\Spec;
@@ -487,6 +487,13 @@ T::ok($browser->entryCount() > 0, 'entrées listées', (string) $browser->entryC
 $browser->open($examples . '/hello.php');
 T::same($examples . '/hello.php', $opened, 'ouverture d\'un fichier via le navigateur');
 
+$openedByClick = null;
+$clickBrowser = new UI\FileBrowser($examples, function (string $path) use (&$openedByClick): void {
+    $openedByClick = $path;
+});
+$clickBrowser->activateRow(0);
+T::same($examples . '/adw.php', $openedByClick, 'clic réel : row-activated ouvre le premier fichier');
+
 $lsp = LspClient::start([PHP_BINARY, __DIR__ . '/fixtures/fake_lsp.php']);
 $lsp->attach();
 
@@ -614,20 +621,39 @@ $debug->attach();
 $breaks = [];
 $connected = false;
 $stopped = false;
+$stack = [];
+$variables = [];
+$expanded = [];
 
 $debug->on('connect', function (?string $fileUri) use ($debug, &$connected): void {
     $connected = true;
     $debug->setBreakpoint('file:///tmp/demo.php', 3);
 });
 
-$debug->on('break', function (?string $fileUri, ?int $line) use (&$breaks, $debug): void {
+$debug->on('break', function (?string $fileUri, ?int $line) use (
+    &$breaks,
+    &$stack,
+    &$variables,
+    &$expanded,
+    $debug,
+): void {
     $breaks[] = [XdebugClient::localPath((string) $fileUri), (int) $line];
 
     if (count($breaks) === 1) {
+        $debug->stackGet(function (array $frames) use (&$stack): void {
+            $stack = $frames;
+        });
+        $debug->contextGet(0, function (array $locals) use (&$variables): void {
+            $variables = $locals;
+        });
+        $debug->propertyGet('$items', 0, function (array $children) use (&$expanded): void {
+            $expanded = $children;
+        });
         $debug->stepInto();
-    } else {
-        $debug->stop();
+        return;
     }
+
+    $debug->stop();
 });
 
 $debug->on('stop', function () use (&$stopped): void {
@@ -648,6 +674,30 @@ T::ok($connected, 'Xdebug se connecte et envoie init');
 T::same([['/tmp/demo.php', 4], ['/tmp/demo.php', 5]], $breaks, 'arrêt initial puis pas-à-pas');
 T::ok($stopped, 'la commande stop est honorée');
 T::ok(!$debug->isPaused(), 'plus en pause après stop');
+
+T::same(2, count($stack), 'pile : deux frames');
+T::same('/tmp/demo.php', XdebugClient::localPath((string) ($stack[0]['fileUri'] ?? '')), 'frame 0 : fichier');
+T::same(4, $stack[0]['line'] ?? null, 'frame 0 : ligne');
+T::same('demo.php', $stack[0]['where'] ?? null, 'frame 0 : fonction');
+T::same(3, count($variables), 'trois variables locales');
+T::same('int', $variables[0]['type'] ?? null, 'type de $x');
+T::same('42', $variables[0]['value'] ?? null, 'valeur de $x');
+T::ok($variables[2]['children'] ?? false, '$items est développable');
+T::same(['un', 'deux'], array_column($expanded, 'value'), 'enfants de $items');
+
+$panel = new UI\DebugPanel();
+$panel->showStack([
+    ['level' => 0, 'type' => 'file', 'fileUri' => 'file:///tmp/demo.php', 'line' => 4, 'where' => 'demo.php'],
+    ['level' => 1, 'type' => 'file', 'fileUri' => 'file:///tmp/demo.php', 'line' => 10, 'where' => '{main}'],
+]);
+$panel->showVariables([
+    ['name' => '$x', 'fullname' => '$x', 'type' => 'int', 'value' => '42', 'children' => false, 'numChildren' => 0],
+    ['name' => '$items', 'fullname' => '$items', 'type' => 'array', 'value' => '', 'children' => true, 'numChildren' => 2],
+]);
+T::same(2, $panel->frameCount(), 'panneau : deux frames');
+T::same(2, $panel->variableCount(), 'panneau : deux variables');
+$panel->clear();
+T::same(0, $panel->frameCount() + $panel->variableCount(), 'panneau vidé');
 
 $debug->close();
 Process::terminateAll();

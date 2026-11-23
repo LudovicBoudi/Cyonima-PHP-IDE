@@ -43,6 +43,12 @@ class ListBoxRow extends \Cyonima\Gtk\Raw\Widget
         Symbols::get()->gtk_list_box_row_set_selectable($this->handle, ($selectable) ? 1 : 0);
     }
 
+    public function getIndex(): int
+    {
+        $result = Symbols::get()->gtk_list_box_row_get_index($this->handle);
+        return $result;
+    }
+
     public function onActivate(callable $handler): int
     {
         return $this->connectSignal(self::SIGNAL_ACTIVATE, $handler, [], true);

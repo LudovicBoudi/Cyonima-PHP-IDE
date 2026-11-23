@@ -23,7 +23,13 @@
         "test": "php -d ffi.enable=true tests/run.php",
         "demo:async": "php -d ffi.enable=true examples/async.php",
         "demo:adw": "php -d ffi.enable=true examples/adw.php",
-        "demo:ide": "php -d ffi.enable=true examples/ide.php"
+        "demo:ide": "php -d ffi.enable=true examples/ide.php",
+        "package": "bash packaging/build-portable.sh",
+        "package:test": "bash packaging/test-portable.sh",
+        "package:check": "php packaging/check.php",
+        "package:flatpak": "bash packaging/test-flatpak.sh",
+        "package:appimage": "bash packaging/appimage/build-appimage.sh",
+        "package:appimage:test": "bash packaging/test-appimage.sh"
     },
     "config": {
         "sort-packages": true

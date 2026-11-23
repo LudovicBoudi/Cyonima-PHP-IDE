@@ -1,0 +1,78 @@
+{
+    "app-id": "com.cyonima.Ide",
+    "runtime": "org.gnome.Platform",
+    "runtime-version": "49",
+    "sdk": "org.gnome.Sdk",
+    "command": "cyonima",
+    "finish-args": [
+        "--share=ipc",
+        "--socket=fallback-x11",
+        "--socket=wayland",
+        "--device=dri",
+        "--filesystem=host",
+        "--share=network",
+        "--socket=session-bus"
+    ],
+    "cleanup": [
+        "/include",
+        "/lib/pkgconfig",
+        "/share/man",
+        "/share/doc",
+        "/share/gtk-doc"
+    ],
+    "modules": [
+        {
+            "name": "php",
+            "buildsystem": "simple",
+            "build-commands": [
+                "./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
+                "make -j${FLATPAK_BUILDER_N_JOBS:-4}",
+                "make install"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://www.php.net/distributions/php-8.3.14.tar.xz",
+                    "sha256": "58b4cb9019bf70c0cbcdb814c7df79b9065059d14cf7dbf48d971f8e56ae9be7"
+                }
+            ]
+        },
+        {
+            "name": "vte",
+            "buildsystem": "meson",
+            "config-opts": [
+                "-Dlibdir=lib",
+                "-Dgtk3=false",
+                "-Dgtk4=true",
+                "-Ddocs=false",
+                "-Dgir=false",
+                "-Dvapi=false",
+                "-Dglade=false"
+            ],
+            "sources": [
+                {
+                    "type": "git",
+                    "url": "https://github.com/GNOME/vte.git",
+                    "tag": "0.76.0"
+                }
+            ]
+        },
+        {
+            "name": "cyonima",
+            "buildsystem": "simple",
+            "build-commands": [
+                "install -d /app/share/cyonima /app/bin",
+                "cp -r autoload.php bin src examples spec composer.json /app/share/cyonima/",
+                "install -Dm755 packaging/flatpak/cyonima.sh /app/bin/cyonima",
+                "install -Dm644 packaging/icon/com.cyonima.Ide.svg /app/share/icons/hicolor/scalable/apps/com.cyonima.Ide.svg",
+                "install -Dm644 packaging/com.cyonima.Ide.desktop /app/share/applications/com.cyonima.Ide.desktop"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "../.."
+                }
+            ]
+        }
+    ]
+}

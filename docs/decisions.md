@@ -231,6 +231,38 @@ Trois écarts assumés par rapport au miroir strict du C :
 17. **Le débogueur n'ajoute aucun binding** : DBGp est du XML sur TCP, hors du
     périmètre du générateur. `XdebugClient` est un composant runtime.
 
+18. **Aucune dépendance PHP externe** : autoloader PSR-4 maison, Composer
+    optionnel. Le bundle portable n'embarque ni `vendor/` ni outil de build.
+19. **Bundle portable** : archive tar.gz + lanceur `bin/cyonima` (force
+    `ffi.enable=1`), `.desktop` et icône SVG. Testé de bout en bout depuis un
+    répertoire temporaire.
+20. **Flatpak construit et exécuté** : PHP 8.3.14 (archive officielle,
+    SHA256 vérifié) et VTE 0.76.0 compilés, app lancée dans le bac à sable.
+    Le runtime GNOME ne fournit ni PHP ni VTE. VTE est construit avec
+    `-Dlibdir=lib` car `/app/lib64` n'est pas dans le chemin de recherche.
+    Xdebug n'est pas inclus et `--filesystem=host` reste nécessaire.
+21. **AppImage autonome (44 Mo)** : PHP 8.3.14 et toute la pile GTK
+    (GTK4/Adw/GtkSourceView/VTE + 107 dépendances), schémas, loaders et thèmes
+    sont embarqués. glibc et les pilotes GPU restent ceux de l'hôte. Preuves :
+    `ldd` sans dépendance non résolue, `LD_DEBUG` montrant GTK dans le montage,
+    et exécution avec les bibliothèques GTK système masquées dans un namespace
+    utilisateur. `mbstring` absent (repli ASCII).
+
+22. **Réponses DBGp corrélées** : chaque requête (`stack_get`, `context_get`,
+    `property_get`) porte un `-i` et une callback en attente, indexée par
+    `transaction_id`. Sans cela, une réponse `status="break"` serait confondue
+    avec un nouvel arrêt.
+
+23. **Activation des rows GTK4** : au clic, `gtk_list_box_activate()` émet
+    `row-activated` sur la `GtkListBox`, **pas** `activate` sur la
+    `GtkListBoxRow`. Le FileBrowser écoute donc `row-activated` et mappe
+    l'index de la row. L'émission manuelle de `activate` masquait le bug dans
+    les premiers tests ; un clic X11 réel l'a révélé.
+24. **Instances multiples** : `AdwApplication` utilise
+    `G_APPLICATION_NON_UNIQUE`. Sans ce drapeau, une seconde instance devient
+    « distante » et `gtk_window_set_application()` plante pendant la création
+    de fenêtre.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

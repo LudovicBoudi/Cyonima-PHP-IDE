@@ -1,0 +1,9 @@
+#!/bin/sh
+#
+# Point d'entrée AppImage : exécute le lanceur embarqué.
+
+set -eu
+
+HERE=$(dirname "$(readlink -f "$0")")
+
+exec "$HERE/bin/cyonima" "$@"

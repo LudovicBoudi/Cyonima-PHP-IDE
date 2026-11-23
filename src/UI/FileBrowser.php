@@ -22,8 +22,11 @@ final class FileBrowser extends Widget
     private RawListBox $list;
     private RawLabel $pathLabel;
 
-    /** @var list<RawListBoxRow> garde les rows (et leurs handlers) en vie */
+    /** @var list<RawListBoxRow> garde les rows en vie */
     private array $rows = [];
+
+    /** @var list<array{path: string, directory: bool}> entrées dans l'ordre des rows */
+    private array $entries = [];
 
     /** @var \Closure(string): void */
     private \Closure $onOpen;
@@ -42,6 +45,14 @@ final class FileBrowser extends Widget
 
         $this->list = RawListBox::new();
         $this->list->setSelectionMode(1); // GTK_SELECTION_SINGLE
+        $this->list->setActivateOnSingleClick(true);
+
+        // Un clic émet « row-activated » sur la ListBox (pas « activate »
+        // sur la row) : gtk_list_box_activate() est interne.
+        $this->list->onRowActivated(function ($listBox, $row): void {
+            $wrapped = RawListBoxRow::wrap($row, false);
+            $this->activateIndex($wrapped->getIndex());
+        });
 
         $this->raw()->append($this->pathLabel);
         $this->raw()->append($this->list);
@@ -71,6 +82,14 @@ final class FileBrowser extends Widget
         return count($this->rows);
     }
 
+    /** Simule un clic sur une ligne (même chemin que GTK : row-activated). */
+    public function activateRow(int $index): void
+    {
+        if (isset($this->rows[$index])) {
+            $this->list->emit('row-activated', $this->rows[$index]->handle());
+        }
+    }
+
     /** Ouvre un fichier comme le ferait un clic (utile aux tests/scénarios). */
     public function open(string $path): void
     {
@@ -83,6 +102,7 @@ final class FileBrowser extends Widget
             $this->list->remove($row);
         }
         $this->rows = [];
+        $this->entries = [];
 
         $this->pathLabel->setText($this->displayPath());
 
@@ -128,17 +148,25 @@ final class FileBrowser extends Widget
         $row->setChild($label);
         $row->setActivatable(true);
 
-        $row->onActivate(function () use ($path, $isDirectory): void {
-            if ($isDirectory) {
-                $this->directory = $path;
-                $this->refresh();
-                return;
-            }
-            ($this->onOpen)($path);
-        });
-
         $this->list->append($row);
         $this->rows[] = $row;
+        $this->entries[] = ['path' => $path, 'directory' => $isDirectory];
+    }
+
+    private function activateIndex(int $index): void
+    {
+        $entry = $this->entries[$index] ?? null;
+        if ($entry === null) {
+            return;
+        }
+
+        if ($entry['directory']) {
+            $this->directory = $entry['path'];
+            $this->refresh();
+            return;
+        }
+
+        ($this->onOpen)($entry['path']);
     }
 
     private function displayPath(): string

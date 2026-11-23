@@ -18,16 +18,17 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 navigateur, édition/sauvegarde, terminal, LSP (diagnostics + complétion), débogueur Xdebug ; restent variables, recherche |
-| M6 — Packaging | ⏭ Flatpak, AppImage, PHP statique |
+| M5 — IDE MVP | 🟡 navigation, édition, terminal, LSP (diagnostics + complétion), Xdebug (pas-à-pas, pile, variables) ; reste la recherche projet |
+| M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 44 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
 
 ## Démarrage
 
-```bash
-composer install
+Aucune dépendance PHP externe : un autoloader PSR-4 suffit. Composer reste
+optionnel pour le développement.
 
+```bash
 # Génère les bindings depuis les .typelib (aucun paquet -dev requis)
 composer generate
 
@@ -158,6 +159,21 @@ $app->run();
 
 Le bouton « Exécuter » de `examples/ide.php` écrit le contenu de l'éditeur dans
 un fichier temporaire et l'envoie au shell du terminal.
+
+## Packaging
+
+```bash
+packaging/build-portable.sh      # dist/cyonima-0.1.0-linux-x86_64.tar.gz
+./dist/cyonima-0.1.0/bin/cyonima --auto
+packaging/test-portable.sh       # vérifie le bundle de bout en bout
+php packaging/check.php          # manifeste, desktop, icône, lanceurs
+packaging/test-flatpak.sh        # vérifie le Flatpak installé
+packaging/appimage/build-php.sh   # PHP embarqué (une fois)
+packaging/appimage/build-appimage.sh   # AppImage PHP + GTK
+packaging/test-appimage.sh        # vérifie l'AppImage
+```
+
+Voir [`packaging/README.md`](packaging/README.md) pour AppImage et Flatpak.
 
 ## Documents
 

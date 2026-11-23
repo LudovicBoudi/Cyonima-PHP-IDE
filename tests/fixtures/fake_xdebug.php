@@ -92,6 +92,40 @@ while (($packet = readPacket($client)) !== null) {
             sendPacket($client, breakResponse('step_over', 6, $transaction));
             break;
 
+        case 'stack_get':
+            sendPacket(
+                $client,
+                '<response xmlns="urn:debugger_protocol_v1" command="stack_get"'
+                    . $transactionAttribute . ' status="break">'
+                    . '<stack level="0" type="file" filename="file:///tmp/demo.php" lineno="4" where="demo.php"/>'
+                    . '<stack level="1" type="file" filename="file:///tmp/demo.php" lineno="10" where="{main}"/>'
+                    . '</response>',
+            );
+            break;
+
+        case 'context_get':
+            sendPacket(
+                $client,
+                '<response xmlns="urn:debugger_protocol_v1" command="context_get"'
+                    . $transactionAttribute . ' status="break">'
+                    . '<property name="$x" fullname="$x" type="int" value="42" size="2"/>'
+                    . '<property name="$message" fullname="$message" type="string" value="bonjour" size="7"/>'
+                    . '<property name="$items" fullname="$items" type="array" children="1" numchildren="2" value=""/>'
+                    . '</response>',
+            );
+            break;
+
+        case 'property_get':
+            sendPacket(
+                $client,
+                '<response xmlns="urn:debugger_protocol_v1" command="property_get"'
+                    . $transactionAttribute . ' status="break">'
+                    . '<property name="0" fullname="$items[0]" type="string" value="un"/>'
+                    . '<property name="1" fullname="$items[1]" type="string" value="deux"/>'
+                    . '</response>',
+            );
+            break;
+
         case 'breakpoint_set':
             sendPacket(
                 $client,

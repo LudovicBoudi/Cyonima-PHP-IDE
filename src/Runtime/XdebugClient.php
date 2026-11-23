@@ -43,6 +43,9 @@ final class XdebugClient
     /** @var array<string, list<callable>> */
     private array $handlers = [];
 
+    /** @var array<int, callable> réponses attendues, par transaction_id */
+    private array $pending = [];
+
     /**
      * @param int $port 0 pour un port éphémère (tests)
      */
@@ -177,6 +180,72 @@ final class XdebugClient
         ]);
     }
 
+    /**
+     * Pile d'appels courante.
+     *
+     * @param callable(list<array{level: int, type: string, fileUri: ?string, line: ?int, where: string}>): void $onFrames
+     */
+    public function stackGet(callable $onFrames): int
+    {
+        return $this->request('stack_get', [], function (\SimpleXMLElement $xml) use ($onFrames): void {
+            $frames = [];
+
+            foreach ($xml->children() as $child) {
+                if ($child->getName() !== 'stack') {
+                    continue;
+                }
+
+                $attributes = $child->attributes();
+                $frames[] = [
+                    'level' => isset($attributes['level']) ? (int) $attributes['level'] : 0,
+                    'type' => isset($attributes['type']) ? (string) $attributes['type'] : '',
+                    'fileUri' => isset($attributes['filename']) ? (string) $attributes['filename'] : null,
+                    'line' => isset($attributes['lineno']) ? (int) $attributes['lineno'] : null,
+                    'where' => isset($attributes['where']) ? (string) $attributes['where'] : '',
+                ];
+            }
+
+            $onFrames($frames);
+        });
+    }
+
+    /**
+     * Variables du contexte local pour un niveau de pile.
+     *
+     * @param callable(list<array{name: string, fullname: string, type: string, value: string, children: bool, numChildren: int}>): void $onVariables
+     */
+    public function contextGet(int $depth, callable $onVariables): int
+    {
+        return $this->request('context_get', ['-d' => $depth, '-c' => 0], function (\SimpleXMLElement $xml) use ($onVariables): void {
+            $onVariables($this->parseProperties($xml));
+        });
+    }
+
+    /**
+     * Développe une variable enfant (tableau, objet).
+     *
+     * @param callable(list<array{name: string, fullname: string, type: string, value: string, children: bool, numChildren: int}>): void $onVariables
+     */
+    public function propertyGet(string $name, int $depth, callable $onVariables): int
+    {
+        return $this->request('property_get', ['-n' => $name, '-d' => $depth, '-c' => 0], function (\SimpleXMLElement $xml) use ($onVariables): void {
+            $onVariables($this->parseProperties($xml));
+        });
+    }
+
+    /**
+     * Requête DBGp avec réponse corrélée par transaction_id.
+     */
+    public function request(string $command, array $arguments, callable $onResponse): int
+    {
+        $id = ++$this->nextTransaction;
+        $this->pending[$id] = $onResponse;
+        $arguments['-i'] = $id;
+        $this->sendCommand($command, $arguments);
+
+        return $id;
+    }
+
     public function poll(): void
     {
         $this->accept();
@@ -243,6 +312,7 @@ final class XdebugClient
         $this->incoming = '';
         $this->outgoing = '';
         $this->paused = false;
+        $this->pending = [];
 
         if ($wasConnected) {
             $this->emit('disconnect', []);
@@ -286,6 +356,21 @@ final class XdebugClient
 
     private function handleResponse(\SimpleXMLElement $xml): void
     {
+        $transactionId = isset($xml['transaction_id']) ? (int) $xml['transaction_id'] : null;
+
+        if ($transactionId !== null && isset($this->pending[$transactionId])) {
+            $callback = $this->pending[$transactionId];
+            unset($this->pending[$transactionId]);
+
+            try {
+                $callback($xml);
+            } catch (Throwable $exception) {
+                Errors::report($exception, 'xdebug response');
+            }
+
+            return;
+        }
+
         $status = isset($xml['status']) ? (string) $xml['status'] : '';
         $command = isset($xml['command']) ? (string) $xml['command'] : '';
 
@@ -362,14 +447,22 @@ final class XdebugClient
             return;
         }
 
-        $attributes = ['-i' => ++$this->nextTransaction];
-
-        if ($name === 'run' || str_starts_with($name, 'step_')) {
-            $attributes = [];
+        if ($name !== 'run'
+            && !str_starts_with($name, 'step_')
+            && $name !== 'stop'
+            && $name !== 'detach'
+        ) {
+            $arguments['-i'] = ++$this->nextTransaction;
         }
 
-        foreach ($arguments as $key => $value) {
-            $attributes[$key] = $value;
+        $this->sendCommand($name, $arguments);
+        $this->lastCommand = $name;
+    }
+
+    private function sendCommand(string $name, array $attributes): void
+    {
+        if ($this->client === null) {
+            return;
         }
 
         $xml = '<' . $name;
@@ -383,8 +476,44 @@ final class XdebugClient
         $xml .= '/>';
 
         $this->outgoing .= $xml . "\0";
-        $this->lastCommand = $name;
         $this->flush();
+    }
+
+    /**
+     * @return list<array{name: string, fullname: string, type: string, value: string, children: bool, numChildren: int}>
+     */
+    private function parseProperties(\SimpleXMLElement $xml): array
+    {
+        $variables = [];
+
+        foreach ($xml->children() as $child) {
+            if ($child->getName() !== 'property') {
+                continue;
+            }
+
+            $attributes = $child->attributes();
+            $value = isset($attributes['value']) ? (string) $attributes['value'] : '';
+
+            if (isset($attributes['encoding']) && (string) $attributes['encoding'] === 'base64') {
+                $decoded = base64_decode($value, true);
+                if ($decoded !== false) {
+                    $value = $decoded;
+                }
+            }
+
+            $name = isset($attributes['name']) ? (string) $attributes['name'] : '';
+
+            $variables[] = [
+                'name' => $name,
+                'fullname' => isset($attributes['fullname']) ? (string) $attributes['fullname'] : $name,
+                'type' => isset($attributes['type']) ? (string) $attributes['type'] : '',
+                'value' => $value,
+                'children' => isset($attributes['children']) && (int) $attributes['children'] > 0,
+                'numChildren' => isset($attributes['numchildren']) ? (int) $attributes['numchildren'] : 0,
+            ];
+        }
+
+        return $variables;
     }
 
     private function flush(): void

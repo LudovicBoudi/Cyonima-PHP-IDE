@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+require_once dirname(__DIR__) . '/autoload.php';
 
 use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Runtime\AdwApplication;
@@ -11,6 +11,7 @@ use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\Button;
 use Cyonima\UI\CodeEditor;
+use Cyonima\UI\DebugPanel;
 use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\FileBrowser;
 use Cyonima\UI\Paned;
@@ -30,12 +31,14 @@ $app = new AdwApplication('com.cyonima.ide-demo');
 $app->addCss(<<<'CSS'
 .sidebar { background: #161a20; }
 .browser-path { color: #7d8794; font-size: 11px; padding: 4px 2px; }
+.debug-title { color: #7d8794; font-size: 11px; font-weight: 700; padding: 6px 2px 2px; }
 CSS);
 
 $window = $app->window('Cyonima', 'IDE natif · GtkSourceView · VTE');
 
 $editor = (new CodeEditor('php'))->scheme('Adwaita');
 $terminal = new Terminal(5000);
+$debugPanel = new DebugPanel();
 
 $spawnPid = null;
 $currentFile = null;
@@ -223,6 +226,7 @@ $debugButton = (new Button('Déboguer'))->onClicked(function () use (
     $debugPort,
     $window,
     $editor,
+    $debugPanel,
     $openFile,
     &$debug,
     &$currentFile,
@@ -245,8 +249,10 @@ $debugButton = (new Button('Déboguer'))->onClicked(function () use (
         });
 
         $debug->on('break', function (?string $fileUri, ?int $line) use (
+            $debug,
             $window,
             $editor,
+            $debugPanel,
             $openFile,
             &$currentFile,
         ): void {
@@ -262,9 +268,22 @@ $debugButton = (new Button('Déboguer'))->onClicked(function () use (
             $editor->moveCursorToLine(max(0, $line - 1));
             $window->subtitle(basename($path) . ' : ligne ' . $line);
             $window->toast('Pause en ' . basename($path) . ':' . $line);
+
+            $debug->stackGet(function (array $frames) use ($debugPanel): void {
+                $debugPanel->showStack($frames);
+            });
+
+            $debug->contextGet(0, function (array $variables) use ($debugPanel): void {
+                $debugPanel->showVariables($variables);
+            });
         });
 
-        $debug->on('stop', function () use ($window): void {
+        $debug->on('running', function () use ($debugPanel): void {
+            $debugPanel->clear();
+        });
+
+        $debug->on('stop', function () use ($window, $debugPanel): void {
+            $debugPanel->clear();
             $window->toast('Session de débogage terminée');
         });
     }
@@ -274,15 +293,17 @@ $debugButton = (new Button('Déboguer'))->onClicked(function () use (
 
 $browser = new FileBrowser($root, $openFile);
 
-$sidebar = (new ScrolledWindow($browser))->cssClass('sidebar');
-$sidebar->raw()->setSizeRequest(230, -1);
+$sidebar = (new Paned(Orientation::VERTICAL, 300))
+    ->start((new ScrolledWindow($browser))->cssClass('sidebar'))
+    ->end(new ScrolledWindow($debugPanel));
+$sidebar->raw()->setSizeRequest(260, -1);
 
 $editorArea = (new ScrolledWindow($editor))->expand();
 $mainArea = (new Paned(Orientation::VERTICAL, 420))
     ->start($editorArea)
     ->end($terminal);
 
-$layout = (new Paned(Orientation::HORIZONTAL, 230))
+$layout = (new Paned(Orientation::HORIZONTAL, 260))
     ->start($sidebar)
     ->end($mainArea);
 

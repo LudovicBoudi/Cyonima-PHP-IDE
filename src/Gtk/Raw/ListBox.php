@@ -13,6 +13,8 @@ class ListBox extends \Cyonima\Gtk\Raw\Widget
 {
     public const TYPE_NAME = 'GtkListBox';
 
+    public const SIGNAL_ROW_ACTIVATED = 'row-activated';
+
     public static function new(): self
     {
         Symbols::ensureInitialized();
@@ -49,5 +51,21 @@ class ListBox extends \Cyonima\Gtk\Raw\Widget
     public function setSelectionMode(int $mode): void
     {
         Symbols::get()->gtk_list_box_set_selection_mode($this->handle, $mode);
+    }
+
+    public function getActivateOnSingleClick(): bool
+    {
+        $result = Symbols::get()->gtk_list_box_get_activate_on_single_click($this->handle);
+        return ($result) !== 0;
+    }
+
+    public function setActivateOnSingleClick(bool $activateOnSingleClick): void
+    {
+        Symbols::get()->gtk_list_box_set_activate_on_single_click($this->handle, ($activateOnSingleClick) ? 1 : 0);
+    }
+
+    public function onRowActivated(callable $handler): int
+    {
+        return $this->connectSignal(self::SIGNAL_ROW_ACTIVATED, $handler, ['void*'], true);
     }
 }
