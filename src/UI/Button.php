@@ -10,7 +10,7 @@ final class Button extends Widget
 {
     public function __construct(string $label = '')
     {
-        parent::__construct(Raw\Button::newWithLabel($label));
+        parent::__construct($label === '' ? Raw\Button::new() : Raw\Button::newWithLabel($label));
     }
 
     public function raw(): Raw\Button
@@ -29,6 +29,13 @@ final class Button extends Widget
     public function getLabel(): string
     {
         return (string) $this->raw()->getLabel();
+    }
+
+    /** Remplace le libellé par un contenu riche (cartes, listes…). */
+    public function child(Widget $child): static
+    {
+        $this->raw()->setChild($child->raw());
+        return $this;
     }
 
     /** Le handler reçoit le bouton façade. */

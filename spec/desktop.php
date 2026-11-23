@@ -221,13 +221,31 @@ return [
 
         'Gtk\\Button' => [
             'methods' => [
+                'new' => [],
                 'new_with_label' => ['label'],
                 'new_from_icon_name' => ['iconName'],
                 'set_label' => ['label'],
                 'get_label' => [],
                 'set_has_frame' => ['hasFrame'],
+                'set_child' => ['child'],
             ],
             'signals' => ['clicked'],
+        ],
+
+        'Gtk\\Entry' => [
+            'methods' => [
+                'new' => [],
+                'set_placeholder_text' => ['placeholderText'],
+            ],
+            'signals' => ['activate'],
+        ],
+
+        'Gtk\\Editable' => [
+            'methods' => [
+                'get_text' => [],
+                'set_text' => ['text'],
+            ],
+            'signals' => ['changed'],
         ],
 
         'Gtk\\CssProvider' => [

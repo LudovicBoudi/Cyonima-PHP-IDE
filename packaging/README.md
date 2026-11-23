@@ -12,8 +12,9 @@ Trois formats, trois niveaux d'autonomie.
 
 ```bash
 packaging/build-portable.sh          # par défaut VERSION=0.1.0
-./dist/cyonima-0.1.0/bin/cyonima     # lance l'IDE
-./dist/cyonima-0.1.0/bin/cyonima --auto
+./dist/cyonima-0.1.0/bin/cyonima               # fenêtre de démarrage
+./dist/cyonima-0.1.0/bin/cyonima --project=/chemin/du/projet
+./dist/cyonima-0.1.0/bin/cyonima --auto        # scénario de test
 ```
 
 Le bundle contient `bin/`, `src/`, `examples/`, `spec/`, l'autoloader, le
@@ -52,14 +53,12 @@ env -i HOME=$HOME DISPLAY=:0 APPIMAGE_EXTRACT_AND_RUN=1   ./dist/Cyonima-0.1.0-x
 Les deux modes fonctionnent : montage FUSE direct et
 `APPIMAGE_EXTRACT_AND_RUN=1` (utile sans FUSE ou sur `/tmp` `noexec`).
 
-Point restant : **GTK4, libadwaita, GtkSourceView 5 et VTE ne sont pas
-embarqués**. L'AppImage cible donc un bureau Linux moderne (GNOME 46+,
-Ubuntu 24.04+) fournissant cette pile. Pour une autonomie complète, ajouter
-`linuxdeploy` + `linuxdeploy-plugin-gtk` et un PHP statique ; c'est un
-empaquetage plus lourd (~150 Mo) mais sans dépendance GTK.
+L'AppImage embarque **PHP, GTK4, libadwaita, GtkSourceView 5, VTE** et les
+schémas/loaders nécessaires (44 Mo). Seuls glibc et les pilotes GPU restent ceux
+de l'hôte, comme pour toute AppImage graphique.
 
-Autre limite : `mbstring` n'est pas compilé (oniguruma absent du système de
-build) ; le code utilise un repli `strlen` pour les préfixes ASCII.
+Limite : `mbstring` n'est pas compilé (oniguruma absent du système de build) ;
+le code utilise un repli `strlen` pour les préfixes ASCII.
 
 ## Flatpak
 
@@ -85,6 +84,10 @@ flatpak-builder --user --install --force-clean --disable-rofiles-fuse \
 flatpak run com.cyonima.Ide --auto
 # Fichier : /tmp/cyonima_ide_demo.php | lignes : 10 | caractères : 147 | ... | terminal : 8
 ```
+
+Les projets créés depuis la fenêtre de démarrage lancent l'IDE avec
+`--project`. Leur `autoload.php` cherche le runtime via `CYONIMA_HOME`, défini
+par le lanceur ; le chemin d'installation sert de repli.
 
 Le manifeste :
 

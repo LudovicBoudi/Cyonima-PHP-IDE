@@ -15,6 +15,13 @@ class Button extends \Cyonima\Gtk\Raw\Widget
 
     public const SIGNAL_CLICKED = 'clicked';
 
+    public static function new(): self
+    {
+        Symbols::ensureInitialized();
+        $pointer = Symbols::get()->gtk_button_new();
+        return new self(self::adopt($pointer));
+    }
+
     public static function newWithLabel(?string $label): self
     {
         Symbols::ensureInitialized();
@@ -43,6 +50,11 @@ class Button extends \Cyonima\Gtk\Raw\Widget
     public function setHasFrame(bool $hasFrame): void
     {
         Symbols::get()->gtk_button_set_has_frame($this->handle, ($hasFrame) ? 1 : 0);
+    }
+
+    public function setChild(?\Cyonima\Gtk\Raw\Widget $child): void
+    {
+        Symbols::get()->gtk_button_set_child($this->handle, $child?->handle());
     }
 
     public function onClicked(callable $handler): int

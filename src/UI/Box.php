@@ -28,6 +28,14 @@ final class Box extends Widget
         return $this;
     }
 
+    public function remove(Widget ...$children): static
+    {
+        foreach ($children as $child) {
+            $this->raw()->remove($child->raw());
+        }
+        return $this;
+    }
+
     public function spacing(int $spacing): static
     {
         $this->raw()->setSpacing($spacing);

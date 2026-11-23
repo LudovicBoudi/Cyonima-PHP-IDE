@@ -76,6 +76,12 @@ abstract class Widget
         return $this;
     }
 
+    public function sensitive(bool $sensitive = true): static
+    {
+        $this->raw->setSensitive($sensitive);
+        return $this;
+    }
+
     public function grabFocus(): static
     {
         $this->raw->grabFocus();

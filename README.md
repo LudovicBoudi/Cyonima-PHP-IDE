@@ -2,6 +2,8 @@
 
 Un IDE pour PHP 8 et un compilateur d'applications desktop natives.
 
+Cyonima est distribué sous **MIT**, en open source.
+
 Deux axes, un même socle :
 
 - **Le runtime** : des applications PHP avec une UI **native GTK4** (pas de
@@ -18,7 +20,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, navigation, édition, terminal, LSP, Xdebug ; reste la recherche projet |
+| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, édition, terminal, LSP, Xdebug ; reste la recherche projet |
 | M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 44 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -29,6 +31,11 @@ Aucune dépendance PHP externe : un autoloader PSR-4 suffit. Composer reste
 optionnel pour le développement.
 
 ```bash
+# Fenêtre de démarrage (création / ouverture de projet)
+./bin/cyonima
+./bin/cyonima --project=/chemin/du/projet
+./bin/cyonima --auto                # démonstration scriptée
+
 # Génère les bindings depuis les .typelib (aucun paquet -dev requis)
 composer generate
 
@@ -45,6 +52,60 @@ CYONIMA_LSP="php tests/fixtures/fake_lsp.php" \
 # Tests
 composer test
 ```
+
+## Fenêtre de démarrage
+
+![Fenêtre de démarrage](docs/screenshot-start.png)
+
+Au lancement normal, Cyonima affiche un choix de modèles inspiré de Visual
+Studio :
+
+| Modèle | Contenu |
+|---|---|
+| **Application GTK4** | fenêtre libadwaita, thème du projet, compteur d'exemple |
+| **Application console** | script PHP 8.3 sans interface |
+| **Bibliothèque** | classe `App\Greeter`, autoload PSR-4 et test |
+
+La création produit un environnement dédié :
+
+```
+Mon Projet/
+├── .cyonima/project.json   manifeste (modèle, licence, assets)
+├── assets/                 icône SVG, thème CSS, assets importés
+├── src/main.php            point d'entrée
+├── autoload.php            runtime Cyonima + autoload du projet
+├── LICENSE                 texte de la licence choisie
+├── README.md
+└── .gitignore
+```
+
+Le manifeste est la source de vérité : nom, identifiant d'application, modèle,
+licence SPDX et liste des assets. L'IDE lit `CYONIMA_PROJECT` et se lance sur ce
+projet dans un processus séparé (`--project`).
+
+### Licences des projets
+
+Chaque projet choisit sa licence à la création : **MIT**, **Apache-2.0**,
+**GPL-3.0** ou **propriétaire**. Le texte correspondant est écrit dans
+`LICENSE` et le manifeste enregistre l'identifiant SPDX.
+
+Après création, la vue **PROPRIÉTÉS** de l'IDE (icône engrenage) affiche les
+métadonnées du projet et permet de changer la licence. `LICENSE` et
+`.cyonima/project.json` sont réécrits, et la barre de statut se met à jour.
+
+![Propriétés du projet](docs/screenshot-properties.png)
+
+Cyonima lui-même est distribué sous **MIT**, en open source : aucune clé
+d'activation, aucun plan payant, aucun appel réseau.
+
+### Assets
+
+![Panneau Assets](docs/screenshot-assets.png)
+
+Chaque projet reçoit une icône SVG et un thème CSS. Le panneau **ASSETS** de
+l'IDE liste les fichiers de `assets/`, importe un fichier par son chemin
+(relatif au projet ou absolu), met à jour le manifeste et ouvre l'asset choisi
+dans l'éditeur.
 
 ## Exemple : UI native + handler PHP
 
@@ -162,8 +223,9 @@ un fichier temporaire et l'envoie au shell du terminal.
 
 ## Design
 
-Interface inspirée de Visual Studio : barre d'activité, panneau latéral
-redimensionnable, onglet d'éditeur, panneau terminal et barre de statut bleue.
+Interface inspirée de Visual Studio : fenêtre de démarrage avec modèles,
+barre d'activité, panneau latéral redimensionnable (explorateur, débogage,
+assets, propriétés), onglet d'éditeur, panneau terminal et barre de statut bleue.
 IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré) avec
 filtrage de la liste pendant la frappe.
 Détail dans [`docs/design.md`](docs/design.md).

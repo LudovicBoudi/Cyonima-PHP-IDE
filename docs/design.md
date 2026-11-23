@@ -30,7 +30,7 @@ Composants :
 | Barre de menus | `AdwHeaderBar` + labels (`headerStart`) |
 | Actions | `IconButton` (Enregistrer, Déboguer, Exécuter) |
 | Barre d'activité | `Box` vertical de 48 px, icônes symboliques, indicateur bleu |
-| Panneau latéral | `EXPLORER` (fichiers) ou `DÉBOGAGE` (pile, variables) |
+| Panneau latéral | `EXPLORER`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
 | Onglet | nom du fichier, point de modification, fermeture |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
 | Panneau bas | onglets PROBLÈMES / SORTIE / TERMINAL + VTE |
@@ -57,6 +57,42 @@ La zone latérale et l'éditeur sont dans un `GtkPaned` horizontal (position
 initiale 270 px, largeur minimale 180 px). `resize_start_child=false` : quand on
 redimensionne la fenêtre, c'est l'éditeur qui grandit, pas l'explorateur. Le
 séparateur se glisse à la souris.
+
+## Fenêtre de démarrage
+
+![Fenêtre de démarrage](screenshot-start.png)
+
+Le lancement sans argument affiche un choix de modèles à gauche et un formulaire
+à droite, comme la fenêtre de création de Visual Studio. Les projets récents
+sont listés dans la barre latérale et ouvrables en un clic.
+
+La création écrit un environnement complet (`.cyonima/project.json`, `src/`,
+`assets/`, `LICENSE`, `README.md`) puis lance l'IDE dans un processus séparé avec
+`--project`. La fenêtre de démarrage se ferme : chaque projet a son propre
+environnement.
+
+## Licences des projets
+
+Le formulaire de création choisit la licence du projet : MIT, Apache-2.0,
+GPL-3.0 ou propriétaire. Le texte est écrit dans `LICENSE` et le manifeste
+enregistre l'identifiant SPDX. Cyonima reste sous licence MIT, sans activation
+ni fonctionnalité payante.
+
+La vue **PROPRIÉTÉS** (icône engrenage de la barre d'activité) affiche nom,
+chemin, modèle, identifiant, version et nombre d'assets. Elle permet de changer
+la licence après création : `LICENSE` et le manifeste sont réécrits, puis la
+barre de statut est actualisée.
+
+![Propriétés du projet](screenshot-properties.png)
+
+## Assets
+
+![Panneau Assets](screenshot-assets.png)
+
+Troisième vue du panneau latéral : elle liste `assets/` avec type et taille,
+importe un fichier (chemin relatif au projet ou absolu), rafraîchit le manifeste
+et ouvre l'asset dans l'éditeur. L'icône SVG et le thème CSS générés servent
+d'exemple ; `assets/theme.css` est chargé par l'application GTK produite.
 
 ## IntelliSense
 

@@ -9,7 +9,9 @@ use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
+use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\XdebugClient;
+use Cyonima\UI\AssetPanel;
 use Cyonima\UI\Box;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CompletionPopup;
@@ -18,6 +20,7 @@ use Cyonima\UI\FileBrowser;
 use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
 use Cyonima\UI\Paned;
+use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\ScrolledWindow;
 use Cyonima\UI\Terminal;
 use Cyonima\UI\Theme;
@@ -27,10 +30,22 @@ use Cyonima\UI\Theme;
  */
 
 $auto = in_array('--auto', $argv, true);
-$root = dirname(__DIR__) . '/examples';
+$projectRoot = getenv('CYONIMA_PROJECT');
+$hasProject = $projectRoot !== false && trim($projectRoot) !== '';
+$root = $hasProject
+    ? (realpath($projectRoot) ?: $projectRoot)
+    : dirname(__DIR__) . '/examples';
+$manifest = $hasProject ? ProjectFactory::manifest($root) : null;
+$projectName = is_string($manifest['name'] ?? null) && $manifest['name'] !== ''
+    ? $manifest['name']
+    : ($hasProject ? basename($root) : 'Démonstration');
+$projectLicense = is_string($manifest['license']['spdx'] ?? null)
+    ? $manifest['license']['spdx']
+    : '—';
+$statusLicense = (new Label('Licence : ' . $projectLicense))->cssClass('status-item');
 
 $app = new AdwApplication('com.cyonima.ide-demo');
-$window = $app->window('Cyonima', '');
+$window = $app->window('Cyonima', $projectName);
 $window->raw()->setDefaultSize(1280, 800);
 
 $editor = new CodeEditor('php');
@@ -104,7 +119,12 @@ $openFile = function (string $path) use (
         'php' => 'php',
         'md' => 'markdown',
         'json' => 'json',
+        'css' => 'css',
+        'svg', 'xml' => 'xml',
+        'js' => 'js',
+        'html' => 'html',
         'sh' => 'sh',
+        'txt' => 'text',
         default => 'php',
     };
 
@@ -362,26 +382,63 @@ $activityBar->raw()->setSizeRequest(48, -1);
 $explorerButton = (new IconButton('folder-symbolic', 'Explorateur'))->cssClass('active');
 $searchButton = (new IconButton('edit-find-symbolic', 'Recherche'));
 $debugActivity = (new IconButton('applications-engineering-symbolic', 'Débogage'));
-$settingsButton = (new IconButton('preferences-system-symbolic', 'Paramètres'));
+$assetsButton = (new IconButton('folder-pictures-symbolic', 'Assets'));
+$settingsButton = (new IconButton('preferences-system-symbolic', 'Propriétés du projet'));
 $activitySpacer = (new Box(Orientation::VERTICAL, 0))->expand(false, true);
 
-$activityBar->append($explorerButton, $searchButton, $debugActivity, $activitySpacer, $settingsButton);
+$activityBar->append(
+    $explorerButton,
+    $searchButton,
+    $debugActivity,
+    $assetsButton,
+    $activitySpacer,
+    $settingsButton,
+);
 
 // --- Panneau latéral -------------------------------------------------------
+$activePanel = 'explorer';
 $browser = new FileBrowser($root, $openFile);
+$assetPanel = new AssetPanel(
+    $root,
+    $openFile,
+    function (string $message) use ($window): void {
+        $window->toast($message);
+    },
+);
+$projectProperties = new ProjectPropertiesPanel(
+    $root,
+    function (string $license) use ($statusLicense, $window): void {
+        $statusLicense->text('Licence : ' . $license);
+        $window->toast('Licence du projet mise à jour : ' . $license);
+    },
+);
 
 $panelTitle = (new Label('EXPLORER'))->cssClass('panel-header')->expand(true, false);
 $refreshButton = (new IconButton('view-refresh-symbolic', 'Rafraîchir'))
-    ->onClicked(fn () => $browser->refresh());
+    ->onClicked(function () use ($browser, $assetPanel, $projectProperties, &$activePanel): void {
+        if ($activePanel === 'assets') {
+            $assetPanel->refresh();
+            return;
+        }
+
+        if ($activePanel === 'properties') {
+            $projectProperties->refresh();
+            return;
+        }
+
+        $browser->refresh();
+    });
 $panelHeader = (new Box(Orientation::HORIZONTAL, 4))
     ->cssClass('panel-header-bar')
     ->append($panelTitle, $refreshButton);
 
 $explorerPage = (new ScrolledWindow($browser))->expand();
 $debugPage = (new ScrolledWindow($debugPanel))->expand()->visible(false);
+$assetsPage = (new ScrolledWindow($assetPanel))->expand()->visible(false);
+$propertiesPage = (new ScrolledWindow($projectProperties))->expand()->visible(false);
 
 $panelPages = (new Box(Orientation::VERTICAL, 0))
-    ->append($explorerPage, $debugPage)
+    ->append($explorerPage, $debugPage, $assetsPage, $propertiesPage)
     ->expand();
 
 $sidePanel = (new Box(Orientation::VERTICAL, 0))
@@ -392,35 +449,108 @@ $sidePanel->raw()->setSizeRequest(180, -1);
 $showExplorer = function () use (
     $explorerPage,
     $debugPage,
+    $assetsPage,
+    $propertiesPage,
     $explorerButton,
     $debugActivity,
+    $assetsButton,
+    $settingsButton,
     $panelTitle,
+    &$activePanel,
 ): void {
     $explorerPage->visible(true);
     $debugPage->visible(false);
+    $assetsPage->visible(false);
+    $propertiesPage->visible(false);
     $explorerButton->cssClass('active');
     $debugActivity->removeCssClass('active');
+    $assetsButton->removeCssClass('active');
+    $settingsButton->removeCssClass('active');
     $panelTitle->text('EXPLORER');
+    $activePanel = 'explorer';
 };
 
 $showDebugPanel = function () use (
     $explorerPage,
     $debugPage,
+    $assetsPage,
+    $propertiesPage,
     $explorerButton,
     $debugActivity,
+    $assetsButton,
+    $settingsButton,
     $panelTitle,
+    &$activePanel,
 ): void {
     $explorerPage->visible(false);
     $debugPage->visible(true);
+    $assetsPage->visible(false);
+    $propertiesPage->visible(false);
     $debugActivity->cssClass('active');
     $explorerButton->removeCssClass('active');
+    $assetsButton->removeCssClass('active');
+    $settingsButton->removeCssClass('active');
     $panelTitle->text('DÉBOGAGE');
+    $activePanel = 'debug';
+};
+
+$showAssetsPanel = function () use (
+    $explorerPage,
+    $debugPage,
+    $assetsPage,
+    $propertiesPage,
+    $explorerButton,
+    $debugActivity,
+    $assetsButton,
+    $settingsButton,
+    $panelTitle,
+    $assetPanel,
+    &$activePanel,
+): void {
+    $explorerPage->visible(false);
+    $debugPage->visible(false);
+    $assetsPage->visible(true);
+    $propertiesPage->visible(false);
+    $assetsButton->cssClass('active');
+    $explorerButton->removeCssClass('active');
+    $debugActivity->removeCssClass('active');
+    $settingsButton->removeCssClass('active');
+    $panelTitle->text('ASSETS');
+    $activePanel = 'assets';
+    $assetPanel->refresh();
+};
+
+$showPropertiesPanel = function () use (
+    $explorerPage,
+    $debugPage,
+    $assetsPage,
+    $propertiesPage,
+    $explorerButton,
+    $debugActivity,
+    $assetsButton,
+    $settingsButton,
+    $panelTitle,
+    $projectProperties,
+    &$activePanel,
+): void {
+    $explorerPage->visible(false);
+    $debugPage->visible(false);
+    $assetsPage->visible(false);
+    $propertiesPage->visible(true);
+    $settingsButton->cssClass('active');
+    $explorerButton->removeCssClass('active');
+    $debugActivity->removeCssClass('active');
+    $assetsButton->removeCssClass('active');
+    $panelTitle->text('PROPRIÉTÉS');
+    $activePanel = 'properties';
+    $projectProperties->refresh();
 };
 
 $explorerButton->onClicked(fn () => $showExplorer());
 $debugActivity->onClicked(fn () => $showDebugPanel());
+$assetsButton->onClicked(fn () => $showAssetsPanel());
 $searchButton->onClicked(fn () => $window->toast('Recherche à venir'));
-$settingsButton->onClicked(fn () => $window->toast('Paramètres à venir'));
+$settingsButton->onClicked(fn () => $showPropertiesPanel());
 
 // --- Onglet, éditeur, terminal --------------------------------------------
 $tab = (new Box(Orientation::HORIZONTAL, 6))
@@ -476,6 +606,7 @@ $body = (new Box(Orientation::HORIZONTAL, 0))
     ->expand();
 
 // --- Barre de statut -------------------------------------------------------
+$statusProject = (new Label($projectName))->cssClass('status-item');
 $statusBranch = (new Label('main'))->cssClass('status-item');
 $statusSpaces = (new Label('Espaces : 4'))->cssClass('status-item');
 $statusEncoding = (new Label('UTF-8'))->cssClass('status-item');
@@ -484,7 +615,16 @@ $statusFiller = (new Label(''))->expand(true, false);
 
 $statusBar = (new Box(Orientation::HORIZONTAL, 0))
     ->cssClass('statusbar')
-    ->append($statusBranch, $statusFiller, $statusPos, $statusSpaces, $statusEncoding, $statusPhp);
+    ->append(
+        $statusProject,
+        $statusLicense,
+        $statusBranch,
+        $statusFiller,
+        $statusPos,
+        $statusSpaces,
+        $statusEncoding,
+        $statusPhp,
+    );
 
 $content = (new Box(Orientation::VERTICAL, 0))->append($body, $statusBar);
 $window->content($content);
@@ -583,7 +723,14 @@ $sample = null;
 if ($auto) {
     // On travaille sur une copie : le scénario automatique sauvegarde.
     $sample = sys_get_temp_dir() . '/cyonima_ide_demo.php';
-    copy($root . '/hello.php', $sample);
+    $source = $root . '/hello.php';
+
+    if (is_file($source) && is_readable($source)) {
+        copy($source, $sample);
+    } else {
+        file_put_contents($sample, "<?php\n\ndeclare(strict_types=1);\n\necho \"Cyonima\\n\";\n");
+    }
+
     Loop::after(300, fn () => $openFile($sample));
     Loop::after(500, fn () => $runButton->click());
     Loop::after(700, function () use ($editor): void {

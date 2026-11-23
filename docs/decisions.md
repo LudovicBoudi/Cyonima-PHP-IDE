@@ -285,6 +285,30 @@ Trois écarts assumés par rapport au miroir strict du C :
     pas quand seul son enfant change). Nouvelle requête uniquement si le préfixe
     est raccourci, change de mot ou si la liste est fermée.
 
+29. **Fenêtre de démarrage façon Visual Studio** : sans argument, l'exécutable
+    affiche modèles (GTK4, console, bibliothèque), projets récents et création
+    d'environnement. `ProjectFactory` écrit `.cyonima/project.json`, `src/`,
+    `assets/`, `LICENSE`, `README.md`, `.gitignore`. L'IDE est ensuite lancé
+    dans un processus séparé avec `--project`, qui exporte `CYONIMA_PROJECT` et
+    `CYONIMA_HOME`. `--auto` conserve le scénario de test direct.
+
+30. **Licences des projets** : MIT, Apache-2.0, GPL-3.0 ou propriétaire, choisie
+    à la création ; le texte est écrit dans `LICENSE` et l'identifiant SPDX dans
+    le manifeste. La vue `PROPRIÉTÉS` permet de changer la licence après coup :
+    `ProjectFactory::updateLicense()` réécrit `LICENSE` et le manifeste, sans
+    toucher au README ni aux assets ; la barre de statut de l'IDE est actualisée.
+    Cyonima est distribué sous MIT, en open source : pas de clé d'activation,
+    pas de plan payant, pas de vérification réseau. Le répertoire de
+    configuration (`CYONIMA_CONFIG_DIR`) ne sert qu'aux projets récents et
+    préférences.
+
+31. **Assets de projet** : chaque création génère `assets/icon.svg` et
+    `assets/theme.css` ; le panneau ASSETS liste, importe (chemin relatif au
+    projet ou absolu) et ouvre les fichiers. `ProjectFactory::removeAsset()`
+    couvre la suppression côté runtime. Toute modification rafraîchit la liste
+    `assets` du manifeste. Les chemins relatifs sont résolus depuis la racine
+    du projet, pas depuis le répertoire courant de l'IDE.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

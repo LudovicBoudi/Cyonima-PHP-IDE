@@ -24,6 +24,9 @@ use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
+use Cyonima\Runtime\Config;
+use Cyonima\Runtime\ProjectFactory;
+use Cyonima\Runtime\RecentProjects;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
@@ -776,5 +779,162 @@ if ($py === null) {
     $vte = python('import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Vte", "3.91"); from gi.repository import Gtk, GObject, Vte; Gtk.init(); t = Vte.Terminal(); print(int(hasattr(Vte, "Terminal")), int(GObject.signal_lookup("child-exited", t) > 0))');
     T::same('1 1', $vte, 'Vte\Terminal et son signal child-exited existent côté PyGObject');
 }
+
+
+// ---------------------------------------------------------------------------
+T::section('12. Démarrage : licences de projet, projets récents, assets');
+
+$removeTree = function (string $path) use (&$removeTree): void {
+    if (!is_dir($path)) {
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        return;
+    }
+
+    foreach (array_diff(scandir($path) ?: [], ['.', '..']) as $entry) {
+        $child = $path . '/' . $entry;
+        if (is_dir($child) && !is_link($child)) {
+            $removeTree($child);
+        } else {
+            @unlink($child);
+        }
+    }
+    @rmdir($path);
+};
+
+$base = sys_get_temp_dir() . '/cyonima_start_' . getmypid();
+$removeTree($base);
+mkdir($base, 0775, true);
+
+putenv('CYONIMA_CONFIG_DIR=' . $base . '/config');
+
+T::same($base . '/config', Config::dir(), 'config : répertoire surchargé');
+T::same($base . '/config/recents.json', Config::file('recents.json'), 'config : fichier résolu');
+
+$recent = new RecentProjects($base . '/recent.json');
+$first = $base . '/recent-un';
+$second = $base . '/recent-deux';
+mkdir($first);
+mkdir($second);
+
+$recent->add($first, 'Premier', 'gtk');
+$recent->add($first, 'Premier bis', 'console');
+$recent->add($second, 'Second', 'library');
+$recentEntries = $recent->all();
+T::same(2, count($recentEntries), 'projets récents : dédoublonnage');
+T::same('Second', $recentEntries[0]['name'] ?? null, 'projets récents : plus récent en tête');
+$recent->remove($first);
+T::same(1, count($recent->all()), 'projets récents : suppression');
+$recent->clear();
+T::same([], $recent->all(), 'projets récents : vidage');
+
+T::same(3, count(ProjectFactory::templates()), 'modèles : GTK, console et bibliothèque');
+T::same(4, count(ProjectFactory::licenses()), 'licences de projet : quatre choix');
+T::same('cafe-creatif', ProjectFactory::slug('Café Créatif'), 'slug : accents translittérés');
+T::same('com.example.app123projet', ProjectFactory::suggestAppId('123 Projet'), 'identifiant proposé toujours valide');
+
+$invalid = ProjectFactory::create('', $base, 'gtk');
+T::ok(!$invalid['ok'], 'projet : nom vide refusé');
+
+$extraAsset = $base . '/logo.png';
+file_put_contents($extraAsset, "\x89PNG\r\n\x1a\n");
+
+$project = ProjectFactory::create(
+    'Mon Application',
+    $base . '/projets',
+    ProjectFactory::TEMPLATE_GTK,
+    'MIT',
+    'com.exemple.monapplication',
+    [$extraAsset],
+    '/home/ludo/Documents/Dev/Cyonima-PHP-IDE',
+);
+
+T::ok($project['ok'], 'projet GTK : création', $project['message']);
+$projectPath = (string) $project['path'];
+T::ok(is_dir($projectPath), 'projet GTK : dossier créé');
+T::ok(is_file($projectPath . '/.cyonima/project.json'), 'projet GTK : manifeste');
+T::ok(is_file($projectPath . '/src/main.php'), 'projet GTK : point d\'entrée');
+T::ok(is_file($projectPath . '/autoload.php'), 'projet GTK : autoload');
+T::ok(is_file($projectPath . '/LICENSE'), 'projet GTK : licence');
+T::ok(is_file($projectPath . '/README.md'), 'projet GTK : README');
+T::ok(is_file($projectPath . '/assets/icon.svg'), 'projet GTK : icône');
+T::ok(is_file($projectPath . '/assets/theme.css'), 'projet GTK : thème');
+T::ok(is_file($projectPath . '/assets/logo.png'), 'projet GTK : asset importé');
+
+$manifest = ProjectFactory::manifest($projectPath) ?? [];
+T::same('Mon Application', $manifest['name'] ?? null, 'manifeste : nom');
+T::same('MIT', $manifest['license']['spdx'] ?? null, 'manifeste : licence');
+T::same('gtk', $manifest['template'] ?? null, 'manifeste : modèle');
+T::same(4, count($manifest['assets'] ?? []), 'manifeste : assets référencés');
+T::same(4, count(ProjectFactory::listAssets($projectPath)), 'assets : liste sur disque');
+
+$another = $base . '/police.woff2';
+file_put_contents($another, 'font');
+$import = ProjectFactory::importAsset($projectPath, $another);
+T::ok($import['ok'], 'assets : import');
+T::same(5, count(ProjectFactory::listAssets($projectPath)), 'assets : import compté');
+T::ok(str_contains((string) file_get_contents($projectPath . '/.cyonima/project.json'), 'police.woff2'), 'assets : manifeste rafraîchi');
+$removed = ProjectFactory::removeAsset($projectPath, 'police.woff2');
+T::ok($removed['ok'], 'assets : suppression');
+T::same(4, count(ProjectFactory::listAssets($projectPath)), 'assets : suppression comptée');
+
+file_put_contents($projectPath . '/logo', 'asset local');
+$relative = ProjectFactory::importAsset($projectPath, 'logo');
+T::ok($relative['ok'], 'assets : import relatif au projet');
+T::same('assets/logo', $relative['path'] ?? null, 'assets : chemin relatif conservé');
+T::same(5, count(ProjectFactory::listAssets($projectPath)), 'assets : import relatif compté');
+ProjectFactory::removeAsset($projectPath, 'logo');
+
+$assetPanel = new UI\AssetPanel($projectPath, static fn (string $path): null => null);
+T::same(4, $assetPanel->count(), 'panneau assets : liste du projet');
+
+$duplicate = ProjectFactory::create('Mon Application', $base . '/projets', 'gtk');
+T::ok(!$duplicate['ok'], 'projet : dossier existant refusé');
+$licenseUpdate = ProjectFactory::updateLicense($projectPath, 'GPL-3.0');
+T::ok($licenseUpdate['ok'], 'licence projet : mise à jour');
+$updatedManifest = ProjectFactory::manifest($projectPath) ?? [];
+T::same('GPL-3.0', $updatedManifest['license']['spdx'] ?? null, 'licence projet : manifeste mis à jour');
+T::ok(
+    str_contains((string) file_get_contents($projectPath . '/LICENSE'), 'GNU General Public License'),
+    'licence projet : texte LICENSE réécrit',
+);
+T::same(4, count(ProjectFactory::listAssets($projectPath)), 'licence projet : assets préservés');
+$invalidLicense = ProjectFactory::updateLicense($projectPath, 'WTFPL');
+T::ok(!$invalidLicense['ok'], 'licence projet : licence inconnue refusée');
+T::ok(!ProjectFactory::updateLicense($base, 'MIT')['ok'], 'licence projet : manifeste obligatoire');
+
+$propertiesPanel = new UI\ProjectPropertiesPanel($projectPath);
+T::same('GPL-3.0', $propertiesPanel->selectedLicense(), 'propriétés : licence courante sélectionnée');
+T::same('Mon Application', $propertiesPanel->projectName(), 'propriétés : nom du projet');
+
+
+$console = ProjectFactory::create('Outil CLI', $base . '/projets', ProjectFactory::TEMPLATE_CONSOLE, 'Apache-2.0');
+T::ok($console['ok'], 'projet console : création');
+T::ok(str_contains((string) file_get_contents((string) $console['path'] . '/src/main.php'), 'PHP_VERSION'), 'projet console : script');
+
+$library = ProjectFactory::create('Ma Bibliothèque', $base . '/projets', ProjectFactory::TEMPLATE_LIBRARY, 'GPL-3.0');
+T::ok($library['ok'], 'projet bibliothèque : création');
+T::ok(is_file((string) $library['path'] . '/src/Greeter.php'), 'projet bibliothèque : classe App\\Greeter');
+T::ok(is_file((string) $library['path'] . '/tests/test.php'), 'projet bibliothèque : test');
+
+$consoleOutput = shell_exec(PHP_BINARY . ' ' . escapeshellarg((string) $console['path'] . '/src/main.php') . ' 2>&1');
+T::ok(str_contains((string) $consoleOutput, 'Outil CLI'), 'projet console : exécution');
+
+$libraryOutput = shell_exec(PHP_BINARY . ' ' . escapeshellarg((string) $library['path'] . '/tests/test.php') . ' 2>&1');
+T::ok(str_contains((string) $libraryOutput, 'Bonjour, Cyonima'), 'projet bibliothèque : test exécuté');
+
+exec(PHP_BINARY . ' -l ' . escapeshellarg($projectPath . '/src/main.php') . ' 2>&1', $lintLines, $lintStatus);
+T::same(0, $lintStatus, 'projet GTK : syntaxe du point d\'entrée');
+
+$entry = new UI\Entry('Nom du projet', 'Projet');
+T::same('Projet', $entry->text(), 'Entry : texte initial');
+$entry->setText('Cyonima');
+T::same('Cyonima', $entry->text(), 'Entry : setText');
+
+$startWindow = new Cyonima\App\StartWindow(dirname(__DIR__));
+T::ok($startWindow instanceof Cyonima\App\StartWindow, 'fenêtre de démarrage : construction');
+
+$removeTree($base);
 
 exit(T::report());

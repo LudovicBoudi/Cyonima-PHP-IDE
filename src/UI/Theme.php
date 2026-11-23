@@ -14,9 +14,13 @@ final class Theme
 {
     public const SCHEME_ID = 'vs-dark';
 
-    public static function apply(AdwWindow|Window $window, CodeEditor $editor): void
+    public static function apply(AdwWindow|Window $window, ?CodeEditor $editor = null): void
     {
         $window->addCss(self::CSS);
+
+        if ($editor === null) {
+            return;
+        }
 
         // Repli si le schéma personnalisé n'est pas chargeable.
         $editor->scheme('Adwaita-dark');
@@ -288,6 +292,374 @@ scrollbar slider {
 scrollbar slider:hover {
     background-color: #6b6b6b;
 }
+/* --- Fenêtre de démarrage (façon Visual Studio) ------------------------- */
+
+.start-sidebar {
+    background-color: #252526;
+    border-right: 1px solid #3f3f46;
+    padding: 16px 10px;
+}
+
+.start-brand {
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 700;
+    padding: 2px 8px;
+}
+
+.start-brand-sub {
+    color: #8a8a8a;
+    font-size: 10px;
+    padding: 0 8px;
+}
+
+.start-section {
+    color: #8a8a8a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 10px 8px 4px;
+}
+
+.start-nav-button {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 3px;
+    padding: 7px 10px;
+    color: #cccccc;
+}
+
+.start-nav-button:hover {
+    background-color: #2a2d2e;
+    color: #ffffff;
+}
+
+.start-nav-button.active {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+.start-page {
+    background-color: #1e1e1e;
+}
+
+.start-content {
+    padding: 24px 40px 28px;
+}
+
+.start-title {
+    color: #ffffff;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.start-subtitle {
+    color: #9d9d9d;
+    font-size: 13px;
+}
+
+.start-card {
+    background-color: #252526;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 4px;
+    box-shadow: none;
+    padding: 10px 12px;
+    min-height: 84px;
+    color: #cccccc;
+}
+
+.start-card:hover {
+    background-color: #2d2d30;
+    border-color: #007acc;
+}
+
+.start-card.selected {
+    background-color: #094771;
+    border-color: #007acc;
+}
+
+.start-card-title {
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.start-card-desc {
+    color: #9d9d9d;
+    font-size: 11px;
+}
+
+.start-card.selected .start-card-desc {
+    color: #d7e8f7;
+}
+
+.start-field-label {
+    color: #cccccc;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.start-entry {
+    background-color: #3c3c3c;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    padding: 6px 8px;
+    min-height: 22px;
+    color: #ffffff;
+    box-shadow: none;
+}
+
+.start-entry:focus {
+    border-color: #007acc;
+}
+
+.start-primary {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 7px 18px;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.start-primary:hover {
+    background-color: #1177bb;
+}
+
+.start-choice {
+    background-color: #3a3d41;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 5px 12px;
+    color: #cccccc;
+    font-size: 11px;
+}
+
+.start-choice.selected {
+    background-color: #094771;
+    border-color: #007acc;
+    color: #ffffff;
+}
+
+.start-hint {
+    color: #8a8a8a;
+    font-size: 11px;
+}
+
+.start-error {
+    color: #f48771;
+    font-size: 12px;
+}
+
+.start-success {
+    color: #4ec9b0;
+    font-size: 12px;
+}
+
+.start-recent-item {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 3px;
+    padding: 6px 8px;
+    color: #cccccc;
+}
+
+.start-recent-item:hover {
+    background-color: #2a2d2e;
+}
+
+.start-recent-name {
+    color: #dddddd;
+    font-size: 12px;
+}
+
+.start-recent-path {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.start-recent-missing {
+    color: #f48771;
+}
+
+.start-asset {
+    background-color: #252526;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    padding: 5px 10px;
+    color: #cccccc;
+    font-size: 11px;
+}
+
+.start-footer {
+    color: #8a8a8a;
+    font-size: 10px;
+    padding: 8px;
+}
+
+/* --- Panneau Assets ------------------------------------------------------ */
+
+.assets-panel {
+    padding: 6px 8px;
+}
+
+.asset-entry {
+    background-color: #3c3c3c;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    padding: 4px 6px;
+    min-height: 20px;
+    color: #ffffff;
+    box-shadow: none;
+    font-size: 11px;
+}
+
+.asset-add {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 4px 10px;
+    color: #ffffff;
+    font-size: 11px;
+}
+
+.asset-add:hover {
+    background-color: #1177bb;
+}
+
+.asset-row {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 2px;
+    padding: 4px 6px;
+}
+
+.asset-row:hover {
+    background-color: #2a2d2e;
+}
+
+.asset-name {
+    color: #dddddd;
+    font-size: 12px;
+}
+
+.asset-meta {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.asset-empty {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 6px;
+}
+
+.asset-message {
+    color: #4ec9b0;
+    font-size: 10px;
+    padding: 2px 4px;
+}
+
+.asset-message.error {
+    color: #f48771;
+}
+
+/* --- Propriétés du projet ------------------------------------------------ */
+
+.project-panel {
+    padding: 4px 0 10px;
+}
+
+.project-section {
+    color: #8a8a8a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 12px 10px 4px;
+}
+
+.project-row {
+    padding: 5px 10px;
+    border-bottom: 1px solid #2a2d2e;
+}
+
+.project-key {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.project-value {
+    color: #dddddd;
+    font-size: 12px;
+}
+
+.project-choice {
+    background-color: #3a3d41;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 6px 10px;
+    color: #cccccc;
+    font-size: 11px;
+    margin: 0 10px;
+}
+
+.project-choice:hover {
+    background-color: #45494e;
+}
+
+.project-choice.selected {
+    background-color: #094771;
+    border-color: #007acc;
+    color: #ffffff;
+}
+
+.project-apply {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 6px 12px;
+    color: #ffffff;
+    font-size: 11px;
+    margin: 8px 10px 0;
+}
+
+.project-apply:hover {
+    background-color: #1177bb;
+}
+
+.project-message {
+    color: #4ec9b0;
+    font-size: 10px;
+    padding: 4px 10px;
+}
+
+.project-message.error {
+    color: #f48771;
+}
+
+.project-note {
+    color: #8a8a8a;
+    font-size: 10px;
+    padding: 2px 10px;
+}
+
 CSS;
 
     private const SCHEME = <<<'XML'
