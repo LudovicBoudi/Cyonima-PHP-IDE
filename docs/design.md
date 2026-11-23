@@ -62,6 +62,11 @@ séparateur se glisse à la souris.
 
 ![Popup IntelliSense](screenshot-intellisense.png)
 
+Après filtrage local (préfixe `strl`), la liste ne garde que `strlen` et se
+redimensionne :
+
+![Popup IntelliSense filtré](screenshot-intellisense-filter.png)
+
 - déclenchement automatique **180 ms** après une frappe quand le préfixe fait
   au moins 2 caractères (ou après `.`/`>` quand un serveur LSP est actif) ;
 - `Ctrl+Espace` force la liste ;
@@ -70,6 +75,12 @@ séparateur se glisse à la souris.
 - **sans LSP** : suggestions PHP intégrées (`PhpIntellisense`) — mots-clés et
   fonctions avec signatures ;
 - **avec LSP** : résultats du serveur, repli local si la réponse est vide ;
+- **filtrage local pendant la frappe** : tant que le préfixe s'allonge, la
+  liste est filtrée sans nouvelle requête. Le popover est masqué pendant la
+  frappe (l'éditeur garde le focus), puis réaffiché **90 ms** après la dernière
+  touche avec la taille correcte ;
+- une nouvelle requête n'est faite que si le préfixe est raccourci, change de
+  mot, ou si la liste est fermée ;
 - après insertion, une fenêtre de suppression de 400 ms évite le
   redéclenchement (le buffer émet deux signaux `changed`).
 

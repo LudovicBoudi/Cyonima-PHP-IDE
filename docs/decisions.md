@@ -278,6 +278,13 @@ Trois écarts assumés par rapport au miroir strict du C :
     `resize_start_child=false` pour que l'éditeur absorbe les changements de
     taille de fenêtre.
 
+28. **Filtrage local IntelliSense** : tant que le préfixe s'allonge, la liste
+    est filtrée sans requête. Le popover est masqué pendant la frappe (focus
+    conservé par l'éditeur), puis réaffiché 90 ms après la dernière touche ;
+    la surface popover est recréée à la bonne taille (elle ne se redimensionne
+    pas quand seul son enfant change). Nouvelle requête uniquement si le préfixe
+    est raccourci, change de mot ou si la liste est fermée.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

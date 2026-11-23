@@ -76,6 +76,12 @@ abstract class Widget
         return $this;
     }
 
+    public function grabFocus(): static
+    {
+        $this->raw->grabFocus();
+        return $this;
+    }
+
     public function width(): int
     {
         return $this->raw->getWidth();

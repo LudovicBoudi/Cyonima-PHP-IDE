@@ -164,7 +164,8 @@ un fichier temporaire et l'envoie au shell du terminal.
 
 Interface inspirée de Visual Studio : barre d'activité, panneau latéral
 redimensionnable, onglet d'éditeur, panneau terminal et barre de statut bleue.
-IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré).
+IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré) avec
+filtrage de la liste pendant la frappe.
 Détail dans [`docs/design.md`](docs/design.md).
 
 ![Aperçu de l'IDE](docs/screenshot-ide.png)

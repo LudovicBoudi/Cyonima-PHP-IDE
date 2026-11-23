@@ -83,6 +83,7 @@ $terminal
 $openFile = function (string $path) use (
     $editor,
     $window,
+    $popup,
     $updateTab,
     $updateCursor,
     &$currentFile,
@@ -91,6 +92,8 @@ $openFile = function (string $path) use (
     &$lsp,
     &$lspReady,
 ): void {
+    $popup->hide();
+
     if (!is_file($path) || !is_readable($path)) {
         $window->toast('Fichier illisible');
         return;
@@ -137,6 +140,7 @@ $editor->onChanged(function () use (
     &$intellisenseTimer,
     &$suppressIntellisenseUntil,
     $editor,
+    $popup,
 ): void {
     if ($loading || $currentFile === null) {
         return;
@@ -148,6 +152,20 @@ $editor->onChanged(function () use (
     $updateCursor();
 
     if (Loop::now() < $suppressIntellisenseUntil) {
+        return;
+    }
+
+    // Filtrage local tant que le préfixe s'allonge : aucune nouvelle requête.
+    if ($popup->active() && $popup->filterByPrefix($editor->wordPrefix())) {
+        if ($intellisenseTimer !== null) {
+            Loop::cancelTimer($intellisenseTimer);
+        }
+
+        $intellisenseTimer = Loop::after(90, function () use (&$intellisenseTimer, $popup): void {
+            $intellisenseTimer = null;
+            $popup->present();
+        });
+
         return;
     }
 
@@ -246,7 +264,6 @@ $complete = function (bool $auto = false) use (
 
     $insert = function (array $item) use (
         $editor,
-        $prefix,
         &$suppressIntellisenseUntil,
         &$intellisenseTimer,
     ): void {
@@ -257,9 +274,11 @@ $complete = function (bool $auto = false) use (
             $intellisenseTimer = null;
         }
 
+        // Longueur courante : le préfixe peut avoir grandi depuis l'affichage.
+        $currentPrefix = $editor->wordPrefix();
         $length = function_exists('mb_strlen')
-            ? mb_strlen($prefix, 'UTF-8')
-            : strlen($prefix);
+            ? mb_strlen($currentPrefix, 'UTF-8')
+            : strlen($currentPrefix);
         $editor->replacePrefix($length, $item['insertText'] ?? $item['label']);
     };
 
@@ -272,7 +291,7 @@ $complete = function (bool $auto = false) use (
         $items = PhpIntellisense::suggest($prefix);
         $completionItems = count($items);
         if ($items !== []) {
-            $popup->show($items, $insert, $caret);
+            $popup->show($items, $insert, $caret, $prefix);
         }
         return;
     }
@@ -301,7 +320,7 @@ $complete = function (bool $auto = false) use (
             return;
         }
 
-        $popup->show($items, $insert, $caret);
+        $popup->show($items, $insert, $caret, $prefix);
     });
 };
 
@@ -413,7 +432,8 @@ $tabBar = (new Box(Orientation::HORIZONTAL, 0))
     ->cssClass('tab-bar')
     ->append($tab);
 
-$tabClose->onClicked(function () use ($editor, $window, $updateTab, &$currentFile, &$dirty): void {
+$tabClose->onClicked(function () use ($editor, $window, $popup, $updateTab, &$currentFile, &$dirty): void {
+    $popup->hide();
     $currentFile = null;
     $dirty = false;
     $editor->setText('');

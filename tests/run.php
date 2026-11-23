@@ -570,6 +570,8 @@ $inserted = false;
 $visibleAfterShow = false;
 $hiddenAfterChoose = false;
 $caretRect = null;
+$filteredCount = 0;
+$visibleAfterPresent = false;
 
 $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
     $completionLsp,
@@ -580,6 +582,8 @@ $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
     &$visibleAfterShow,
     &$hiddenAfterChoose,
     &$caretRect,
+    &$filteredCount,
+    &$visibleAfterPresent,
 ): void {
     $caretRect = $completionEditor->cursorRect();
     $cursor = $completionEditor->cursor();
@@ -596,6 +600,8 @@ $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
         &$inserted,
         &$visibleAfterShow,
         &$hiddenAfterChoose,
+        &$filteredCount,
+        &$visibleAfterPresent,
     ): void {
         $completionItems = LspClient::normalizeCompletion($result);
         if ($completionItems === []) {
@@ -607,9 +613,15 @@ $completionLsp->initialize('file://' . dirname(__DIR__), function () use (
             $completionEditor->replacePrefix(strlen($prefix), $item['insertText'] ?? $item['label']);
             $inserted = true;
             Loop::quit();
-        });
+        }, null, 'str');
 
         $visibleAfterShow = $popup->visible();
+
+        $popup->filterByPrefix('strl');
+        $filteredCount = $popup->count();
+
+        $popup->present();
+        $visibleAfterPresent = $popup->visible();
         $popup->chooseCurrent();
         $hiddenAfterChoose = !$popup->visible();
     });
@@ -624,6 +636,8 @@ T::ok($hiddenAfterChoose, 'le popover est fermé après sélection');
 T::ok($inserted, 'callback de sélection exécuté');
 T::same("<?php\nstrlen", $completionEditor->text(), 'le préfixe est remplacé par la proposition');
 T::ok(($caretRect['height'] ?? 0) > 0, 'rectangle du curseur disponible pour IntelliSense');
+T::same(1, $filteredCount, 'filtrage local : une seule proposition restante');
+T::ok($visibleAfterPresent, 'liste réaffichée après filtrage');
 
 $builtin = PhpIntellisense::suggest('str');
 T::ok(count($builtin) >= 5, 'IntelliSense intégré : plusieurs propositions', (string) count($builtin));
