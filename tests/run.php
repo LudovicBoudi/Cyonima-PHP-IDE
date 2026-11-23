@@ -441,6 +441,20 @@ T::ok($changes >= 1, 'onChanged notifié sur modification du buffer', (string) $
 $editor->scheme('Adwaita');
 T::ok(true, 'schéma de couleurs appliqué sans erreur');
 
+$themeWindow = new UI\Window('Theme', 400, 300);
+$themeEditor = new UI\CodeEditor('php', "<?php\necho 1;\n");
+UI\Theme::apply($themeWindow, $themeEditor);
+T::ok($themeEditor->buffer()->getStyleScheme() !== null, 'thème VS : schéma de couleurs appliqué');
+
+$iconClicked = false;
+$iconButton = (new UI\IconButton('folder-symbolic'))->onClicked(
+    function () use (&$iconClicked): void {
+        $iconClicked = true;
+    },
+);
+$iconButton->click();
+T::ok($iconClicked, 'IconButton déclenche son handler');
+
 $paned = (new UI\Paned(Cyonima\Gtk\Raw\Orientation::VERTICAL, 200))
     ->start(new UI\ScrolledWindow($editor))
     ->end(new UI\Label('zone basse'));

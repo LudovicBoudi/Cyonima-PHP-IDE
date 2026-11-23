@@ -143,6 +143,7 @@ final class FileBrowser extends Widget
     {
         $label = RawLabel::new(($isDirectory ? '▸ ' : '  ') . $entry);
         $label->setXalign(0.0);
+        $label->addCssClass('file-row');
 
         $row = RawListBoxRow::new();
         $row->setChild($label);

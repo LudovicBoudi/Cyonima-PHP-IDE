@@ -28,6 +28,8 @@ int gtk_source_view_get_show_line_numbers(void *self);
 void gtk_source_buffer_set_highlight_syntax(void *self, int arg0);
 void gtk_source_buffer_set_language(void *self, void* arg0);
 void gtk_source_buffer_set_style_scheme(void *self, void* arg0);
+void gtk_source_style_scheme_manager_append_search_path(void *self, const char* arg0);
+void gtk_source_style_scheme_manager_force_rescan(void *self);
 void gtk_source_view_set_auto_indent(void *self, int arg0);
 void gtk_source_view_set_highlight_current_line(void *self, int arg0);
 void gtk_source_view_set_indent_width(void *self, int arg0);

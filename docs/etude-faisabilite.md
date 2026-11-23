@@ -165,7 +165,7 @@ plus depuis PHP-GTK.
 | **M2 — Runtime + façade OO** | ✅ Livré : boucle à source unique, timers PHP, fibres, sous-processus, erreurs centralisées, `Application` | 2–4 semaines |
 | **M3 — App de démonstration** | ✅ Adw livré (HeaderBar, Preferences, SwitchRow, Toast) ; éditeur GtkSourceView et terminal VTE à suivre | 2–3 semaines |
 | **M4 — Éditeur + terminal** | ✅ GtkSourceView 5 (coloration PHP) et VTE (PTY réel) livrés | — |
-| **M5 — IDE MVP** | 🟡 navigation, édition, terminal, LSP (diagnostics + complétion), Xdebug (pas-à-pas, pile, variables) ; reste la recherche | 3–5 mois |
+| **M5 — IDE MVP** | 🟡 design inspiré de Visual Studio, navigation, édition, terminal, LSP, Xdebug ; reste la recherche | 3–5 mois |
 | **M6 — Packaging** | ✅ portable testé, Flatpak construit et exécuté (PHP + VTE) ; AppImage à finaliser | 3–4 semaines |
 
 Total réaliste pour un MVP utilisable en solo : **9 à 15 mois**. En équipe de

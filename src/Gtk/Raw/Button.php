@@ -22,6 +22,13 @@ class Button extends \Cyonima\Gtk\Raw\Widget
         return new self(self::adopt($pointer));
     }
 
+    public static function newFromIconName(?string $iconName): self
+    {
+        Symbols::ensureInitialized();
+        $pointer = Symbols::get()->gtk_button_new_from_icon_name($iconName);
+        return new self(self::adopt($pointer));
+    }
+
     public function setLabel(?string $label): void
     {
         Symbols::get()->gtk_button_set_label($this->handle, $label);

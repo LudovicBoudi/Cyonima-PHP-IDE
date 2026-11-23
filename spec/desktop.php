@@ -218,6 +218,7 @@ return [
         'Gtk\\Button' => [
             'methods' => [
                 'new_with_label' => ['label'],
+                'new_from_icon_name' => ['iconName'],
                 'set_label' => ['label'],
                 'get_label' => [],
                 'set_has_frame' => ['hasFrame'],
@@ -425,6 +426,8 @@ return [
             'methods' => [
                 'get_default' => [],
                 'get_scheme' => ['schemeId'],
+                'append_search_path' => ['path'],
+                'force_rescan' => [],
             ],
             'signals' => false,
         ],

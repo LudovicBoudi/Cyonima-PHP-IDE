@@ -103,6 +103,7 @@ void gtk_window_set_title(void *self, const char* arg0);
 void* gtk_application_new(const char* arg0, int arg1);
 void* gtk_application_window_new(void* arg0);
 void* gtk_box_new(int arg0, int arg1);
+void* gtk_button_new_from_icon_name(const char* arg0);
 void* gtk_button_new_with_label(const char* arg0);
 void* gtk_css_provider_new(void);
 void* gtk_event_controller_key_new(void);

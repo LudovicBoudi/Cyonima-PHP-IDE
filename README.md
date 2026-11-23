@@ -18,7 +18,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 navigation, édition, terminal, LSP (diagnostics + complétion), Xdebug (pas-à-pas, pile, variables) ; reste la recherche projet |
+| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, navigation, édition, terminal, LSP, Xdebug ; reste la recherche projet |
 | M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 44 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -160,6 +160,14 @@ $app->run();
 Le bouton « Exécuter » de `examples/ide.php` écrit le contenu de l'éditeur dans
 un fichier temporaire et l'envoie au shell du terminal.
 
+## Design
+
+Interface inspirée de Visual Studio : barre d'activité, panneau latéral,
+onglet d'éditeur, panneau terminal et barre de statut bleue. Détail dans
+[`docs/design.md`](docs/design.md).
+
+![Aperçu de l'IDE](docs/screenshot-ide.png)
+
 ## Packaging
 
 ```bash
@@ -181,6 +189,7 @@ Voir [`packaging/README.md`](packaging/README.md) pour AppImage et Flatpak.
 - [`docs/decisions.md`](docs/decisions.md) — ADR et règles techniques (R1/R2)
 - [`docs/generateur.md`](docs/generateur.md) — fonctionnement du générateur
 - [`docs/runtime.md`](docs/runtime.md) — boucle, fibres, processus, erreurs
+- [`docs/design.md`](docs/design.md) — thème et disposition inspirés de Visual Studio
 - [`spike/`](spike/README.md) — POC de faisabilité et mesures de fuite
 
 ## Décisions actées

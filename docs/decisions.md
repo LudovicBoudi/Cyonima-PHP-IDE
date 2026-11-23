@@ -263,6 +263,12 @@ Trois écarts assumés par rapport au miroir strict du C :
     « distante » et `gtk_window_set_application()` plante pendant la création
     de fenêtre.
 
+25. **Design inspiré de Visual Studio** : chrome sombre, barre d'activité,
+    onglet d'éditeur et barre de statut bleue. Le schéma GtkSourceView `vs-dark`
+    est écrit dans `$TMPDIR` puis chargé via `append_search_path()` +
+    `force_rescan()`, avec repli `Adwaita-dark`. Tout le chrome est en CSS
+    (constante `Theme::CSS`), sans ressource externe.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

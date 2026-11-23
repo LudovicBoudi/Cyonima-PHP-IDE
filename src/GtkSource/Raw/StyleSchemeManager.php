@@ -24,4 +24,14 @@ class StyleSchemeManager extends \Cyonima\Gtk\Raw\RawObject
         $result = Symbols::get()->gtk_source_style_scheme_manager_get_scheme($this->handle, $schemeId);
         return $result;
     }
+
+    public function appendSearchPath(?string $path): void
+    {
+        Symbols::get()->gtk_source_style_scheme_manager_append_search_path($this->handle, $path);
+    }
+
+    public function forceRescan(): void
+    {
+        Symbols::get()->gtk_source_style_scheme_manager_force_rescan($this->handle);
+    }
 }

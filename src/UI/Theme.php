@@ -1,0 +1,336 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Cyonima\UI;
+
+use Cyonima\GtkSource\Raw\StyleSchemeManager;
+
+/**
+ * Thème visuel inspiré de Visual Studio (dark) : chrome sombre, accent bleu,
+ * typographie compacte, schéma d'éditeur dédié.
+ */
+final class Theme
+{
+    public const SCHEME_ID = 'vs-dark';
+
+    public static function apply(AdwWindow|Window $window, CodeEditor $editor): void
+    {
+        $window->addCss(self::CSS);
+
+        // Repli si le schéma personnalisé n'est pas chargeable.
+        $editor->scheme('Adwaita-dark');
+        $editor->scheme(self::installScheme());
+    }
+
+    private static function installScheme(): string
+    {
+        $directory = rtrim(sys_get_temp_dir(), '/') . '/cyonima-styles';
+
+        if (!is_dir($directory) && !mkdir($directory, 0775, true) && !is_dir($directory)) {
+            return 'Adwaita-dark';
+        }
+
+        $path = $directory . '/' . self::SCHEME_ID . '.xml';
+        if (!is_file($path) || file_get_contents($path) !== self::SCHEME) {
+            file_put_contents($path, self::SCHEME);
+        }
+
+        $manager = StyleSchemeManager::getDefault();
+        if ($manager === null) {
+            return 'Adwaita-dark';
+        }
+
+        $manager->appendSearchPath($directory);
+        $manager->forceRescan();
+
+        return $manager->getScheme(self::SCHEME_ID) !== null
+            ? self::SCHEME_ID
+            : 'Adwaita-dark';
+    }
+
+    private const CSS = <<<'CSS'
+window {
+    background-color: #1e1e1e;
+    color: #cccccc;
+    font-family: "Cantarell", "Segoe UI", "Noto Sans", sans-serif;
+    font-size: 13px;
+}
+
+headerbar {
+    background-color: #2d2d30;
+    background-image: none;
+    box-shadow: none;
+    border-bottom: 1px solid #3f3f46;
+    min-height: 34px;
+    padding: 0 4px;
+}
+
+headerbar button {
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    border: none;
+    border-radius: 2px;
+    padding: 4px 8px;
+    min-height: 24px;
+    min-width: 24px;
+    color: #cccccc;
+}
+
+headerbar button:hover {
+    background-color: #3e3e42;
+}
+
+headerbar label {
+    color: #cccccc;
+}
+
+headerbar .window-controls button {
+    border-radius: 2px;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 2px;
+}
+
+.menu-item {
+    padding: 4px 8px;
+    color: #cccccc;
+    font-size: 13px;
+}
+
+.menu-item:hover {
+    background-color: #3e3e42;
+    border-radius: 2px;
+}
+
+.activity-bar {
+    background-color: #333333;
+    border-right: 1px solid #3f3f46;
+}
+
+.activity-bar button {
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 12px;
+    color: #9d9d9d;
+    -gtk-icon-size: 20px;
+}
+
+.activity-bar button:hover {
+    background-color: #3e3e42;
+    color: #ffffff;
+}
+
+.activity-bar button.active {
+    color: #ffffff;
+    border-left: 2px solid #007acc;
+}
+
+.side-panel {
+    background-color: #252526;
+    border-right: 1px solid #3f3f46;
+}
+
+.panel-header-bar {
+    background-color: #252526;
+    border-bottom: 1px solid #3f3f46;
+    padding: 2px 8px 2px 12px;
+    min-height: 30px;
+}
+
+.panel-header {
+    color: #bbbbbb;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.panel-header-bar button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 3px;
+    color: #cccccc;
+    -gtk-icon-size: 14px;
+}
+
+.panel-header-bar button:hover {
+    background-color: #3e3e42;
+}
+
+list {
+    background-color: transparent;
+}
+
+list row {
+    background-color: transparent;
+    border-radius: 0;
+    padding: 1px 4px;
+}
+
+list row:hover {
+    background-color: #2a2d2e;
+}
+
+list row:selected {
+    background-color: #094771;
+    color: #ffffff;
+}
+
+.file-row {
+    color: #cccccc;
+    font-size: 13px;
+}
+
+.browser-path {
+    color: #969696;
+    font-size: 11px;
+    padding: 4px 8px;
+}
+
+.tab-bar {
+    background-color: #252526;
+    border-bottom: 1px solid #3f3f46;
+    min-height: 34px;
+}
+
+.tab {
+    background-color: #2d2d30;
+    color: #969696;
+    padding: 0 14px;
+    min-height: 34px;
+    border-right: 1px solid #252526;
+}
+
+.tab.active {
+    background-color: #1e1e1e;
+    color: #ffffff;
+    border-top: 1px solid #007acc;
+}
+
+.tab-label {
+    font-size: 13px;
+}
+
+.tab-dot {
+    color: #e7e7e7;
+    font-size: 14px;
+}
+
+.tab-close {
+    -gtk-icon-size: 12px;
+    padding: 2px;
+    color: #969696;
+}
+
+.tab-close:hover {
+    background-color: #3e3e42;
+    color: #ffffff;
+}
+
+.panel-tabs {
+    background-color: #1e1e1e;
+    border-top: 1px solid #3f3f46;
+    padding: 0 10px;
+    min-height: 30px;
+}
+
+.panel-tab {
+    color: #8a8a8a;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 10px;
+}
+
+.panel-tab.active {
+    color: #ffffff;
+    border-bottom: 1px solid #007acc;
+}
+
+.statusbar {
+    background-color: #007acc;
+    color: #ffffff;
+    font-size: 11px;
+    padding: 2px 8px;
+    min-height: 22px;
+}
+
+.status-item {
+    color: #ffffff;
+    font-size: 11px;
+    padding: 0 8px;
+}
+
+textview {
+    background-color: #1e1e1e;
+    color: #d4d4d4;
+    font-family: "DejaVu Sans Mono", "Consolas", "Noto Sans Mono", monospace;
+    font-size: 13px;
+}
+
+.debug-title {
+    color: #8a8a8a;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 8px 8px 2px;
+}
+
+scrollbar slider {
+    background-color: #4b4b4b;
+    border-radius: 4px;
+    min-width: 8px;
+    min-height: 8px;
+}
+
+scrollbar slider:hover {
+    background-color: #6b6b6b;
+}
+CSS;
+
+    private const SCHEME = <<<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<style-scheme id="vs-dark" name="Visual Studio Dark" version="1.0">
+  <author>Cyonima</author>
+  <description>Palette proche de Visual Studio Dark</description>
+  <color name="bg" value="#1e1e1e"/>
+  <color name="fg" value="#d4d4d4"/>
+  <color name="sel" value="#264f78"/>
+  <color name="line" value="#2a2d2e"/>
+  <color name="caret" value="#aeafad"/>
+  <color name="keyword" value="#569cd6"/>
+  <color name="control" value="#c586c0"/>
+  <color name="string" value="#ce9178"/>
+  <color name="comment" value="#6a9955"/>
+  <color name="number" value="#b5cea8"/>
+  <color name="type" value="#4ec9b0"/>
+  <color name="func" value="#dcdcaa"/>
+  <color name="var" value="#9cdcfe"/>
+  <color name="const" value="#4fc1ff"/>
+  <color name="preproc" value="#9b9b9b"/>
+  <style name="text" foreground="fg" background="bg"/>
+  <style name="selection" background="sel"/>
+  <style name="cursor" foreground="caret"/>
+  <style name="current-line" background="line"/>
+  <style name="line-numbers" foreground="#858585" background="bg"/>
+  <style name="bracket-match" background="#3a3d41"/>
+  <style name="search-match" background="#613214"/>
+  <style name="def:keyword" foreground="keyword"/>
+  <style name="def:builtin" foreground="keyword"/>
+  <style name="def:constant" foreground="const"/>
+  <style name="def:string" foreground="string"/>
+  <style name="def:comment" foreground="comment" italic="true"/>
+  <style name="def:number" foreground="number"/>
+  <style name="def:type" foreground="type"/>
+  <style name="def:function" foreground="func"/>
+  <style name="def:identifier" foreground="var"/>
+  <style name="def:variable" foreground="var"/>
+  <style name="def:preprocessor" foreground="preproc"/>
+  <style name="def:operator" foreground="fg"/>
+  <style name="def:special-char" foreground="number"/>
+  <style name="def:control" foreground="control"/>
+</style-scheme>
+XML;
+}
