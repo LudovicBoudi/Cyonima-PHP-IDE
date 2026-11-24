@@ -25,7 +25,7 @@
             "name": "php",
             "buildsystem": "simple",
             "build-commands": [
-                "./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
+                "./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
                 "make -j${FLATPAK_BUILDER_N_JOBS:-4}",
                 "make install"
             ],
@@ -34,6 +34,40 @@
                     "type": "archive",
                     "url": "https://www.php.net/distributions/php-8.3.14.tar.xz",
                     "sha256": "58b4cb9019bf70c0cbcdb814c7df79b9065059d14cf7dbf48d971f8e56ae9be7"
+                }
+            ]
+        },
+        {
+            "name": "libssh2",
+            "buildsystem": "autotools",
+            "config-opts": [
+                "--with-openssl",
+                "--disable-docs"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://www.libssh2.org/download/libssh2-1.11.0.tar.gz",
+                    "sha256": "3736161e41e2693324deb38c26cfdc3efe6209d634ba4258db1cecff6a5ad461"
+                }
+            ]
+        },
+        {
+            "name": "php-ssh2",
+            "buildsystem": "simple",
+            "build-commands": [
+                "phpize",
+                "./configure --with-php-config=/app/bin/php-config --with-ssh2=/app",
+                "make -j${FLATPAK_BUILDER_N_JOBS:-4}",
+                "make install",
+                "install -Dm644 /dev/null /app/lib/php.ini",
+                "printf 'extension=ssh2\\n' > /app/lib/php.ini"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://pecl.php.net/get/ssh2-1.4.1.tgz",
+                    "sha256": "7bca5b23f731db9d8ed0aea5db9bb15da8ff133b0fbba96102b82e95da4d8764"
                 }
             ]
         },
@@ -58,11 +92,35 @@
             ]
         },
         {
+            "name": "squashfs-tools",
+            "buildsystem": "simple",
+            "build-commands": [
+                "make -C squashfs-tools GZIP_SUPPORT=1 XZ_SUPPORT=1 LZO_SUPPORT=1 LZ4_SUPPORT=1 ZSTD_SUPPORT=1 mksquashfs unsquashfs",
+                "install -Dm755 squashfs-tools/mksquashfs /app/bin/mksquashfs",
+                "install -Dm755 squashfs-tools/unsquashfs /app/bin/unsquashfs"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://downloads.sourceforge.net/project/squashfs/squashfs/squashfs4.6.1/squashfs4.6.1.tar.gz",
+                    "sha256": "94201754b36121a9f022a190c75f718441df15402df32c2b520ca331a107511c"
+                }
+            ]
+        },
+        {
             "name": "cyonima",
             "buildsystem": "simple",
             "build-commands": [
-                "install -d /app/share/cyonima /app/bin",
+                "install -d /app/share/cyonima /app/bin /app/share/cyonima/packaging/appimage /app/share/cyonima/packaging/icon /app/share/cyonima/packaging/flatpak /app/share/cyonima/tools",
                 "cp -r autoload.php bin src examples spec composer.json /app/share/cyonima/",
+                "install -Dm755 packaging/appimage/build-project-bundle.sh /app/share/cyonima/packaging/appimage/build-project-bundle.sh",
+                "install -Dm755 packaging/appimage/bundle-gtk.sh /app/share/cyonima/packaging/appimage/bundle-gtk.sh",
+                "install -Dm644 packaging/appimage/project-meta.php /app/share/cyonima/packaging/appimage/project-meta.php",
+                "install -Dm755 packaging/flatpak/build-project-flatpak.sh /app/share/cyonima/packaging/flatpak/build-project-flatpak.sh",
+                "install -Dm644 packaging/flatpak/project-manifest.php /app/share/cyonima/packaging/flatpak/project-manifest.php",
+                "install -Dm755 packaging/appimage/build-project.sh /app/share/cyonima/packaging/appimage/build-project.sh",
+                "install -Dm755 appimagetool /app/share/cyonima/tools/appimagetool",
+                "install -Dm644 packaging/icon/com.cyonima.Ide.svg /app/share/cyonima/packaging/icon/com.cyonima.Ide.svg",
                 "install -Dm755 packaging/flatpak/cyonima.sh /app/bin/cyonima",
                 "install -Dm644 packaging/icon/com.cyonima.Ide.svg /app/share/icons/hicolor/scalable/apps/com.cyonima.Ide.svg",
                 "install -Dm644 packaging/com.cyonima.Ide.desktop /app/share/applications/com.cyonima.Ide.desktop"
@@ -71,6 +129,12 @@
                 {
                     "type": "dir",
                     "path": "../.."
+                },
+                {
+                    "type": "file",
+                    "url": "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage",
+                    "sha256": "b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2",
+                    "dest-filename": "appimagetool"
                 }
             ]
         }

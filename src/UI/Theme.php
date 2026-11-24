@@ -108,6 +108,62 @@ headerbar .window-controls button {
     border-radius: 2px;
 }
 
+.menu-bar {
+    background: transparent;
+}
+
+.menu-trigger {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 2px;
+    padding: 4px 9px;
+    color: #cccccc;
+    min-height: 24px;
+}
+
+.menu-trigger:hover {
+    background-color: #3e3e42;
+}
+
+.menu-popover {
+    background-color: #252526;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    padding: 4px;
+    min-width: 240px;
+}
+
+.menu-action {
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    border-radius: 2px;
+    padding: 7px 10px;
+}
+
+.menu-action:hover {
+    background-color: #094771;
+}
+
+.menu-entry label {
+    color: #cccccc;
+    font-size: 12px;
+}
+
+.menu-shortcut {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.menu-separator {
+    background-color: #3f3f46;
+    min-height: 1px;
+    margin: 4px 6px;
+}
+
 .activity-bar {
     background-color: #333333;
     border-right: 1px solid #3f3f46;
@@ -658,6 +714,320 @@ scrollbar slider:hover {
     color: #8a8a8a;
     font-size: 10px;
     padding: 2px 10px;
+}
+
+/* --- Concepteur d'interface --------------------------------------------- */
+
+.designer-palette {
+    background-color: #252526;
+    border-right: 1px solid #3f3f46;
+    padding: 10px;
+}
+
+.designer-properties {
+    background-color: #252526;
+    border-left: 1px solid #3f3f46;
+    padding: 10px;
+}
+
+.designer-section {
+    color: #8a8a8a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 10px 2px 4px;
+}
+
+.designer-hint {
+    color: #8a8a8a;
+    font-size: 10px;
+    padding: 2px;
+}
+
+.designer-palette-item {
+    background-color: #2d2d30;
+    border: 1px solid #3f3f46;
+    border-radius: 3px;
+    padding: 8px 10px;
+    margin: 3px 0;
+}
+
+.designer-palette-item:hover {
+    background-color: #333337;
+    border-color: #007acc;
+}
+
+.designer-form-item {
+    background-color: transparent;
+    background-image: none;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 5px 8px;
+    color: #cccccc;
+    font-size: 11px;
+}
+
+.designer-form-item:hover {
+    background-color: #2a2d2e;
+    border-color: #3f3f46;
+}
+
+.designer-form-item.selected {
+    background-color: #094771;
+    border-color: #007acc;
+    color: #ffffff;
+}
+
+.designer-form-new {
+    background-color: #2d2d30;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 5px 8px;
+    color: #cccccc;
+    font-size: 10px;
+    margin-top: 4px;
+}
+
+.designer-form-new:hover {
+    background-color: #333337;
+    border-color: #007acc;
+}
+
+.designer-palette-name {
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.designer-palette-hint {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.designer-canvas-header {
+    background-color: #252526;
+    border-bottom: 1px solid #3f3f46;
+    padding: 2px 10px;
+    min-height: 30px;
+}
+
+.designer-canvas-wrap {
+    background-color: #1e1e1e;
+}
+
+.designer-canvas {
+    background-color: #2b2b2e;
+    border: 1px solid #4a4a50;
+    border-radius: 3px;
+}
+
+.designer-item {
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 0;
+}
+
+.designer-item:hover {
+    border-color: #5a5a60;
+}
+
+.designer-item.selected {
+    border: 1px solid #007acc;
+}
+
+.asset-picker {
+    background-color: #252526;
+    border: 1px solid #454545;
+    border-radius: 4px;
+    padding: 8px;
+    min-width: 280px;
+}
+
+.asset-picker-title {
+    color: #8a8a8a;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 4px 4px;
+}
+
+.asset-picker-row {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 5px 7px;
+}
+
+.asset-picker-row:hover {
+    background-color: #094771;
+}
+
+.asset-picker-name {
+    color: #dddddd;
+    font-size: 11px;
+}
+
+.asset-picker-kind {
+    color: #8a8a8a;
+    font-size: 10px;
+}
+
+.asset-picker-browse {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 6px 10px;
+    color: #ffffff;
+    font-size: 10px;
+    margin-top: 4px;
+}
+
+.asset-picker-browse:hover {
+    background-color: #1177bb;
+}
+
+.asset-picker-empty {
+    color: #8a8a8a;
+    font-size: 10px;
+    padding: 6px;
+}
+
+.designer-browse {
+    background-color: #3a3d41;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 4px;
+    min-width: 24px;
+    min-height: 24px;
+    color: #dddddd;
+    -gtk-icon-size: 14px;
+}
+
+.designer-browse:hover {
+    background-color: #45494e;
+    border-color: #007acc;
+}
+
+.designer-entry {
+    background-color: #3c3c3c;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    padding: 5px 7px;
+    min-height: 20px;
+    color: #ffffff;
+    box-shadow: none;
+    font-size: 11px;
+}
+
+.designer-field {
+    padding: 3px 0;
+}
+
+.designer-field-label {
+    color: #bbbbbb;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.designer-selection {
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.designer-event {
+    background-color: #3a3d41;
+    background-image: none;
+    border: 1px solid #3f3f46;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 5px 9px;
+    color: #cccccc;
+    font-size: 10px;
+    margin: 1px 0;
+}
+
+.designer-event:hover {
+    background-color: #45494e;
+}
+
+.designer-event.selected {
+    background-color: #094771;
+    border-color: #007acc;
+    color: #ffffff;
+}
+
+.designer-type {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding-bottom: 4px;
+}
+
+.designer-save {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 7px 12px;
+    color: #ffffff;
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.designer-save:hover {
+    background-color: #1177bb;
+}
+
+.designer-apply {
+    background-color: #0e639c;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 6px 12px;
+    color: #ffffff;
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+.designer-apply:hover {
+    background-color: #1177bb;
+}
+
+.designer-delete {
+    background-color: #3a3d41;
+    background-image: none;
+    border: none;
+    border-radius: 2px;
+    box-shadow: none;
+    padding: 6px 12px;
+    color: #dddddd;
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+.designer-delete:hover {
+    background-color: #5a2d2d;
+    color: #ffffff;
+}
+
+.designer-message {
+    color: #4ec9b0;
+    font-size: 10px;
+    padding: 5px 2px;
+}
+
+.designer-message.error {
+    color: #f48771;
 }
 
 CSS;

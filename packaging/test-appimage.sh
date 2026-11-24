@@ -19,7 +19,7 @@ echo "Test de $APPIMAGE"
 VERSION_OUTPUT="$(env -i HOME="$HOME" DISPLAY="${DISPLAY:-:0}" \
     APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE" --version 2>&1 | tail -1)"
 
-if [ "$VERSION_OUTPUT" != "Cyonima 0.1.0" ]; then
+if [ "$VERSION_OUTPUT" != "Cyonima IDE 0.1.0" ]; then
     echo "ÉCHEC : --version → ${VERSION_OUTPUT:-<vide>}" >&2
     exit 1
 fi

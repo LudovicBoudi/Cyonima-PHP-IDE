@@ -7,13 +7,13 @@ $root = dirname(__DIR__);
 $arguments = array_slice($argv, 1);
 
 if (in_array('--version', $arguments, true)) {
-    echo "Cyonima 0.1.0\n";
+    echo "Cyonima IDE 0.1.0\n";
     exit(0);
 }
 
 if (in_array('--help', $arguments, true)) {
     echo <<<HELP
-    Cyonima — IDE PHP natif GTK4
+    Cyonima IDE — PHP natif GTK4
 
     Usage : cyonima [options]
 

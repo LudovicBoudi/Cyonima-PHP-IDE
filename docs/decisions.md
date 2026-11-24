@@ -241,7 +241,7 @@ Trois écarts assumés par rapport au miroir strict du C :
     Le runtime GNOME ne fournit ni PHP ni VTE. VTE est construit avec
     `-Dlibdir=lib` car `/app/lib64` n'est pas dans le chemin de recherche.
     Xdebug n'est pas inclus et `--filesystem=host` reste nécessaire.
-21. **AppImage autonome (44 Mo)** : PHP 8.3.14 et toute la pile GTK
+21. **AppImage autonome (53 Mo)** : PHP 8.3.14 et toute la pile GTK
     (GTK4/Adw/GtkSourceView/VTE + 107 dépendances), schémas, loaders et thèmes
     sont embarqués. glibc et les pilotes GPU restent ceux de l'hôte. Preuves :
     `ldd` sans dépendance non résolue, `LD_DEBUG` montrant GTK dans le montage,
@@ -297,7 +297,7 @@ Trois écarts assumés par rapport au miroir strict du C :
     le manifeste. La vue `PROPRIÉTÉS` permet de changer la licence après coup :
     `ProjectFactory::updateLicense()` réécrit `LICENSE` et le manifeste, sans
     toucher au README ni aux assets ; la barre de statut de l'IDE est actualisée.
-    Cyonima est distribué sous MIT, en open source : pas de clé d'activation,
+    Cyonima IDE est distribué sous MIT, en open source : pas de clé d'activation,
     pas de plan payant, pas de vérification réseau. Le répertoire de
     configuration (`CYONIMA_CONFIG_DIR`) ne sert qu'aux projets récents et
     préférences.
@@ -308,6 +308,43 @@ Trois écarts assumés par rapport au miroir strict du C :
     couvre la suppression côté runtime. Toute modification rafraîchit la liste
     `assets` du manifeste. Les chemins relatifs sont résolus depuis la racine
     du projet, pas depuis le répertoire courant de l'IDE.
+
+32. **Barre de menus native** : `MenuBar` construit des boutons et des
+    `GtkPopover` ancrés. Sans rectangle de visée, GTK place les popovers hors
+    écran ; on pointe donc sur une largeur de 320 px pour aligner le menu à
+    gauche du bouton. Le survol d'un autre titre bascule immédiatement le menu
+    via un `GtkEventControllerMotion` synchrone, sans devoir fermer le menu
+    courant. Les actions sont des closures et les raccourcis clavier
+    (`Ctrl+S`, `Ctrl+Z`, `Ctrl+A`, `F5`…) passent par le contrôleur de
+    l'éditeur.
+
+33. **Concepteur d'interface** : palette + canevas `GtkFixed` + panneau de
+    propriétés. Le glisser-déposer utilise `GtkGestureDrag` et
+    `gtk_widget_compute_point()` pour convertir les coordonnées palette →
+    canevas. Le modèle (`FormDocument`) est sérialisé en JSON et généré en
+    `App\Forms\<Nom>Base` + `App\Forms\<Nom>`. Un projet peut contenir
+    plusieurs formulaires, listés dans la palette et sauvegardés dans
+    `.cyonima/forms/`. Chaque contrôle porte un nom PHP unique et expose des
+    événements prédéfinis câblés vers des méthodes `on<Nom><Événement>()`. La
+    classe de base est regénérée ; la sous-classe utilisateur est préservée
+    pour recevoir les actions. Les types image, vidéo et séparateur utilisent
+    `GtkImage`, `GtkVideo` et `GtkSeparator` ; les chemins d’assets sont
+    relatifs au projet. Un bouton peut embarquer une image : le code généré
+    compose alors un `Box(Image, Label)` passé à `Button::child()`. Le
+    sélecteur d’assets est un popover intégré listant `assets/`, avec accès
+    optionnel au sélecteur natif `GtkFileDialog`.
+
+34. **Export d'application autonome** : deux cibles officielles.
+    `build-project.sh` produit une AppImage en environnement de développement
+    et depuis l'IDE installé qui embarque `appimagetool` + `mksquashfs`.
+    `build-project-flatpak.sh` génère un manifeste et un `.flatpak` via
+    `flatpak-builder`/SDK GNOME. Le bundle portable reste un secours interne.
+    L'IDE expose les formats via `ProjectBuilder` et `Process`.
+
+35. **Extensions PHP natives (lot réseau/Linux)** : `ssh2` via libssh2, plus
+    `openssl`, `sockets`, `pcntl` et `posix` dans les PHP embarqués AppImage et
+    Flatpak. Les extensions sont copiées dans les applications exportées.
+    `curl`, `intl`, `zip`, SQLite et GD viendront dans un lot ultérieur.
 
 ## Références de version (machine de développement)
 

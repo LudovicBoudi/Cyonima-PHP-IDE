@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Cyonima\UI;
 
 use Cyonima\Gtk\Raw;
+use Cyonima\Gtk\Raw\GestureClick as RawGestureClick;
 
 /**
  * Façade orientée objet au-dessus des bindings bruts.
@@ -14,6 +15,9 @@ use Cyonima\Gtk\Raw;
  */
 abstract class Widget
 {
+    /** @var list<RawGestureClick> */
+    private array $gestureControllers = [];
+
     public function __construct(protected readonly Raw\Widget $raw)
     {
     }
@@ -82,9 +86,61 @@ abstract class Widget
         return $this;
     }
 
+    /** Quand false, les clics traversent l'enfant vers son parent (concepteur). */
+    public function canTarget(bool $canTarget = true): static
+    {
+        $this->raw->setCanTarget($canTarget);
+        return $this;
+    }
+
     public function grabFocus(): static
     {
         $this->raw->grabFocus();
+        return $this;
+    }
+
+    /** Événement de clic simple (surtout pour les contrôles sans signal natif). */
+    public function onClick(callable $handler): static
+    {
+        $gesture = RawGestureClick::new();
+        $gesture->connectSignal(
+            RawGestureClick::SIGNAL_PRESSED,
+            function ($controller, int $presses) use ($handler): void {
+                if ($presses === 1) {
+                    $handler($this);
+                }
+            },
+            ['int', 'double', 'double'],
+            true,
+        );
+        $this->raw->addController($gesture);
+        $this->gestureControllers[] = $gesture;
+
+        return $this;
+    }
+
+    public function onDoubleClick(callable $handler): static
+    {
+        $gesture = RawGestureClick::new();
+        $gesture->connectSignal(
+            RawGestureClick::SIGNAL_PRESSED,
+            function ($controller, int $presses) use ($handler): void {
+                if ($presses === 2) {
+                    $handler($this);
+                }
+            },
+            ['int', 'double', 'double'],
+            true,
+        );
+        $this->raw->addController($gesture);
+        $this->gestureControllers[] = $gesture;
+
+        return $this;
+    }
+
+    public function sizeRequest(int $width, int $height): static
+    {
+        $this->raw->setSizeRequest($width, $height);
         return $this;
     }
 

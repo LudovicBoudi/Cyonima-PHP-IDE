@@ -25,6 +25,7 @@ use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
+use Cyonima\Runtime\FormDocument;
 use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\RecentProjects;
 use Cyonima\Runtime\XdebugClient;
@@ -642,6 +643,9 @@ T::ok(($caretRect['height'] ?? 0) > 0, 'rectangle du curseur disponible pour Int
 T::same(1, $filteredCount, 'filtrage local : une seule proposition restante');
 T::ok($visibleAfterPresent, 'liste réaffichée après filtrage');
 
+$sshSuggestions = PhpIntellisense::suggest('ssh2_');
+T::ok(count($sshSuggestions) >= 4, 'IntelliSense : fonctions ssh2 disponibles');
+
 $builtin = PhpIntellisense::suggest('str');
 T::ok(count($builtin) >= 5, 'IntelliSense intégré : plusieurs propositions', (string) count($builtin));
 T::ok(in_array('strlen', array_column($builtin, 'label'), true), 'strlen proposé sans LSP');
@@ -750,6 +754,25 @@ T::same('', $cursorEditor->wordPrefix(), 'curseur en début de ligne : préfixe 
 
 $cursorEditor->moveCursorToEnd();
 T::same('ligne3', $cursorEditor->wordPrefix(), 'préfixe relu en fin de fichier');
+
+$historyEditor = new UI\CodeEditor('php', 'abc');
+T::ok(!$historyEditor->canUndo(), 'éditeur : historique vidé au chargement');
+$historyEditor->moveCursorToEnd();
+$historyEditor->replacePrefix(0, 'd');
+T::ok($historyEditor->canUndo(), 'éditeur : modification annulable');
+$historyEditor->undo();
+T::same('abc', $historyEditor->text(), 'éditeur : annulation');
+$historyEditor->redo();
+T::same('abcd', $historyEditor->text(), 'éditeur : rétablissement');
+$historyEditor->selectAll();
+T::ok($historyEditor->hasSelection(), 'éditeur : tout sélectionner');
+
+$menuBar = new UI\MenuBar();
+$menuBar->addMenu('Test', [
+    ['label' => 'Action', 'shortcut' => 'Ctrl+T', 'action' => static fn (): null => null],
+    ['separator' => true],
+]);
+T::ok($menuBar instanceof UI\MenuBar, 'barre de menus : construction');
 
 // ---------------------------------------------------------------------------
 T::section('11. Différentiel PyGObject (si disponible)');
@@ -868,6 +891,7 @@ T::same('MIT', $manifest['license']['spdx'] ?? null, 'manifeste : licence');
 T::same('gtk', $manifest['template'] ?? null, 'manifeste : modèle');
 T::same(4, count($manifest['assets'] ?? []), 'manifeste : assets référencés');
 T::same(4, count(ProjectFactory::listAssets($projectPath)), 'assets : liste sur disque');
+T::same('video', ProjectFactory::assetKind('/tmp/intro.mp4'), 'assets : type vidéo reconnu');
 
 $another = $base . '/police.woff2';
 file_put_contents($another, 'font');
@@ -936,5 +960,109 @@ $startWindow = new Cyonima\App\StartWindow(dirname(__DIR__));
 T::ok($startWindow instanceof Cyonima\App\StartWindow, 'fenêtre de démarrage : construction');
 
 $removeTree($base);
+
+
+// ---------------------------------------------------------------------------
+T::section('13. Concepteur visuel et formulaires');
+
+T::same(7, count(FormDocument::types()), 'concepteur : sept types de contrôles');
+
+$form = new FormDocument('Main Form', 720, 480);
+$labelItem = $form->add('label', 20, 30, 'Bonjour');
+$buttonItem = $form->add('button', 20, 90, 'Valider');
+T::same('Bonjour', $labelItem['text'], 'formulaire : texte initial');
+T::same(2, count($form->widgets()), 'formulaire : deux contrôles');
+
+$updated = $form->update($labelItem['id'], ['x' => 40, 'y' => 50, 'text' => 'Titre']);
+T::same(40, $updated['x'] ?? null, 'formulaire : déplacement X');
+T::same('Titre', $updated['text'] ?? null, 'formulaire : texte modifié');
+
+$roundTrip = FormDocument::fromArray($form->toArray());
+T::same(2, count($roundTrip->widgets()), 'formulaire : sérialisation aller-retour');
+T::same('MainForm', $form->className(), 'formulaire : nom de classe');
+
+$php = $form->toPhp();
+T::ok(str_contains($php, "new Label('Titre')"), 'formulaire : code PHP du label');
+T::ok(str_contains($php, "new Button('Valider')"), 'formulaire : code PHP du bouton');
+T::ok(str_contains($php, 'sizeRequest(180, 28)'), 'formulaire : taille générée');
+
+$mediaForm = new FormDocument('Media Form');
+$mediaForm->add('image', 10, 10, 'assets/icon.svg');
+$mediaForm->add('video', 10, 150, 'assets/demo.mp4');
+$mediaForm->add('separator', 10, 350);
+$mediaBase = $mediaForm->toBasePhp();
+T::ok(str_contains($mediaBase, 'new Image('), 'formulaire : contrôle image');
+T::ok(str_contains($mediaBase, 'new Video('), 'formulaire : contrôle vidéo');
+T::ok(str_contains($mediaBase, 'new Separator()'), 'formulaire : séparateur');
+
+$formRoot = sys_get_temp_dir() . '/cyonima_form_' . getmypid();
+$removeTree($formRoot);
+mkdir($formRoot, 0775, true);
+
+$namedForm = new FormDocument('Named Form');
+$namedButton = $namedForm->add('button', 30, 40, 'Cliquer');
+$namedForm->update($namedButton['id'], [
+    'name' => 'btnValider',
+    'events' => ['click', 'double-click'],
+]);
+$namedBase = $namedForm->toBasePhp();
+$namedUser = $namedForm->toUserPhp();
+T::ok(str_contains($namedBase, 'public Button $btnValider;'), 'formulaire : contrôle nommé');
+T::ok(str_contains($namedBase, '->onClicked'), 'formulaire : événement click');
+T::ok(str_contains($namedBase, '->onDoubleClick'), 'formulaire : événement double-click');
+T::ok(str_contains($namedBase, 'onBtnValiderClick'), 'formulaire : méthode de click nommée');
+T::ok(str_contains($namedUser, 'extends NamedFormBase'), 'formulaire : sous-classe utilisateur');
+
+$iconForm = new FormDocument('Icon Form');
+$iconButton = $iconForm->add('button', 20, 30, 'Valider');
+$iconForm->update($iconButton['id'], ['icon' => 'assets/icon.svg']);
+$iconBase = $iconForm->toBasePhp();
+T::ok(str_contains($iconBase, 'new Image(dirname(__DIR__, 2)'), 'formulaire : image dans un bouton');
+T::ok(str_contains($iconBase, 'new Box(Orientation::HORIZONTAL, 6)'), 'formulaire : contenu image + texte');
+$iconRoundTrip = FormDocument::fromArray($iconForm->toArray());
+T::same('assets/icon.svg', $iconRoundTrip->widgets()[0]['icon'] ?? null, 'formulaire : icône sérialisée');
+
+$namedRoot = $formRoot . '/named';
+mkdir($namedRoot, 0775, true);
+$namedSave = $namedForm->save($namedRoot);
+T::ok($namedSave['ok'], 'formulaire nommé : sauvegarde');
+T::ok(is_file((string) $namedSave['basePath']), 'formulaire nommé : classe de base générée');
+T::ok(is_file((string) $namedSave['phpPath']), 'formulaire nommé : sous-classe générée');
+
+file_put_contents((string) $namedSave['phpPath'], (string) file_get_contents((string) $namedSave['phpPath']) . "\n// personnalisation\n");
+$namedForm->save($namedRoot);
+T::ok(str_contains((string) file_get_contents((string) $namedSave['phpPath']), 'personnalisation'), 'formulaire nommé : sous-classe préservée');
+
+$newEntry = $namedForm->add('entry', 50, 120, 'Email');
+$namedForm->update($newEntry['id'], ['name' => 'entryEmail', 'events' => ['changed']]);
+$namedForm->save($namedRoot);
+
+$mergedUser = (string) file_get_contents((string) $namedSave['phpPath']);
+T::ok(str_contains($mergedUser, 'onEntryEmailChanged'), 'formulaire nommé : méthode ajoutée à la sous-classe');
+T::ok(str_contains($mergedUser, 'personnalisation'), 'formulaire nommé : action existante conservée');
+
+
+$saved = $form->save($formRoot);
+T::ok($saved['ok'], 'formulaire : sauvegarde', $saved['message']);
+T::ok(is_file((string) $saved['jsonPath']), 'formulaire : JSON écrit');
+T::ok(is_file((string) $saved['phpPath']), 'formulaire : PHP écrit');
+
+$mediaForm->save($formRoot);
+T::same(2, count(FormDocument::listForms($formRoot)), 'formulaires : catalogue multiple');
+T::same('form', FormDocument::uniqueFormName($formRoot, 'form'), 'formulaires : nom unique');
+
+exec(PHP_BINARY . ' -l ' . escapeshellarg((string) $saved['phpPath']) . ' 2>&1', $formLintLines, $formLintStatus);
+T::same(0, $formLintStatus, 'formulaire : syntaxe du PHP généré');
+
+$loadedForm = FormDocument::load($formRoot, 'Main Form');
+T::same(2, count($loadedForm?->widgets() ?? []), 'formulaire : rechargement');
+T::ok($form->remove($buttonItem['id']), 'formulaire : suppression');
+T::same(1, count($form->widgets()), 'formulaire : suppression effective');
+
+$switchRow = new UI\SwitchRow('Option', '', false);
+$switchRow->title('Nouvelle option')->subtitle('Sous-titre');
+T::ok($switchRow instanceof UI\SwitchRow, 'SwitchRow : titre et sous-titre modifiables');
+
+$removeTree($formRoot);
 
 exit(T::report());

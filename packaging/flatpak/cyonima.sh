@@ -6,4 +6,4 @@
 # VTE peut être installé dans /app/lib64 selon la version de meson.
 export LD_LIBRARY_PATH="/app/lib:/app/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-exec /app/bin/php -d ffi.enable=1 /app/share/cyonima/bin/cyonima.php "$@"
+exec /app/bin/php -d ffi.enable=1 -d extension=ssh2 /app/share/cyonima/bin/cyonima.php "$@"

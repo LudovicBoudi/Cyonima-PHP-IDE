@@ -28,6 +28,18 @@ final class SwitchRow extends Widget
         return $raw;
     }
 
+    public function title(string $title): static
+    {
+        $this->raw()->setTitle($title);
+        return $this;
+    }
+
+    public function subtitle(string $subtitle): static
+    {
+        $this->raw()->setSubtitle($subtitle);
+        return $this;
+    }
+
     public function active(bool $active): static
     {
         $this->raw()->setActive($active);

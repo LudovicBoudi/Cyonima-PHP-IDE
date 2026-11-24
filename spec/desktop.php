@@ -61,7 +61,9 @@ return [
                 'get_visible' => [],
                 'add_controller' => ['controller'],
                 'set_parent' => ['parent'],
+                'unparent' => [],
                 'set_focusable' => ['focusable'],
+                'set_can_target' => ['canTarget'],
                 'grab_focus' => [],
                 'queue_resize' => [],
             ],
@@ -69,7 +71,9 @@ return [
         ],
 
         'Gtk\\EventController' => [
-            'methods' => [],
+            'methods' => [
+                'set_propagation_phase' => ['phase'],
+            ],
             'signals' => false,
         ],
 
@@ -78,6 +82,27 @@ return [
                 'new' => [],
             ],
             'signals' => ['key-pressed'],
+        ],
+
+        'Gtk\\EventControllerMotion' => [
+            'methods' => [
+                'new' => [],
+            ],
+            'signals' => ['enter', 'leave', 'motion'],
+        ],
+
+        'Gtk\\GestureClick' => [
+            'methods' => [
+                'new' => [],
+            ],
+            'signals' => ['pressed'],
+        ],
+
+        'Gtk\\GestureDrag' => [
+            'methods' => [
+                'new' => [],
+            ],
+            'signals' => ['drag-begin', 'drag-update', 'drag-end'],
         ],
 
         'Gtk\\Popover' => [
@@ -89,6 +114,16 @@ return [
                 'set_pointing_to' => ['pointingTo'],
                 'popup' => [],
                 'popdown' => [],
+            ],
+            'signals' => ['closed'],
+        ],
+
+        'Gtk\\Fixed' => [
+            'methods' => [
+                'new' => [],
+                'put' => ['widget', 'x', 'y'],
+                'move' => ['widget', 'x', 'y'],
+                'remove' => ['widget'],
             ],
             'signals' => false,
         ],
@@ -141,6 +176,40 @@ return [
                 'get_char_count' => [],
                 'get_line_count' => [],
                 'set_modified' => ['modified'],
+                'undo' => [],
+                'redo' => [],
+                'get_can_undo' => [],
+                'get_can_redo' => [],
+                'set_enable_undo' => ['enableUndo'],
+                'get_has_selection' => [],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\Image' => [
+            'methods' => [
+                'new' => [],
+                'new_from_file' => ['file'],
+                'set_from_file' => ['file'],
+                'set_pixel_size' => ['pixelSize'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\Video' => [
+            'methods' => [
+                'new' => [],
+                'new_for_filename' => ['filename'],
+                'set_filename' => ['filename'],
+                'set_autoplay' => ['autoplay'],
+                'set_loop' => ['loop'],
+            ],
+            'signals' => false,
+        ],
+
+        'Gtk\\Separator' => [
+            'methods' => [
+                'new' => ['orientation'],
             ],
             'signals' => false,
         ],

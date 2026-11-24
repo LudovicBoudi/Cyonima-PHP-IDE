@@ -1,8 +1,8 @@
-# Cyonima-PHP-IDE
+# Cyonima IDE
 
 Un IDE pour PHP 8 et un compilateur d'applications desktop natives.
 
-Cyonima est distribué sous **MIT**, en open source.
+Cyonima IDE est distribué sous **MIT**, en open source.
 
 Deux axes, un même socle :
 
@@ -20,8 +20,8 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, édition, terminal, LSP, Xdebug ; reste la recherche projet |
-| M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 44 Mo)** |
+| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition, terminal, LSP, Xdebug ; reste la recherche projet |
+| M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 53 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
 
@@ -95,7 +95,7 @@ métadonnées du projet et permet de changer la licence. `LICENSE` et
 
 ![Propriétés du projet](docs/screenshot-properties.png)
 
-Cyonima lui-même est distribué sous **MIT**, en open source : aucune clé
+Cyonima IDE lui-même est distribué sous **MIT**, en open source : aucune clé
 d'activation, aucun plan payant, aucun appel réseau.
 
 ### Assets
@@ -106,6 +106,75 @@ Chaque projet reçoit une icône SVG et un thème CSS. Le panneau **ASSETS** de
 l'IDE liste les fichiers de `assets/`, importe un fichier par son chemin
 (relatif au projet ou absolu), met à jour le manifeste et ouvre l'asset choisi
 dans l'éditeur.
+
+### Concepteur d'interface
+
+![Concepteur d'interface](docs/screenshot-designer.png)
+
+La vue **Concepteur d’interface** (icône pinceau de la barre d’activité, ou
+menu **Affichage**) permet de dessiner plusieurs formulaires sans écrire de
+code :
+
+- liste des **formulaires du projet** et création de nouveaux formulaires ;
+- palette de contrôles : texte, bouton, champ de saisie, interrupteur,
+  **image**, **vidéo** et séparateur ;
+- ajout par clic ou **glisser-déposer** sur le canevas ;
+- sélection, déplacement à la souris et redimensionnement via les propriétés ;
+- nom du contrôle et événements prédéfinis ;
+- **image à l’intérieur d’un bouton** : chemin d’asset + libellé ;
+- édition du texte, du chemin d’asset, de la position et de la taille ;
+- suppression d’un contrôle ;
+- enregistrement du modèle et génération du code PHP.
+
+Le concepteur écrit un jeu de fichiers par formulaire :
+
+```
+.cyonima/forms/main-form.form.json   modèle du formulaire
+src/Forms/MainFormBase.php           classe générée (propriétés + événements)
+src/Forms/MainForm.php               sous-classe utilisateur (actions)
+```
+
+Les images et vidéos utilisent un chemin d’asset relatif au projet
+(`assets/logo.png`, `assets/intro.mp4`). Le bouton **Choisir un fichier**
+ouvre un sélecteur des assets du projet ; **Parcourir le système…** ouvre le
+sélecteur natif pour un fichier extérieur. La lecture vidéo dépend des plugins
+GStreamer disponibles sur le système.
+
+![Sélecteur d'assets](docs/screenshot-asset-picker.png)
+
+Chaque contrôle nommé devient une propriété publique de la classe de base :
+
+```php
+use App\Forms\MainForm;
+
+$form = (new MainForm())->build();
+$window->content($form);
+```
+
+Les événements sélectionnés appellent des méthodes dans la sous-classe
+utilisateur, qui n’est créée qu’une fois :
+
+```php
+protected function onBtnValiderClick(): void
+{
+    // action exécutée au clic sur btnValider
+}
+```
+
+`MainFormBase` est regénérée à chaque sauvegarde ; `MainForm.php` conserve les
+actions écrites par le développeur.
+
+Pour un bouton avec image, la propriété **Image du bouton** accepte un chemin
+d’asset. Le PHP généré compose alors le contenu du bouton :
+
+```php
+$this->btnValider = (new Button())
+    ->child((new Box(Orientation::HORIZONTAL, 6))->append(
+        (new Image(dirname(__DIR__, 2) . '/assets/icon.svg'))->sizeRequest(20, 20),
+        (new Label('Valider')),
+    ))
+    ->sizeRequest(160, 40);
+```
 
 ## Exemple : UI native + handler PHP
 
@@ -224,6 +293,7 @@ un fichier temporaire et l'envoie au shell du terminal.
 ## Design
 
 Interface inspirée de Visual Studio : fenêtre de démarrage avec modèles,
+barre de menus fonctionnelle (Fichier, Édition, Affichage, Exécuter, Aide),
 barre d'activité, panneau latéral redimensionnable (explorateur, débogage,
 assets, propriétés), onglet d'éditeur, panneau terminal et barre de statut bleue.
 IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré) avec
@@ -231,6 +301,32 @@ filtrage de la liste pendant la frappe.
 Détail dans [`docs/design.md`](docs/design.md).
 
 ![Aperçu de l'IDE](docs/screenshot-ide.png)
+
+## Extensions PHP natives
+
+Les runtimes embarqués intègrent un premier pack réseau/Linux :
+
+| Extension | AppImage | Flatpak |
+|---|---|---|
+| `ssh2` + `libssh2` | ✅ | ✅ |
+| `openssl` | ✅ | ✅ |
+| `sockets` | ✅ | ✅ |
+| `pcntl` | ✅ | ✅ |
+| `posix` | ✅ | ✅ |
+
+Les applications exportées depuis l’IDE héritent du même pack PHP, y compris
+dans les AppImages et les Flatpaks de projet. Les extensions sont donc
+disponibles sans installation système.
+
+Exemple :
+
+```php
+$connection = ssh2_connect('serveur.example', 22);
+ssh2_auth_password($connection, 'user', 'secret');
+```
+
+`curl`, `intl`, `zip`, `pdo_sqlite`/`sqlite3` et `gd` font partie du prochain
+lot d’extensions.
 
 ## Packaging
 
@@ -246,6 +342,102 @@ packaging/test-appimage.sh        # vérifie l'AppImage
 ```
 
 Voir [`packaging/README.md`](packaging/README.md) pour AppImage et Flatpak.
+
+## Autonomie des livrables
+
+### Cyonima IDE
+
+| Livrable | PHP 8 requis ? | GTK/Adw/GtkSourceView/VTE | Autonomie réelle |
+|---|---|---|---|
+| **Portable** `tar.gz` | **Oui**, PHP 8.3+ avec `ext-ffi` | Oui, fournis par le système | Dépend de l’environnement PHP/GTK de l’hôte |
+| **AppImage** `53 Mo` | **Non** | **Embarqués** | PHP + pile GTK inclus ; glibc, pilotes GPU et X/Wayland restent ceux de l’hôte |
+| **Flatpak** `com.cyonima.Ide` | **Non** | Fournis par `org.gnome.Platform//49` | Nécessite Flatpak + le runtime GNOME ; PHP 8.3.14 est compilé dans l’application |
+
+L’AppImage a été testée avec les bibliothèques GTK système masquées : elle
+démarre avec son propre PHP et sa propre pile GTK. Le bundle portable, lui,
+est volontairement léger et utilise le PHP/GTK de la machine.
+
+Pour la vidéo, les codecs dépendent de GStreamer : l’AppImage peut utiliser les
+plugins de l’hôte, et le Flatpak ceux du runtime GNOME. Un format non couvert
+par les codecs installés ne sera pas lisible.
+
+### Applications créées avec Cyonima
+
+Une application générée par l’IDE n’est **pas encore un exécutable autonome**
+au sens « aucun runtime à installer ». Son `autoload.php` pointe vers Cyonima :
+
+```php
+$cyonimaHome = getenv('CYONIMA_HOME') ?: '/chemin/vers/Cyonima';
+require $cyonimaHome . '/autoload.php';
+```
+
+L’utilisateur final a donc besoin, selon le mode de livraison :
+
+- de **Cyonima** installé ;
+- ou de **PHP 8.3 + GTK4 + le runtime Cyonima** ;
+- ou d’un empaquetage dédié qui embarque le projet avec PHP et GTK.
+
+Les scripts `build-portable.sh`, `build-appimage.sh` et le manifest Flatpak
+empaquettent **Cyonima IDE**.
+
+### Exporter une application autonome depuis l’IDE
+
+Le menu **Fichier → Exporter l’application autonome** (ou le bouton archive de
+la barre de titre) construit une application autonome avec PHP, GTK, le runtime
+Cyonima et le projet.
+
+Le format dépend de l’installation de l’IDE :
+
+| IDE utilisé | Sortie |
+|---|---|
+| **IDE source** | **AppImage** ou **Flatpak** (`flatpak-builder` + SDK requis) |
+| **IDE AppImage installé** | **AppImage** ; **Flatpak** si `flatpak-builder`/SDK sont disponibles sur l’hôte |
+| **IDE Flatpak installé** | **AppImage** (outils embarqués) ; Flatpak par projet indisponible dans le bac à sable |
+| **IDE portable** | Build autonome indisponible : aucun runtime PHP/GTK n’est embarqué |
+
+En ligne de commande :
+
+```bash
+# AppImage (environnement de développement)
+packaging/appimage/build-project.sh /chemin/du/projet
+
+# Bundle portable autonome (réutilise le runtime de l'IDE)
+CYONIMA_RUNTIME_ROOT=/chemin/vers/runtime packaging/appimage/build-project-bundle.sh /chemin/du/projet
+```
+
+L’application générée contient :
+
+- PHP embarqué ;
+- GTK4, libadwaita, GtkSourceView et VTE ;
+- le runtime Cyonima ;
+- le projet, ses assets et ses formulaires.
+
+L’utilisateur final n’a donc besoin ni de PHP ni de GTK. Pour le bundle :
+
+```bash
+tar -xzf mon-app-0.1.0-linux-x86_64.tar.gz
+./mon-app-0.1.0/AppRun
+```
+
+Prérequis AppImage en environnement source : `packaging/appimage/build-php.sh`.
+L’AppImage et le Flatpak embarquent `appimagetool`, `mksquashfs` et
+`unsquashfs` : ils produisent directement une AppImage de projet. La cible
+Flatpak génère un manifeste et un bundle `.flatpak` via `flatpak-builder` ; elle
+nécessite le SDK GNOME et n’est pas disponible depuis le bac à sable Flatpak de
+l’IDE.
+
+Le menu **Fichier** propose les deux cibles : **Exporter l’application
+(AppImage)** et **Exporter l’application (Flatpak)**.
+
+En résumé :
+
+| Cas | PHP 8 chez l’utilisateur final |
+|---|---|
+| **IDE portable** | Oui |
+| **IDE AppImage** | Non |
+| **IDE Flatpak** | Non |
+| **Application générée, livrée telle quelle** | Oui, avec Cyonima/PHP + GTK |
+| **Application générée empaquetée avec runtime** | Non (AppImage ou bundle autonome) |
 
 ## Documents
 

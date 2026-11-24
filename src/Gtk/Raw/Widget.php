@@ -123,9 +123,19 @@ class Widget extends RawObject
         Symbols::get()->gtk_widget_set_parent($this->handle, $parent?->handle());
     }
 
+    public function unparent(): void
+    {
+        Symbols::get()->gtk_widget_unparent($this->handle);
+    }
+
     public function setFocusable(bool $focusable): void
     {
         Symbols::get()->gtk_widget_set_focusable($this->handle, ($focusable) ? 1 : 0);
+    }
+
+    public function setCanTarget(bool $canTarget): void
+    {
+        Symbols::get()->gtk_widget_set_can_target($this->handle, ($canTarget) ? 1 : 0);
     }
 
     public function grabFocus(): bool

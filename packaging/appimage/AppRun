@@ -32,5 +32,11 @@ if [ -x "$QUERY" ] && [ -d "$LOADERS" ]; then
     fi
 fi
 
-exec "$HERE/usr/bin/php" -n -d ffi.enable=1 \
+PHP_EXT_DIR="$HERE/usr/lib/php/extensions/no-debug-non-zts-20230831"
+PHP_EXTRA=""
+if [ -f "$PHP_EXT_DIR/ssh2.so" ]; then
+    PHP_EXTRA="-d extension_dir=$PHP_EXT_DIR -d extension=ssh2"
+fi
+
+exec "$HERE/usr/bin/php" -n -d ffi.enable=1 $PHP_EXTRA \
     "$HERE/usr/share/cyonima/bin/cyonima.php" "$@"

@@ -26,6 +26,7 @@ final class CodeEditor extends Widget
     public function __construct(string $language = 'php', string $text = '')
     {
         $this->buffer = RawBuffer::new(null);
+        $this->buffer->setEnableUndo(true);
 
         parent::__construct(RawView::newWithBuffer($this->buffer));
 
@@ -81,8 +82,11 @@ final class CodeEditor extends Widget
     /** Remplace tout le contenu (setText avec longueur -1 = NUL-terminé). */
     public function setText(string $text): static
     {
+        // Le chargement d'un fichier ne doit pas être annulable par Ctrl+Z.
+        $this->buffer->setEnableUndo(false);
         $this->buffer->setText($text, -1);
         $this->buffer->setModified(false);
+        $this->buffer->setEnableUndo(true);
         return $this;
     }
 
@@ -174,5 +178,38 @@ final class CodeEditor extends Widget
     {
         $this->raw()->setEditable($editable);
         return $this;
+    }
+
+    public function undo(): static
+    {
+        $this->buffer->undo();
+        return $this;
+    }
+
+    public function redo(): static
+    {
+        $this->buffer->redo();
+        return $this;
+    }
+
+    public function canUndo(): bool
+    {
+        return $this->buffer->getCanUndo();
+    }
+
+    public function canRedo(): bool
+    {
+        return $this->buffer->getCanRedo();
+    }
+
+    public function selectAll(): static
+    {
+        GtkText::selectAll($this->buffer->handle());
+        return $this;
+    }
+
+    public function hasSelection(): bool
+    {
+        return $this->buffer->getHasSelection();
     }
 }

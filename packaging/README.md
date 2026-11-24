@@ -5,7 +5,7 @@ Trois formats, trois niveaux d'autonomie.
 | Format | Autonomie | Outils requis | État |
 |---|---|---|---|
 | **Bundle portable** (`tar.gz`) | PHP + GTK4 système | `tar`, PHP | ✅ testé ici |
-| **AppImage** | **PHP + GTK embarqués** (pilotes GPU système) | `appimagetool` (auto-téléchargé) | ✅ construite et exécutée (44 Mo) |
+| **AppImage** | **PHP + GTK embarqués** (pilotes GPU système) | `appimagetool` (auto-téléchargé) | ✅ construite et exécutée (53 Mo) |
 | **Flatpak** | complète (runtime GNOME + PHP compilé) | `flatpak-builder`, `org.gnome.Sdk//49` | ✅ construit et exécuté |
 
 ## Bundle portable
@@ -29,6 +29,59 @@ packaging/test-portable.sh
 # Fichier : /tmp/cyonima_ide_demo.php | ...
 ```
 
+## Build d'une application projet
+
+Depuis l'environnement de développement, un projet Cyonima peut être transformé
+en AppImage autonome. PHP, GTK, le runtime Cyonima et le projet sont embarqués.
+
+```bash
+packaging/appimage/build-php.sh            # une fois
+packaging/appimage/build-project.sh /chemin/du/projet
+# ou
+packaging/appimage/build-project.sh /chemin/du/projet dist/MonApp.AppImage
+```
+
+Le script lit `.cyonima/project.json` pour le nom, l'identifiant, l'entrée et la
+version du projet, puis produit `dist/<slug>-<version>-x86_64.AppImage`.
+
+Prérequis : `appimagetool` (téléchargé automatiquement si absent) et le PHP
+embarqué construit par `build-php.sh`.
+
+### Depuis l'IDE installé
+
+L'AppImage embarque `appimagetool`, `mksquashfs` et `unsquashfs`, ainsi que
+`build-project.sh` : elle produit directement une AppImage pour le projet.
+
+Sortie :
+
+```text
+<projet>/dist/<slug>-<version>-x86_64.AppImage
+```
+
+### Cible Flatpak
+
+Le script `build-project-flatpak.sh` génère un manifeste et un bundle Flatpak
+autonome :
+
+```bash
+packaging/flatpak/build-project-flatpak.sh /chemin/du/projet
+# → /chemin/du/projet/dist/<slug>-<version>-x86_64.flatpak
+```
+
+Il requiert `flatpak-builder` et le SDK `org.gnome.Sdk//49`. Le bundle Flatpak
+est installable avec :
+
+```bash
+flatpak install --user ./<projet>-<version>-x86_64.flatpak
+```
+
+La cible Flatpak n'est pas disponible depuis le bac à sable Flatpak de l'IDE ;
+elle s'utilise depuis l'IDE source ou l'AppImage avec `flatpak-builder` sur
+l'hôte. Le bundle `.tar.gz` reste un secours interne.
+
+Depuis l'IDE, la même opération est disponible via
+**Fichier → Exporter l'application autonome**.
+
 ## AppImage
 
 ```bash
@@ -44,7 +97,7 @@ Vérifications effectuées :
 
 ```bash
 env -i HOME=$HOME DISPLAY=:0 APPIMAGE_EXTRACT_AND_RUN=1   ./dist/Cyonima-0.1.0-x86_64.AppImage --version
-# Cyonima 0.1.0
+# Cyonima IDE 0.1.0
 
 ./dist/Cyonima-0.1.0-x86_64.AppImage --auto
 # Fichier : /tmp/cyonima_ide_demo.php | lignes : 10 | caractères : 147 | ... | terminal : 529464
@@ -54,7 +107,7 @@ Les deux modes fonctionnent : montage FUSE direct et
 `APPIMAGE_EXTRACT_AND_RUN=1` (utile sans FUSE ou sur `/tmp` `noexec`).
 
 L'AppImage embarque **PHP, GTK4, libadwaita, GtkSourceView 5, VTE** et les
-schémas/loaders nécessaires (44 Mo). Seuls glibc et les pilotes GPU restent ceux
+schémas/loaders nécessaires (53 Mo, outils d’export inclus). Seuls glibc et les pilotes GPU restent ceux
 de l'hôte, comme pour toute AppImage graphique.
 
 Limite : `mbstring` n'est pas compilé (oniguruma absent du système de build) ;
@@ -143,3 +196,14 @@ du `.desktop`, icône et bits exécutables.
 
 `VERSION=1.2.3 packaging/build-portable.sh` contrôle le nom des artefacts.
 Le lanceur expose `cyonima --version`.
+
+
+## Extensions PHP natives
+
+Le PHP embarqué de l'AppImage et du Flatpak inclut `ssh2` (libssh2), `openssl`,
+`sockets`, `pcntl` et `posix`. Le module `ssh2` est compilé dans le Flatpak via
+`libssh2` + PECL `ssh2`, et ajouté au PHP AppImage.
+
+Les applications exportées avec `build-project.sh` ou
+`build-project-flatpak.sh` embarquent ces extensions : le manifeste Flatpak de
+projet ajoute les modules `libssh2` et PECL `ssh2`.

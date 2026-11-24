@@ -81,7 +81,7 @@ final class StartWindow
         $this->home = rtrim($home ?? dirname(__DIR__, 2), '/');
         $this->recents = new RecentProjects();
         $this->app = new AdwApplication('com.cyonima.start');
-        $this->window = $this->app->window('Cyonima', 'Démarrer');
+        $this->window = $this->app->window('Cyonima IDE', 'Démarrer');
         $this->window->raw()->setDefaultSize(1180, 840);
         $this->window->raw()->setSizeRequest(960, 680);
 
@@ -108,7 +108,7 @@ final class StartWindow
 
         $newPage = $this->page(
             'Créer un projet',
-            'Choisissez un modèle : Cyonima prépare le code, les assets, le manifeste et la licence.',
+            'Choisissez un modèle : Cyonima IDE prépare le code, les assets, le manifeste et la licence.',
             $this->newProjectBody(),
             true,
         );
@@ -168,11 +168,11 @@ final class StartWindow
 
         $recentScroll = (new ScrolledWindow($this->recentBox))->expand();
 
-        $this->sidebarFooter = (new Label('Cyonima 0.1.0 · MIT · open source'))
+        $this->sidebarFooter = (new Label('Cyonima IDE 0.1.0 · MIT · open source'))
             ->cssClass('start-footer');
 
         $sidebar->append(
-            (new Label('CYONIMA'))->cssClass('start-brand'),
+            (new Label('CYONIMA IDE'))->cssClass('start-brand'),
             (new Label('IDE PHP · GTK4'))->cssClass('start-brand-sub'),
             (new Label('DÉMARRER'))->cssClass('start-section'),
             $newButton,

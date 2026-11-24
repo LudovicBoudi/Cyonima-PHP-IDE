@@ -25,6 +25,8 @@ final class GtkText
 
         void         gtk_text_buffer_get_start_iter(void *buffer, CyonimaTextIter *iter);
         void         gtk_text_buffer_get_end_iter(void *buffer, CyonimaTextIter *iter);
+        void         gtk_text_buffer_select_range(
+            void *buffer, const CyonimaTextIter *start, const CyonimaTextIter *end);
         char        *gtk_text_buffer_get_text(
             void *buffer, const CyonimaTextIter *start, const CyonimaTextIter *end, int include_hidden);
         void         g_free(void *pointer);
@@ -55,6 +57,17 @@ final class GtkText
         }
 
         return self::$ffi ??= FFI::cdef(self::CDEF, 'libgtk-4.so.1');
+    }
+
+    public static function selectAll(CData $buffer): void
+    {
+        $ffi = self::ffi();
+
+        $start = $ffi->new('CyonimaTextIter');
+        $end = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_start_iter($buffer, FFI::addr($start));
+        $ffi->gtk_text_buffer_get_end_iter($buffer, FFI::addr($end));
+        $ffi->gtk_text_buffer_select_range($buffer, FFI::addr($start), FFI::addr($end));
     }
 
     public static function fromBuffer(CData $buffer): string

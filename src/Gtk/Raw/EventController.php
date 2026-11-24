@@ -12,4 +12,9 @@ namespace Cyonima\Gtk\Raw;
 class EventController extends RawObject
 {
     public const TYPE_NAME = 'GtkEventController';
+
+    public function setPropagationPhase(int $phase): void
+    {
+        Symbols::get()->gtk_event_controller_set_propagation_phase($this->handle, $phase);
+    }
 }

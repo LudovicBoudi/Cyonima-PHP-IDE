@@ -13,6 +13,8 @@ class Popover extends \Cyonima\Gtk\Raw\Widget
 {
     public const TYPE_NAME = 'GtkPopover';
 
+    public const SIGNAL_CLOSED = 'closed';
+
     public static function new(): self
     {
         Symbols::ensureInitialized();
@@ -48,5 +50,10 @@ class Popover extends \Cyonima\Gtk\Raw\Widget
     public function popdown(): void
     {
         Symbols::get()->gtk_popover_popdown($this->handle);
+    }
+
+    public function onClosed(callable $handler): int
+    {
+        return $this->connectSignal(self::SIGNAL_CLOSED, $handler, [], true);
     }
 }

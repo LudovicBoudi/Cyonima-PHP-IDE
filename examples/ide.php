@@ -9,6 +9,7 @@ use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
+use Cyonima\Runtime\ProjectBuilder;
 use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\AssetPanel;
@@ -16,9 +17,11 @@ use Cyonima\UI\Box;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\DebugPanel;
+use Cyonima\App\DesignerWindow;
 use Cyonima\UI\FileBrowser;
 use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
+use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
 use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\ScrolledWindow;
@@ -26,7 +29,7 @@ use Cyonima\UI\Terminal;
 use Cyonima\UI\Theme;
 
 /**
- * IDE Cyonima — disposition et thème inspirés de Visual Studio (dark).
+ * Cyonima IDE — disposition et thème inspirés de Visual Studio (dark).
  */
 
 $auto = in_array('--auto', $argv, true);
@@ -42,10 +45,11 @@ $projectName = is_string($manifest['name'] ?? null) && $manifest['name'] !== ''
 $projectLicense = is_string($manifest['license']['spdx'] ?? null)
     ? $manifest['license']['spdx']
     : '—';
+$cyonimaHome = getenv('CYONIMA_HOME') ?: dirname(__DIR__);
 $statusLicense = (new Label('Licence : ' . $projectLicense))->cssClass('status-item');
 
 $app = new AdwApplication('com.cyonima.ide-demo');
-$window = $app->window('Cyonima', $projectName);
+$window = $app->window('Cyonima IDE', $projectName);
 $window->raw()->setDefaultSize(1280, 800);
 
 $editor = new CodeEditor('php');
@@ -348,10 +352,37 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $popup,
     $complete,
     $updateCursor,
+    $save,
+    $run,
 ): bool {
     Loop::after(0, $updateCursor);
 
     $control = ($state & 4) !== 0; // GDK_CONTROL_MASK
+    $shift = ($state & 1) !== 0;   // GDK_SHIFT_MASK
+
+    if ($control) {
+        if ($keyval === 0x73) { // Ctrl+S
+            $save();
+            return true;
+        }
+        if ($keyval === 0x7a) { // Ctrl+Z / Ctrl+Shift+Z
+            $shift ? $editor->redo() : $editor->undo();
+            return true;
+        }
+        if ($keyval === 0x79) { // Ctrl+Y
+            $editor->redo();
+            return true;
+        }
+        if ($keyval === 0x61) { // Ctrl+A
+            $editor->selectAll();
+            return true;
+        }
+    }
+
+    if ($keyval === 0xffc2) { // F5
+        $run();
+        return true;
+    }
 
     if ($control && $keyval === 0x20) { // Ctrl+Espace
         $complete(false);
@@ -375,6 +406,65 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
 $debugPort = (int) (getenv('CYONIMA_XDEBUG_PORT') ?: XdebugClient::DEFAULT_PORT);
 $debug = null;
 
+// --- Concepteur d'interface ------------------------------------------------
+$designer = null;
+$openDesigner = function () use ($app, $root, $hasProject, $window, $openFile, &$designer): void {
+    if (!$hasProject) {
+        $window->toast('Ouvrez un projet pour utiliser le concepteur.');
+        return;
+    }
+
+    if ($designer !== null) {
+        $designer->present();
+        return;
+    }
+
+    $designer = new DesignerWindow(
+        $app,
+        $root,
+        function (string $phpPath) use ($openFile, $window): void {
+            $openFile($phpPath);
+            $window->toast('Formulaire généré : ' . basename($phpPath));
+        },
+        function () use (&$designer): void {
+            $designer = null;
+        },
+    );
+
+    $designer->present();
+};
+
+// --- Export d'application autonome ----------------------------------------
+$exportApplication = function (string $format = ProjectBuilder::FORMAT_APPIMAGE) use ($hasProject, $root, $cyonimaHome, $window): void {
+    if (!$hasProject) {
+        $window->toast('Ouvrez un projet pour exporter une application.');
+        return;
+    }
+
+    $result = ProjectBuilder::start($cyonimaHome, $root, null, $format);
+
+    if (!$result['ok'] || $result['process'] === null) {
+        $window->toast($result['message'], 8000);
+        return;
+    }
+
+    $window->toast($result['message'], 5000);
+
+    $result['process']->onComplete(function ($process) use ($window): void {
+        $build = $process->result();
+
+        if ($build->succeeded()) {
+            $lines = preg_split('/\R/', trim($build->stdout())) ?: [];
+            $last = $lines === [] ? '' : (string) end($lines);
+            $window->toast('Application autonome : ' . basename($last), 10000);
+            return;
+        }
+
+        $error = trim($build->stderr) !== '' ? trim($build->stderr) : trim($build->stdout());
+        $window->toast('Échec de l’export : ' . substr($error, 0, 220), 10000);
+    });
+};
+
 // --- Barre d'activité ------------------------------------------------------
 $activityBar = (new Box(Orientation::VERTICAL, 0))->cssClass('activity-bar');
 $activityBar->raw()->setSizeRequest(48, -1);
@@ -383,6 +473,7 @@ $explorerButton = (new IconButton('folder-symbolic', 'Explorateur'))->cssClass('
 $searchButton = (new IconButton('edit-find-symbolic', 'Recherche'));
 $debugActivity = (new IconButton('applications-engineering-symbolic', 'Débogage'));
 $assetsButton = (new IconButton('folder-pictures-symbolic', 'Assets'));
+$designerActivity = (new IconButton('applications-graphics-symbolic', 'Concepteur d\'interface'));
 $settingsButton = (new IconButton('preferences-system-symbolic', 'Propriétés du projet'));
 $activitySpacer = (new Box(Orientation::VERTICAL, 0))->expand(false, true);
 
@@ -391,6 +482,7 @@ $activityBar->append(
     $searchButton,
     $debugActivity,
     $assetsButton,
+    $designerActivity,
     $activitySpacer,
     $settingsButton,
 );
@@ -549,6 +641,7 @@ $showPropertiesPanel = function () use (
 $explorerButton->onClicked(fn () => $showExplorer());
 $debugActivity->onClicked(fn () => $showDebugPanel());
 $assetsButton->onClicked(fn () => $showAssetsPanel());
+$designerActivity->onClicked(fn () => $openDesigner());
 $searchButton->onClicked(fn () => $window->toast('Recherche à venir'));
 $settingsButton->onClicked(fn () => $showPropertiesPanel());
 
@@ -562,14 +655,16 @@ $tabBar = (new Box(Orientation::HORIZONTAL, 0))
     ->cssClass('tab-bar')
     ->append($tab);
 
-$tabClose->onClicked(function () use ($editor, $window, $popup, $updateTab, &$currentFile, &$dirty): void {
+$closeTab = function () use ($editor, $window, $popup, $updateTab, &$currentFile, &$dirty): void {
     $popup->hide();
     $currentFile = null;
     $dirty = false;
     $editor->setText('');
     $window->subtitle('');
     $updateTab(null, false);
-});
+};
+
+$tabClose->onClicked($closeTab);
 
 $editorArea = (new ScrolledWindow($editor))->expand();
 
@@ -581,9 +676,15 @@ $panelTabs = (new Box(Orientation::HORIZONTAL, 0))
         (new Label('TERMINAL'))->cssClass('panel-tab')->cssClass('active'),
     );
 
+$terminalVisible = true;
 $terminalPanel = (new Box(Orientation::VERTICAL, 0))
     ->append($panelTabs, $terminal->expand())
     ->expand();
+
+$toggleTerminal = function () use ($terminalPanel, &$terminalVisible): void {
+    $terminalVisible = !$terminalVisible;
+    $terminalPanel->visible($terminalVisible);
+};
 
 $mainSplit = (new Paned(Orientation::VERTICAL, 520))
     ->start($editorArea)
@@ -630,9 +731,9 @@ $content = (new Box(Orientation::VERTICAL, 0))->append($body, $statusBar);
 $window->content($content);
 
 // --- Barre de titre et actions --------------------------------------------
-$menu = static fn (string $text): Label => (new Label($text))->cssClass('menu-item');
-
 $saveButton = (new IconButton('document-save-symbolic', 'Enregistrer'))->onClicked(fn () => $save());
+$exportButton = (new IconButton('package-x-generic-symbolic', 'Exporter l’application autonome'))
+    ->onClicked(fn () => $exportApplication());
 $runButton = (new IconButton('media-playback-start-symbolic', 'Exécuter'))->onClicked($run);
 
 $debugButton = (new IconButton('applications-engineering-symbolic', 'Déboguer'))->onClicked(function () use (
@@ -707,14 +808,65 @@ $debugButton = (new IconButton('applications-engineering-symbolic', 'Déboguer')
     $window->toast('Xdebug en attente sur 127.0.0.1:' . $debugPort);
 });
 
-$window->headerStart(
-    $menu('Fichier'),
-    $menu('Édition'),
-    $menu('Affichage'),
-    $menu('Exécuter'),
-    $menu('Aide'),
-);
-$window->headerEnd($runButton, $debugButton, $saveButton);
+$menuBar = (new MenuBar())
+    ->addMenu('Fichier', [
+        ['label' => 'Enregistrer', 'shortcut' => 'Ctrl+S', 'action' => $save],
+        ['label' => 'Fermer l\'onglet', 'action' => $closeTab],
+        ['separator' => true],
+        ['label' => 'Exporter l’application (AppImage)', 'action' => $exportApplication],
+        ['label' => 'Exporter l’application (Flatpak)', 'action' => fn () => $exportApplication(ProjectBuilder::FORMAT_FLATPAK)],
+        ['separator' => true],
+        ['label' => 'Quitter', 'action' => fn () => $window->raw()->close()],
+    ])
+    ->addMenu('Édition', [
+        ['label' => 'Annuler', 'shortcut' => 'Ctrl+Z', 'action' => fn () => $editor->undo()],
+        ['label' => 'Rétablir', 'shortcut' => 'Ctrl+Shift+Z', 'action' => fn () => $editor->redo()],
+        ['separator' => true],
+        ['label' => 'Tout sélectionner', 'shortcut' => 'Ctrl+A', 'action' => fn () => $editor->selectAll()],
+    ])
+    ->addMenu('Affichage', [
+        ['label' => 'Explorateur', 'action' => $showExplorer],
+        ['label' => 'Débogage', 'action' => $showDebugPanel],
+        ['label' => 'Assets', 'action' => $showAssetsPanel],
+        ['label' => 'Propriétés du projet', 'action' => $showPropertiesPanel],
+        ['label' => 'Concepteur d\'interface', 'action' => $openDesigner],
+        ['separator' => true],
+        ['label' => 'Afficher / masquer le terminal', 'action' => $toggleTerminal],
+    ])
+    ->addMenu('Exécuter', [
+        ['label' => 'Exécuter le fichier', 'shortcut' => 'F5', 'action' => fn () => $run()],
+        ['label' => 'Déboguer', 'action' => fn () => $debugButton->click()],
+        ['separator' => true],
+        ['label' => 'Arrêter le débogage', 'action' => function () use (&$debug, $debugPanel, $window): void {
+            if ($debug === null) {
+                $window->toast('Aucune session de débogage');
+                return;
+            }
+
+            $debug->close();
+            $debug = null;
+            $debugPanel->clear();
+            $window->toast('Session de débogage arrêtée');
+        }],
+    ])
+    ->addMenu('Aide', [
+        ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
+            'Ctrl+S Enregistrer · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            8000,
+        )],
+        ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
+            'Cyonima IDE 0.1.0 · MIT · PHP 8.3 + GTK4',
+            6000,
+        )],
+        ['separator' => true],
+        ['label' => 'Licence MIT', 'action' => fn () => $window->toast(
+            'Cyonima IDE est distribué sous licence MIT, en open source.',
+            6000,
+        )],
+    ]);
+
+$window->headerStart($menuBar);
+$window->headerEnd($runButton, $debugButton, $exportButton, $saveButton);
 
 $window->present();
 

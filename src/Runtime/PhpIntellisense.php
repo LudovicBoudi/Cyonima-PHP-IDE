@@ -165,6 +165,15 @@ final class PhpIntellisense
         'serialize' => 'string serialize(mixed $value)',
         'unserialize' => 'mixed unserialize(string $data)',
         'filter_var' => 'mixed filter_var(mixed $value, int $filter = FILTER_DEFAULT)',
+        // SSH2 / réseau Linux
+        'ssh2_connect' => 'resource|false ssh2_connect(string $host, int $port = 22)',
+        'ssh2_auth_password' => 'bool ssh2_auth_password(resource $session, string $username, string $password)',
+        'ssh2_auth_pubkey_file' => 'bool ssh2_auth_pubkey_file(resource $session, string $username, string $publicKey, string $privateKey)',
+        'ssh2_exec' => 'resource|false ssh2_exec(resource $session, string $command)',
+        'ssh2_sftp' => 'resource|false ssh2_sftp(resource $session)',
+        'ssh2_scp_send' => 'bool ssh2_scp_send(resource $session, string $local, string $remote, int $mode = 0644)',
+        'stream_socket_client' => 'resource|false stream_socket_client(string $address, int &$errorCode = null, string &$errorMessage = null)',
+        'stream_socket_server' => 'resource|false stream_socket_server(string $address, int &$errorCode = null, string &$errorMessage = null)',
     ];
 
     /**

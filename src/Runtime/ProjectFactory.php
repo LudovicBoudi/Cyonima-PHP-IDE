@@ -174,7 +174,7 @@ final class ProjectFactory
             'appId' => $appId,
             'php' => '>=8.3',
             'createdAt' => gmdate('c'),
-            'createdBy' => 'Cyonima 0.1.0',
+            'createdBy' => 'Cyonima IDE 0.1.0',
             'license' => ['spdx' => $license, 'name' => $licenses[$license]],
             'entry' => $entry,
             'assets' => [],
@@ -561,7 +561,7 @@ final class ProjectFactory
         return <<<MD
             # {$name}
 
-            Projet **{$templates[$template]['name']}** créé avec Cyonima.
+            Projet **{$templates[$template]['name']}** créé avec Cyonima IDE.
 
             - Identifiant : `{$appId}`
             - Licence : {$licenseName}
@@ -593,7 +593,7 @@ final class ProjectFactory
             - `assets/icon.svg` — icône du projet ;
             - `assets/theme.css` — styles chargés par l'application GTK.
 
-            Ajouter un asset depuis Cyonima (page de création) ou en copiant un
+            Ajouter un asset depuis Cyonima IDE (page de création) ou en copiant un
             fichier dans `assets/`.
             MD;
     }
@@ -714,10 +714,11 @@ final class ProjectFactory
         self::writeManifest($root, $manifest);
     }
 
-    private static function assetKind(string $path): string
+    public static function assetKind(string $path): string
     {
         return match (strtolower(pathinfo($path, PATHINFO_EXTENSION))) {
             'svg', 'png', 'jpg', 'jpeg', 'webp', 'gif' => 'image',
+            'mp4', 'webm', 'mkv', 'mov', 'avi' => 'video',
             'css' => 'style',
             'ttf', 'otf', 'woff', 'woff2' => 'font',
             'json', 'toml', 'yaml', 'yml' => 'data',

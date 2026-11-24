@@ -34,4 +34,37 @@ class TextBuffer extends RawObject
     {
         Symbols::get()->gtk_text_buffer_set_modified($this->handle, ($modified) ? 1 : 0);
     }
+
+    public function undo(): void
+    {
+        Symbols::get()->gtk_text_buffer_undo($this->handle);
+    }
+
+    public function redo(): void
+    {
+        Symbols::get()->gtk_text_buffer_redo($this->handle);
+    }
+
+    public function getCanUndo(): bool
+    {
+        $result = Symbols::get()->gtk_text_buffer_get_can_undo($this->handle);
+        return ($result) !== 0;
+    }
+
+    public function getCanRedo(): bool
+    {
+        $result = Symbols::get()->gtk_text_buffer_get_can_redo($this->handle);
+        return ($result) !== 0;
+    }
+
+    public function setEnableUndo(bool $enableUndo): void
+    {
+        Symbols::get()->gtk_text_buffer_set_enable_undo($this->handle, ($enableUndo) ? 1 : 0);
+    }
+
+    public function getHasSelection(): bool
+    {
+        $result = Symbols::get()->gtk_text_buffer_get_has_selection($this->handle);
+        return ($result) !== 0;
+    }
 }
