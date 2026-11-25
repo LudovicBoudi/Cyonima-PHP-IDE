@@ -443,6 +443,33 @@ En résumé :
 | **Application générée, livrée telle quelle** | Oui, avec Cyonima/PHP + GTK |
 | **Application générée empaquetée avec runtime** | Non (AppImage ou bundle autonome) |
 
+## CI/CD GitHub
+
+Deux workflows sont fournis dans `.github/workflows/` :
+
+| Workflow | Déclencheur | Contenu |
+|---|---|---|
+| `ci.yml` | push `main`/`master`, pull request | lint PHP, vérification packaging, tests sous Xvfb |
+| `build.yml` | tags `v*`, `workflow_dispatch` | Portable, AppImage et Flatpak autonomes |
+
+Le workflow de build publie trois artefacts :
+
+```text
+cyonima-0.1.0-linux-x86_64.tar.gz
+Cyonima-0.1.0-x86_64.AppImage
+Cyonima-0.1.0-x86_64.flatpak
+```
+
+Lors d’un tag `v*`, ces fichiers sont aussi attachés automatiquement à la
+release GitHub. Les jobs AppImage et Flatpak installent leurs dépendances,
+construisent les runtimes PHP/GTK et testent le lancement en mode `--auto`.
+
+Pour lancer un build sans tag :
+
+```text
+GitHub → Actions → Build → Run workflow
+```
+
 ## Documents
 
 - [`docs/etude-faisabilite.md`](docs/etude-faisabilite.md) — mesures, risques, plan

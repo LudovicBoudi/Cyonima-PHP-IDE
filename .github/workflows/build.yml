@@ -1,0 +1,193 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  VERSION: "0.1.0"
+  GDK_BACKEND: x11
+  LIBGL_ALWAYS_SOFTWARE: "1"
+
+jobs:
+  portable:
+    name: Bundle portable
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi
+          coverage: none
+
+      - name: Installer GTK4 / Adw / GtkSourceView / VTE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-1 \
+            libadwaita-1-0 \
+            libgtksourceview-5-0 \
+            libvte-2.91-gtk4-0 \
+            xvfb \
+            xauth \
+            dbus-x11
+
+      - name: Construire le bundle portable
+        run: ./packaging/build-portable.sh
+
+      - name: Tester le bundle portable
+        run: dbus-run-session -- xvfb-run -a ./packaging/test-portable.sh
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyonima-portable
+          path: dist/cyonima-${{ env.VERSION }}-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  appimage:
+    name: AppImage autonome
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi
+          coverage: none
+
+      - name: Installer les dépendances de build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            curl \
+            libxml2-dev \
+            libssl-dev \
+            libffi-dev \
+            libsqlite3-dev \
+            libicu-dev \
+            libpng-dev \
+            libjpeg-dev \
+            libfreetype-dev \
+            libwebp-dev \
+            libcurl4-openssl-dev \
+            libzip-dev \
+            libzip4t64 \
+            libgtk-4-1 \
+            libadwaita-1-0 \
+            libgtksourceview-5-0 \
+            libvte-2.91-gtk4-0 \
+            xvfb \
+            xauth \
+            dbus-x11
+
+      - name: Construire le PHP embarqué
+        run: ./packaging/appimage/build-php.sh
+
+      - name: Construire l'AppImage
+        run: ./packaging/appimage/build-appimage.sh
+
+      - name: Tester l'AppImage
+        run: dbus-run-session -- xvfb-run -a ./packaging/test-appimage.sh
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyonima-appimage
+          path: dist/Cyonima-${{ env.VERSION }}-x86_64.AppImage
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak IDE
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer Flatpak
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            elfutils \
+            ostree \
+            xvfb \
+            xauth \
+            dbus-x11
+
+      - name: Installer le runtime et le SDK GNOME
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+      - name: Construire le Flatpak
+        run: |
+          flatpak-builder \
+            --user \
+            --force-clean \
+            --disable-rofiles-fuse \
+            --repo=dist/flatpak-repo \
+            build-ci \
+            packaging/flatpak/com.cyonima.Ide.json
+
+      - name: Générer le bundle Flatpak
+        run: |
+          flatpak build-bundle \
+            dist/flatpak-repo \
+            dist/Cyonima-${{ env.VERSION }}-x86_64.flatpak \
+            com.cyonima.Ide \
+            master
+
+      - name: Tester le Flatpak
+        run: |
+          flatpak install --user -y --noninteractive dist/Cyonima-${{ env.VERSION }}-x86_64.flatpak
+          dbus-run-session -- xvfb-run -a flatpak run --user com.cyonima.Ide --auto
+
+      - name: Publier l'artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyonima-flatpak
+          path: dist/Cyonima-${{ env.VERSION }}-x86_64.flatpak
+          if-no-files-found: error
+
+  release:
+    name: Release GitHub
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - portable
+      - appimage
+      - flatpak
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publier les fichiers de release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.AppImage
+            artifacts/*.flatpak
+            artifacts/*.tar.gz
+          fail_on_unmatched_files: true

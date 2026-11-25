@@ -17,7 +17,8 @@ echo "Test de $APPIMAGE"
 
 # 1) --version sans environnement utilisateur (pas de PHP de l'hôte dans PATH).
 VERSION_OUTPUT="$(env -i HOME="$HOME" DISPLAY="${DISPLAY:-:0}" \
-    APPIMAGE_EXTRACT_AND_RUN=1 "$APPIMAGE" --version 2>&1 | tail -1)"
+    XAUTHORITY="${XAUTHORITY:-}" APPIMAGE_EXTRACT_AND_RUN=1 \
+    "$APPIMAGE" --version 2>&1 | tail -1)"
 
 if [ "$VERSION_OUTPUT" != "Cyonima IDE 0.1.0" ]; then
     echo "ÉCHEC : --version → ${VERSION_OUTPUT:-<vide>}" >&2

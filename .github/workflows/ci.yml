@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests PHP / GTK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    env:
+      GDK_BACKEND: x11
+      LIBGL_ALWAYS_SOFTWARE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi
+          coverage: none
+          tools: composer
+
+      - name: Installer GTK4 / Adw / GtkSourceView / VTE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-1 \
+            libadwaita-1-0 \
+            libgtksourceview-5-0 \
+            libvte-2.91-gtk4-0 \
+            xvfb \
+            xauth \
+            dbus-x11
+
+      - name: Vérifier la syntaxe PHP
+        run: |
+          find src examples bin tests packaging -name '*.php' -print0 \
+            | xargs -0 -n1 php -l >/dev/null
+
+      - name: Vérifier le packaging
+        run: php packaging/check.php
+
+      - name: Tests unitaires et UI
+        run: dbus-run-session -- xvfb-run -a php -d ffi.enable=true tests/run.php
+
+      - name: Vérifier la version
+        run: |
+          ./bin/cyonima --version | grep -q "Cyonima IDE"
