@@ -201,8 +201,8 @@ Le lanceur expose `cyonima --version`.
 ## Extensions PHP natives
 
 Le PHP embarqué de l'AppImage et du Flatpak inclut `ssh2` (libssh2), `openssl`,
-`sockets`, `pcntl`, `posix`, `curl`, `intl`, `pdo_sqlite`/`sqlite3`, `zip` et
-`gd`. Le module `ssh2` est compilé dans le Flatpak via
+`sockets`, `pcntl`, `posix`, `curl`, `intl`, `pdo_sqlite`/`sqlite3`, `zip`,
+`gd` et `ctype`. Le module `ssh2` est compilé dans le Flatpak via
 `libssh2` + PECL `ssh2`, et ajouté au PHP AppImage.
 
 Les applications exportées avec `build-project.sh` ou

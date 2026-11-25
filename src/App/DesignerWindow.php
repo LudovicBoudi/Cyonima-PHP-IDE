@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Cyonima\App;
 
+use Cyonima\Compiler\CompilerException;
+use Cyonima\Compiler\FormCompiler;
 use Cyonima\Gtk\Raw\GestureClick as RawGestureClick;
 use Cyonima\Gtk\Raw\GestureDrag as RawGestureDrag;
 use Cyonima\Gtk\Raw\Orientation;
@@ -98,6 +100,7 @@ final class DesignerWindow
     private Button $applyButton;
     private Button $deleteButton;
     private Button $saveButton;
+    private Button $nativeButton;
 
     /** @var array<string, Button> */
     private array $eventButtons = [];
@@ -669,6 +672,10 @@ final class DesignerWindow
             ->cssClass('designer-save')
             ->onClicked(fn () => $this->saveForm());
 
+        $this->nativeButton = (new Button('Compiler en natif'))
+            ->cssClass('designer-native')
+            ->onClicked(fn () => $this->compileNative());
+
         $this->message = (new Label(''))->cssClass('designer-message')->xalign(0.0)->wrap(true)->visible(false);
 
         $this->selectionValue = (new Label('Aucun élément'))->cssClass('designer-selection')->xalign(0.0);
@@ -704,6 +711,7 @@ final class DesignerWindow
                 ->cssClass('designer-hint')
                 ->xalign(0.0),
             $this->saveButton,
+            $this->nativeButton,
             $this->message,
             (new Label('ÉLÉMENT SÉLECTIONNÉ'))->cssClass('designer-section')->xalign(0.0),
             $this->selectionValue,
@@ -948,7 +956,7 @@ final class DesignerWindow
         $this->message->text('Contrôle ajouté.')->visible(true);
     }
 
-    private function saveForm(): void
+    private function saveForm(): bool
     {
         $targetSlug = FormDocument::slug($this->formNameEntry->text());
         $currentSlug = FormDocument::slug($this->form->name());
@@ -956,7 +964,7 @@ final class DesignerWindow
 
         if ($targetSlug !== $currentSlug && is_file($targetPath)) {
             $this->showMessage('Un formulaire porte déjà ce nom : ' . $this->formNameEntry->text(), false);
-            return;
+            return false;
         }
 
         $this->form->setName($this->formNameEntry->text());
@@ -964,7 +972,7 @@ final class DesignerWindow
 
         if (!$result['ok']) {
             $this->showMessage($result['message'], false);
-            return;
+            return false;
         }
 
         $this->showMessage($result['message'], true);
@@ -972,6 +980,37 @@ final class DesignerWindow
 
         if ($result['phpPath'] !== null && $this->onSaved !== null) {
             ($this->onSaved)($result['phpPath']);
+        }
+
+        return true;
+    }
+
+    private function compileNative(): void
+    {
+        if (!$this->saveForm()) {
+            return;
+        }
+
+        $compiler = new FormCompiler($this->root);
+        $reason = '';
+
+        try {
+            $native = $compiler->compile($this->form->name(), null, 'elf');
+            $this->showMessage('Binaire natif : ' . ($native['binaryPath'] ?? $native['cPath']), true);
+            return;
+        } catch (CompilerException $exception) {
+            $reason = $exception->getMessage();
+        }
+
+        try {
+            $fallback = $compiler->compile($this->form->name(), null, 'c');
+            $detail = $reason !== '' ? ' (' . substr($reason, 0, 160) . ')' : '';
+            $this->showMessage(
+                'ELF impossible' . $detail . ' — code C généré : ' . $fallback['cPath'],
+                false,
+            );
+        } catch (CompilerException $exception) {
+            $this->showMessage('Compilation impossible : ' . $exception->getMessage(), false);
         }
     }
 

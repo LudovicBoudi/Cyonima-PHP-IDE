@@ -18,6 +18,7 @@ cp -r \
     "$ROOT/autoload.php" \
     "$ROOT/bin" \
     "$ROOT/src" \
+    "$ROOT/runtime" \
     "$ROOT/examples" \
     "$ROOT/spec" \
     "$ROOT/composer.json" \

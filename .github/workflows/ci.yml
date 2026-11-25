@@ -39,6 +39,9 @@ jobs:
             libadwaita-1-0 \
             libgtksourceview-5-0 \
             libvte-2.91-gtk4-0 \
+            libgtk-4-dev \
+            build-essential \
+            pkg-config \
             xvfb \
             xauth \
             dbus-x11
@@ -47,6 +50,7 @@ jobs:
         run: |
           find src examples bin tests packaging -name '*.php' -print0 \
             | xargs -0 -n1 php -l >/dev/null
+          php -l bin/cyonima-compile >/dev/null
 
       - name: Vérifier le packaging
         run: php packaging/check.php

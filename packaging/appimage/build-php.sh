@@ -59,6 +59,7 @@ export CURL_LIBS="-L$DEPS/curl/usr/lib/x86_64-linux-gnu -lcurl"
 ./configure \
     --prefix=/usr \
     --disable-all \
+    --enable-ctype \
     --enable-cli \
     --disable-cgi \
     --disable-phpdbg \

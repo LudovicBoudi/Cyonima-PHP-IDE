@@ -1,0 +1,78 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__) . '/autoload.php';
+
+use Cyonima\Compiler\FormCompiler;
+use Cyonima\Compiler\PhpCompiler;
+
+$arguments = array_slice($argv, 1);
+$project = getcwd() ?: '.';
+$form = 'main-form';
+$php = null;
+$output = null;
+$emit = 'elf';
+
+foreach ($arguments as $argument) {
+    if ($argument === '--help' || $argument === '-h') {
+        echo <<<HELP
+        cyonima-compile — compilateur natif Cyonima
+
+        Usage :
+          cyonima-compile [options]
+
+        Cibles :
+          --form=NAME     formulaire du concepteur (défaut : main-form)
+          --php=FILE      fichier PHP du sous-ensemble compilable
+
+        Options :
+          --project=DIR   projet de sortie (défaut : répertoire courant)
+          --emit=c|elf    code C seulement, ou binaire natif (défaut : elf)
+          --output=PATH   sortie du binaire
+          --help          affiche cette aide
+
+        Un formulaire produit un binaire GTK4. Un fichier PHP produit un binaire
+        autonome sans GTK. PHP n'est pas requis à l'exécution.
+
+        HELP;
+        exit(0);
+    }
+
+    if (str_starts_with($argument, '--project=')) {
+        $project = substr($argument, strlen('--project='));
+        continue;
+    }
+    if (str_starts_with($argument, '--form=')) {
+        $form = substr($argument, strlen('--form='));
+        continue;
+    }
+    if (str_starts_with($argument, '--php=')) {
+        $php = substr($argument, strlen('--php='));
+        continue;
+    }
+    if (str_starts_with($argument, '--emit=')) {
+        $emit = substr($argument, strlen('--emit='));
+        continue;
+    }
+    if (str_starts_with($argument, '--output=')) {
+        $output = substr($argument, strlen('--output='));
+    }
+}
+
+try {
+    $compiler = $php === null
+        ? new FormCompiler($project)
+        : new PhpCompiler($project);
+    $result = $php === null
+        ? $compiler->compile($form, $output, $emit)
+        : $compiler->compile($php, $output, $emit);
+    echo $result['message'], "\n";
+    if ($result['binaryPath'] !== null) {
+        echo "C : ", $result['cPath'], "\n";
+    }
+} catch (Throwable $exception) {
+    fwrite(STDERR, '[cyonima-compile] ' . $exception->getMessage() . "\n");
+    exit(1);
+}

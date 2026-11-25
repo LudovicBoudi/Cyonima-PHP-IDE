@@ -346,6 +346,58 @@ Trois écarts assumés par rapport au miroir strict du C :
     Flatpak. Les extensions sont copiées dans les applications exportées.
     `curl`, `intl`, SQLite/PDO, `zip` et GD sont ajoutés dans le même lot.
 
+36. **Compilateur natif — phase 1** : une chaîne de compilation s’ajoute au
+    runtime interprété, qui reste la référence de compatibilité. La cible
+    long terme est un sous-ensemble PHP strict compilé en C11 puis GTK4/Adw,
+    avec des erreurs explicites hors périmètre. La première étape compile les
+    formulaires du concepteur : `.form.json → FormDocument → CGenerator →
+    gcc + GTK4 → ELF`. `FormCompiler` produit aussi le C seul (`--emit=c`)
+    lorsque les en-têtes GTK4 manquent. Le binaire généré ne dépend ni de PHP
+    ni de FFI. L’IDE expose l’action **Compiler en natif** dans le concepteur,
+    avec repli documenté sur la génération C. Les phases suivantes ajoutent
+    lexer/parser/AST/IR du sous-ensemble PHP, puis le runtime UI natif et les
+    modules natifs. Voir `docs/compiler.md`.
+
+37. **Compilateur PHP — phase 2** : le sous-ensemble PHP est compilé par un
+    pipeline séparé `Lexer → Parser → AST → SemanticAnalyzer → IrBuilder →
+    PhpCGenerator → gcc`. Le typage est statique et strict : types scalaires
+    (`int`, `float`, `bool`, `string`), fonctions typées, `if`/`elseif`/`else`,
+    `while`, `echo`, opérateurs usuels et quelques natives (`strlen`, `intval`,
+    `floatval`, `strval`, `abs`). Les constructions hors périmètre (`for`,
+    `foreach`, tableaux, objets, classes, closures, interpolation, exceptions)
+    échouent avec un message et une ligne. Le backend produit un ELF autonome
+    avec `runtime/native/cyonima_runtime.h` ; les chaînes concaténées sont
+    allouées sans libération pour l’instant. La CLI expose `--php=FILE`. Voir
+    `docs/compiler.md`.
+
+38. **Tableaux, boucles et interpolation** : le sous-ensemble PHP ajoute
+    `for`, `foreach`, les tableaux indexés homogènes (`[...]`, `array(...)`,
+    `$a[i]`, `$a[]`, `count`) et l’interpolation `"Bonjour $nom"` /
+    `"{$nom}"`. Les tableaux sont typés par élément (`array<int>`, etc.) et
+    copiés à l’affectation ; les tableaux associatifs, imbriqués et les
+    signatures de fonctions avec tableaux restent hors périmètre. L’analyse
+    de flux vérifie l’affectation définie sur tous les chemins et les retours
+    exhaustifs des fonctions non `void`.
+
+39. **Runtime mémoire structuré** : toutes les allocations passent par
+    `cy_alloc`/`cy_free`. Chaque fonction pousse une frame de racines pour ses
+    variables et temporaires chaîne/tableau. Une GC mark-sweep est déclenchée
+    aux retours de boucle selon des seuils d’allocations et d’octets ;
+    `cy_runtime_shutdown` libère le reste à la sortie via `atexit`. Le modèle
+    reste simple (pas de refcount ni de compaction) mais borne la mémoire des
+    boucles longues.
+
+40. **Runtime UI natif procédural** : une première couche `ui_*`
+    (`ui_init`, `ui_window`, `ui_box`, `ui_label`, `ui_button`, `ui_entry`,
+    `ui_append`, `ui_set_child`, `ui_present`, `ui_on_click`,
+    `ui_on_activate`, `ui_after`, `ui_set_text`, `ui_entry_text`, `ui_quit`,
+    `ui_run`) relie le PHP compilé à GTK4 sans FFI. Les widgets sont des
+    handles `int` (1..256). Les gestionnaires sont des fonctions compilées
+    `function h(): void` ou `function h(int $handle): void`, transmis comme
+    chaînes littérales et reliés aux signaux GTK par des wrappers C. La façade
+    objet `Cyonima\UI` sera construite au-dessus. La compilation ELF d’une
+    application UI exige GTK4 de développement.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

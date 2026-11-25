@@ -45,7 +45,7 @@
             "name": "php",
             "buildsystem": "simple",
             "build-commands": [
-                "export PKG_CONFIG_PATH=\"/app/lib/pkgconfig:/app/lib64/pkgconfig:${PKG_CONFIG_PATH:-}\"; ./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --with-curl --enable-intl --enable-pdo --with-pdo-sqlite --with-sqlite3 --with-zip --enable-gd --with-jpeg --with-freetype --with-webp --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
+                "export PKG_CONFIG_PATH=\"/app/lib/pkgconfig:/app/lib64/pkgconfig:${PKG_CONFIG_PATH:-}\"; ./configure --prefix=/app --disable-all --enable-ctype --enable-cli --enable-opcache --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --with-curl --enable-intl --enable-pdo --with-pdo-sqlite --with-sqlite3 --with-zip --enable-gd --with-jpeg --with-freetype --with-webp --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
                 "make -j${FLATPAK_BUILDER_N_JOBS:-4}",
                 "make install"
             ],
@@ -132,7 +132,7 @@
             "buildsystem": "simple",
             "build-commands": [
                 "install -d /app/share/cyonima /app/bin /app/share/cyonima/packaging/appimage /app/share/cyonima/packaging/icon /app/share/cyonima/packaging/flatpak /app/share/cyonima/tools",
-                "cp -r autoload.php bin src examples spec composer.json /app/share/cyonima/",
+                "cp -r autoload.php bin src runtime examples spec composer.json /app/share/cyonima/",
                 "install -Dm755 packaging/appimage/build-project-bundle.sh /app/share/cyonima/packaging/appimage/build-project-bundle.sh",
                 "install -Dm755 packaging/appimage/bundle-gtk.sh /app/share/cyonima/packaging/appimage/bundle-gtk.sh",
                 "install -Dm644 packaging/appimage/project-meta.php /app/share/cyonima/packaging/appimage/project-meta.php",

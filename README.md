@@ -318,6 +318,7 @@ Les runtimes embarqués intègrent un premier pack réseau/Linux :
 | `pdo_sqlite` / `sqlite3` | ✅ | ✅ |
 | `zip` | ✅ | ✅ |
 | `gd` (PNG/JPEG/WebP) | ✅ | ✅ |
+| `ctype` | ✅ | ✅ |
 
 Les applications exportées depuis l’IDE héritent du même pack PHP, y compris
 dans les AppImages et les Flatpaks de projet. Les extensions sont donc
@@ -331,6 +332,57 @@ ssh2_auth_password($connection, 'user', 'secret');
 ```
 
 Le pack réseau/Linux est désormais complet pour ce premier périmètre.
+
+## Compilateur natif
+
+Cyonima ajoute une chaîne de compilation native à côté du runtime interprété.
+Elle vise un **sous-ensemble PHP strict** et couvre deux cibles :
+
+```text
+.form.json → FormDocument → C11 GTK4 → ELF
+fichier PHP → Lexer → Parser → AST → IR → C11 → ELF
+```
+
+Le code C généré n’utilise ni PHP ni FFI. Pour un formulaire, il appelle
+directement GTK4 et transforme les événements en handlers C typés. Pour un
+fichier PHP, il produit un binaire autonome avec un runtime natif structuré
+(`runtime/native/cyonima_runtime.h`) : allocation centralisée, racines par
+fonction et GC mark-sweep aux retours de boucle.
+
+```bash
+# Formulaire : code C seul, puis binaire GTK4
+bin/cyonima-compile --project=./mon-projet --form=main-form --emit=c
+bin/cyonima-compile --project=./mon-projet --form=main-form --emit=elf
+
+# PHP : binaire autonome
+bin/cyonima-compile --project=./mon-projet --php=src/programme.php --emit=elf
+
+# Application GTK4 native (ui_*)
+bin/cyonima-compile --project=./mon-projet --php=examples/native-ui.php --emit=elf
+```
+
+Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
+typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, les tableaux indexés
+homogènes, l’interpolation de chaînes, `echo`, les opérateurs usuels et les
+natives `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`.
+
+L’analyse vérifie les types, l’affectation définie sur tous les chemins et les
+retours exhaustifs. Les tableaux associatifs, objets, classes, closures,
+`switch`/`match` et exceptions restent refusés explicitement avec un numéro de
+ligne.
+
+Une première couche UI native expose `ui_init`, `ui_window`, `ui_box`,
+`ui_label`, `ui_button`, `ui_entry`, `ui_append`, `ui_on_click`, `ui_after`,
+`ui_run`, etc. Les gestionnaires sont des fonctions compilées, reliées aux
+signaux GTK avec un handle de données optionnel. La façade objet
+`Cyonima\UI` viendra au-dessus.
+
+Le concepteur d’interface expose aussi **Compiler en natif**. En l’absence de
+GTK4 de développement, l’IDE génère le C et affiche le chemin produit.
+
+Les constructions non supportées doivent échouer explicitement, avec repli sur
+l’interpréteur. La feuille de route complète (phases 2 à 5) et les prérequis
+sont détaillés dans [`docs/compiler.md`](docs/compiler.md).
 
 ## Packaging
 

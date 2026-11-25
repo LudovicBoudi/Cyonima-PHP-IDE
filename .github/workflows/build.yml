@@ -38,6 +38,9 @@ jobs:
             libadwaita-1-0 \
             libgtksourceview-5-0 \
             libvte-2.91-gtk4-0 \
+            libgtk-4-dev \
+            build-essential \
+            pkg-config \
             xvfb \
             xauth \
             dbus-x11

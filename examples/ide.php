@@ -5,6 +5,8 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/autoload.php';
 
 use Cyonima\Gtk\Raw\Orientation;
+use Cyonima\Compiler\CompilerException;
+use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
@@ -251,6 +253,42 @@ $run = function () use ($editor, $terminal, $window, $save, &$currentFile): void
     file_put_contents($temp, $editor->text());
     $terminal->write('php ' . escapeshellarg($temp) . "\n");
     $window->toast('Script temporaire exécuté');
+};
+
+$compileNativeFile = function () use ($window, $save, &$currentFile, $root, $hasProject): void {
+    if (!$hasProject) {
+        $window->toast('Ouvrez un projet pour compiler en natif.');
+        return;
+    }
+
+    if ($currentFile === null || !str_ends_with($currentFile, '.php')) {
+        $window->toast('Ouvrez un fichier PHP pour le compiler en natif.');
+        return;
+    }
+
+    if (!$save()) {
+        return;
+    }
+
+    $compiler = new PhpCompiler($root);
+
+    try {
+        $result = $compiler->compile($currentFile, null, 'elf');
+        $window->toast('Binaire natif : ' . basename((string) $result['binaryPath']), 8000);
+        return;
+    } catch (CompilerException $exception) {
+        $reason = $exception->getMessage();
+    }
+
+    try {
+        $fallback = $compiler->compile($currentFile, null, 'c');
+        $window->toast(
+            'ELF impossible (' . substr($reason, 0, 140) . ') — C généré : ' . basename($fallback['cPath']),
+            10000,
+        );
+    } catch (CompilerException $exception) {
+        $window->toast('Compilation native : ' . substr($exception->getMessage(), 0, 220), 10000);
+    }
 };
 
 // --- LSP optionnel ---------------------------------------------------------
@@ -835,6 +873,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Exécuter', [
         ['label' => 'Exécuter le fichier', 'shortcut' => 'F5', 'action' => fn () => $run()],
+        ['label' => 'Compiler le fichier en natif', 'action' => $compileNativeFile],
         ['label' => 'Déboguer', 'action' => fn () => $debugButton->click()],
         ['separator' => true],
         ['label' => 'Arrêter le débogage', 'action' => function () use (&$debug, $debugPanel, $window): void {

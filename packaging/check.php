@@ -92,9 +92,18 @@ if (!is_file($root . '/packaging/icon/com.cyonima.Ide.svg')) {
     $errors[] = 'icône SVG manquante';
 }
 
+if (!is_file($root . '/runtime/native/cyonima_runtime.h')) {
+    $errors[] = 'runtime natif manquant : runtime/native/cyonima_runtime.h';
+}
+
+if (!is_file($root . '/runtime/native/cyonima_ui.h')) {
+    $errors[] = 'runtime UI manquant : runtime/native/cyonima_ui.h';
+}
+
 foreach ([
     'bin/cyonima',
     'bin/cyonima.php',
+    'bin/cyonima-compile',
     'packaging/AppRun',
     'packaging/build-portable.sh',
     'packaging/test-portable.sh',

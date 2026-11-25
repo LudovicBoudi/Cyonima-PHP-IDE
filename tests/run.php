@@ -25,6 +25,11 @@ use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
+use Cyonima\Compiler\FormCompiler;
+use Cyonima\Compiler\Lexer\Lexer;
+use Cyonima\Compiler\Lexer\TokenType;
+use Cyonima\Compiler\Parser\Parser;
+use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Runtime\FormDocument;
 use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\RecentProjects;
@@ -1064,5 +1069,733 @@ $switchRow->title('Nouvelle option')->subtitle('Sous-titre');
 T::ok($switchRow instanceof UI\SwitchRow, 'SwitchRow : titre et sous-titre modifiables');
 
 $removeTree($formRoot);
+
+
+// ---------------------------------------------------------------------------
+T::section('14. Compilateur natif — formulaire vers C');
+
+$nativeRoot = sys_get_temp_dir() . '/cyonima_native_' . getmypid();
+$removeTree($nativeRoot);
+mkdir($nativeRoot, 0775, true);
+
+$nativeProject = Cyonima\Runtime\ProjectFactory::create(
+    'Native Compiler',
+    $nativeRoot,
+    'gtk',
+    'MIT',
+    'com.cyonima.nativecompiler',
+);
+$nativePath = (string) $nativeProject['path'];
+$nativeForm = new Cyonima\Runtime\FormDocument('main-form');
+$nativeLabel = $nativeForm->add('label', 20, 20, 'Bonjour');
+$nativeButton = $nativeForm->add('button', 20, 70, 'Valider');
+$nativeEntry = $nativeForm->add('entry', 20, 120, 'Votre nom');
+$nativeSwitch = $nativeForm->add('switch', 20, 170, 'Option');
+$nativeForm->update($nativeButton['id'], ['name' => 'btnValider', 'events' => ['click', 'double-click']]);
+$nativeForm->update($nativeEntry['id'], ['name' => 'entryName', 'events' => ['changed', 'activate']]);
+$nativeForm->update($nativeSwitch['id'], ['name' => 'switchOption', 'events' => ['changed']]);
+$nativeForm->add('image', 20, 220, 'assets/icon.svg');
+$nativeForm->add('video', 20, 280, 'assets/demo.mp4');
+$nativeForm->add('separator', 20, 340);
+$nativeForm->save($nativePath);
+
+$nativeCompiler = new FormCompiler($nativePath);
+$nativeC = $nativeCompiler->compile('main-form', null, 'c');
+T::ok($nativeC['ok'], 'compilateur : génération C');
+T::same($nativePath . '/dist/native/main-form.c', $nativeC['cPath'], 'compilateur : chemin C');
+$cSource = (string) file_get_contents($nativeC['cPath']);
+T::ok(str_contains($cSource, '#include <gtk/gtk.h>'), 'compilateur : include GTK');
+T::ok(str_contains($cSource, 'gtk_fixed_put'), 'compilateur : placement des contrôles');
+T::ok(str_contains($cSource, 'gtk_image_new_from_file'), 'compilateur : image');
+T::ok(str_contains($cSource, 'gtk_video_new_for_filename'), 'compilateur : vidéo');
+T::ok(str_contains($cSource, 'gtk_separator_new'), 'compilateur : séparateur');
+T::ok(str_contains($cSource, 'on_w_btnValider_click'), 'compilateur : événement clic');
+T::ok(str_contains($cSource, 'on_w_entryName_activate'), 'compilateur : événement activation');
+T::ok(str_contains($cSource, 'notify::active'), 'compilateur : événement interrupteur');
+T::ok(str_contains($cSource, 'com.cyonima.nativecompiler'), 'compilateur : identifiant d’application');
+
+$cliOutput = [];
+$cliStatus = 0;
+exec(
+    escapeshellarg(PHP_BINARY) . ' '
+    . escapeshellarg(dirname(__DIR__) . '/bin/cyonima-compile')
+    . ' --project=' . escapeshellarg($nativePath)
+    . ' --form=main-form --emit=c 2>&1',
+    $cliOutput,
+    $cliStatus,
+);
+T::same(0, $cliStatus, 'compilateur : CLI code de sortie');
+T::ok(
+    str_contains(implode("\n", $cliOutput), 'Code C généré'),
+    'compilateur : CLI génère le C',
+);
+
+try {
+    $nativeCompiler->compile('main-form', null, 'inconnu');
+    T::ok(false, 'compilateur : sortie inconnue refusée');
+} catch (Cyonima\Compiler\CompilerException) {
+    T::ok(true, 'compilateur : sortie inconnue refusée');
+}
+
+try {
+    $nativeCompiler->compile('formulaire-absent', null, 'c');
+    T::ok(false, 'compilateur : formulaire absent refusé');
+} catch (Cyonima\Compiler\CompilerException) {
+    T::ok(true, 'compilateur : formulaire absent refusé');
+}
+
+$gtkPkg = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+if (!$gtkPkg) {
+    T::skip('GTK4 dev absent : compilation ELF non exécutée');
+} else {
+    $nativeElf = $nativeCompiler->compile('main-form', null, 'elf');
+    T::ok($nativeElf['ok'], 'compilateur : binaire ELF');
+    T::ok($nativeElf['binaryPath'] !== null && is_file($nativeElf['binaryPath']), 'compilateur : ELF présent');
+    T::ok(is_executable((string) $nativeElf['binaryPath']), 'compilateur : ELF exécutable');
+}
+
+$removeTree($nativeRoot);
+
+// ---------------------------------------------------------------------------
+T::section('15. Compilateur PHP — lexer, parser, IR et backend C');
+
+$phpRoot = sys_get_temp_dir() . '/cyonima_php_' . getmypid();
+$removeTree($phpRoot);
+mkdir($phpRoot . '/src', 0775, true);
+
+$tokens = (new Lexer("<?php\n\$x = 1 + 2;\n"))->tokenize();
+T::same(TokenType::Variable, $tokens[0]->type, 'lexer PHP : variable');
+T::same('x', $tokens[0]->literal, 'lexer PHP : nom de variable');
+T::same(TokenType::Assign, $tokens[1]->type, 'lexer PHP : affectation');
+T::same(TokenType::Integer, $tokens[2]->type, 'lexer PHP : entier');
+T::same(TokenType::Plus, $tokens[3]->type, 'lexer PHP : addition');
+T::same(TokenType::Semicolon, $tokens[5]->type, 'lexer PHP : point-virgule');
+T::same(TokenType::Eof, $tokens[6]->type, 'lexer PHP : fin de fichier');
+
+$parserSource = <<<'PHP'
+<?php
+function double(int $n): int {
+    return $n * 2;
+}
+echo double(3);
+PHP;
+$ast = (new Parser((new Lexer($parserSource))->tokenize()))->parse();
+T::same(1, count($ast->functions), 'parser PHP : fonction');
+T::same(1, count($ast->statements), 'parser PHP : instruction principale');
+T::same('double', $ast->functions[0]->name, 'parser PHP : nom de fonction');
+T::same(1, count($ast->functions[0]->params), 'parser PHP : paramètre');
+T::same('int', $ast->functions[0]->returnType, 'parser PHP : type de retour');
+
+$compilePhp = function (string $name, string $source, string $emit = 'c') use ($phpRoot): array {
+    $path = $phpRoot . '/src/' . $name . '.php';
+    file_put_contents($path, $source);
+
+    return (new PhpCompiler($phpRoot))->compile($path, null, $emit);
+};
+
+$factorialSource = <<<'PHP'
+<?php
+function factorial(int $n): int {
+    $result = 1;
+    while ($n > 1) {
+        $result = $result * $n;
+        $n = $n - 1;
+    }
+    return $result;
+}
+
+echo factorial(5), "\n";
+PHP;
+
+$factorial = $compilePhp('factorial', $factorialSource);
+T::ok($factorial['ok'], 'compilateur PHP : génération C');
+$phpCSource = (string) file_get_contents($factorial['cPath']);
+T::ok(str_contains($phpCSource, '#include "cyonima_runtime.h"'), 'backend PHP : runtime natif');
+T::ok(str_contains($phpCSource, 'int main(void)'), 'backend PHP : main natif');
+T::ok(str_contains($phpCSource, 'fn_factorial'), 'backend PHP : fonction C');
+T::ok(str_contains($phpCSource, 'goto L'), 'IR PHP : contrôle de flux');
+T::ok(str_contains($phpCSource, 'cy_echo_int'), 'backend PHP : echo');
+T::ok(str_contains($phpCSource, 'cy_runtime_init();'), 'backend PHP : initialisation mémoire');
+
+$hasGcc = trim((string) shell_exec('command -v gcc 2>/dev/null')) !== '';
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution ELF du compilateur PHP non testée');
+} else {
+    $factorialElf = $compilePhp('factorial', $factorialSource, 'elf');
+    T::ok(is_file((string) $factorialElf['binaryPath']), 'compilateur PHP : ELF');
+    $output = shell_exec(escapeshellarg((string) $factorialElf['binaryPath']) . ' 2>&1');
+    T::same("120\n", $output, 'compilateur PHP : exécution factorielle');
+
+    $stringsElf = $compilePhp('strings', <<<'PHP'
+<?php
+function greet(string $name): string {
+    return "Bonjour " . $name;
+}
+
+$value = 3;
+
+if ($value >= 3) {
+    echo greet("Cyonima"), "!\n";
+} else {
+    echo "petit\n";
+}
+
+$total = 7 / 2;
+echo $total, "\n";
+PHP, 'elf');
+    T::same(
+        "Bonjour Cyonima!\n3.5\n",
+        shell_exec(escapeshellarg((string) $stringsElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : concaténation, if et flottants',
+    );
+
+    $builtinsElf = $compilePhp('builtins', <<<'PHP'
+<?php
+echo true, false, "\n";
+echo strlen("abcd"), " ", intval("42"), " ", floatval("2.5"), " ", strval(7), "\n";
+echo abs(-7), "\n";
+PHP, 'elf');
+    T::same(
+        "1\n4 42 2.5 7\n7\n",
+        shell_exec(escapeshellarg((string) $builtinsElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : fonctions natives',
+    );
+
+    $exampleElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-hello.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "Bonjour Cyonima !\n",
+        shell_exec(escapeshellarg((string) $exampleElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exemple du dépôt',
+    );
+}
+
+$errors = [
+    ['variable inconnue', '<?php echo $missing;', 'variable non définie'],
+    ['type incompatible', '<?php $x = 1; $x = "a";', 'valeur string refusée'],
+    ['fonction inconnue', '<?php foo();', 'fonction inconnue'],
+    ['fonction imbriquée', '<?php function a(): void { function b(): void {} }', 'fonction imbriquée non supportée'],
+    ['fonction dupliquée', '<?php function a(): void {} function a(): void {}', 'fonction déjà définie'],
+    ['argument manquant', '<?php function f(int $a): int { return $a; } echo f();', 'attend 1 argument(s)'],
+    ['argument invalide', '<?php function f(int $a): int { return $a; } echo f("x");', 'attend int, reçu string'],
+    ['syntaxe incomplète', '<?php echo 1', 'attendu : ;'],
+];
+
+foreach ($errors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$cliOutput = [];
+$cliStatus = 0;
+exec(
+    escapeshellarg(PHP_BINARY) . ' '
+    . escapeshellarg(dirname(__DIR__) . '/bin/cyonima-compile')
+    . ' --project=' . escapeshellarg($phpRoot)
+    . ' --php=' . escapeshellarg($phpRoot . '/src/factorial.php')
+    . ' --emit=c 2>&1',
+    $cliOutput,
+    $cliStatus,
+);
+T::same(0, $cliStatus, 'compilateur PHP : CLI');
+T::ok(
+    str_contains(implode("\n", $cliOutput), 'Code C généré'),
+    'compilateur PHP : CLI génère le C',
+);
+
+// ---------------------------------------------------------------------------
+T::section('16. Compilateur PHP — tableaux, boucles et interpolation');
+
+$forSource = <<<'PHP'
+<?php
+$sum = 0;
+for ($i = 0; $i < 5; $i = $i + 1) {
+    $sum = $sum + $i;
+}
+echo $sum, "\n";
+PHP;
+
+$arraysSource = <<<'PHP'
+<?php
+$items = [10, 20, 30];
+$items[] = 40;
+$items[1] = 25;
+$total = 0;
+foreach ($items as $value) {
+    $total = $total + $value;
+}
+echo count($items), " ", $total, "\n";
+PHP;
+
+$arraysC = $compilePhp('arrays', $arraysSource, 'c');
+$arraysCSource = (string) file_get_contents($arraysC['cPath']);
+T::ok(str_contains($arraysCSource, 'cy_array_push_int'), 'backend PHP : construction de tableau');
+T::ok(str_contains($arraysCSource, 'cy_array_get_int'), 'backend PHP : lecture indexée');
+T::ok(str_contains($arraysCSource, 'cy_array_set_int'), 'backend PHP : écriture indexée');
+T::ok(str_contains($arraysCSource, 'cy_array_count'), 'backend PHP : count');
+T::ok(str_contains($arraysCSource, 'cy_roots_push'), 'runtime natif : racines GC');
+T::ok(str_contains($arraysCSource, 'cy_gc_maybe_collect'), 'runtime natif : collecte aux boucles');
+
+$interpSource = <<<'PHP'
+<?php
+$name = "Cyonima";
+$version = 2;
+echo "Bonjour $name, version $version\n";
+echo "Salut {$name} !\n";
+PHP;
+
+$keysSource = <<<'PHP'
+<?php
+$items = [4, 5, 6];
+$result = "";
+foreach ($items as $index => $value) {
+    $result = $result . $index . ":" . $value . " ";
+}
+echo $result, "\n";
+PHP;
+
+$copySource = <<<'PHP'
+<?php
+$a = [1, 2];
+$b = $a;
+$b[] = 3;
+echo count($a), " ", count($b), "\n";
+PHP;
+
+$appendSource = <<<'PHP'
+<?php
+$values = [];
+for ($i = 0; $i < 3; $i = $i + 1) {
+    $values[] = $i * 2;
+}
+echo count($values), " ", $values[2], "\n";
+PHP;
+
+$boundsSource = <<<'PHP'
+<?php
+$a = [1];
+echo $a[5];
+PHP;
+
+$stringLoopSource = <<<'PHP'
+<?php
+$text = "";
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $text = $text . "x";
+}
+echo strlen($text), "\n";
+PHP;
+
+$arrayLoopSource = <<<'PHP'
+<?php
+$values = [];
+for ($i = 0; $i < 200; $i = $i + 1) {
+    $values[] = $i;
+}
+$sum = 0;
+foreach ($values as $value) {
+    $sum = $sum + $value;
+}
+echo count($values), " ", $sum, "\n";
+PHP;
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des tableaux et boucles non testée');
+} else {
+    $forElf = $compilePhp('for', $forSource, 'elf');
+    T::same(
+        "10\n",
+        shell_exec(escapeshellarg((string) $forElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : boucle for',
+    );
+
+    $arraysElf = $compilePhp('arrays', $arraysSource, 'elf');
+    T::same(
+        "4 105\n",
+        shell_exec(escapeshellarg((string) $arraysElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : tableau, append et foreach',
+    );
+
+    $keysElf = $compilePhp('keys', $keysSource, 'elf');
+    T::same(
+        "0:4 1:5 2:6 \n",
+        shell_exec(escapeshellarg((string) $keysElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : foreach clé => valeur',
+    );
+
+    $interpElf = $compilePhp('interp', $interpSource, 'elf');
+    T::same(
+        "Bonjour Cyonima, version 2\nSalut Cyonima !\n",
+        shell_exec(escapeshellarg((string) $interpElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : interpolation de chaînes',
+    );
+
+    $copyElf = $compilePhp('copy', $copySource, 'elf');
+    T::same(
+        "2 3\n",
+        shell_exec(escapeshellarg((string) $copyElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : copie de tableau',
+    );
+
+    $appendElf = $compilePhp('append', $appendSource, 'elf');
+    T::same(
+        "3 4\n",
+        shell_exec(escapeshellarg((string) $appendElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : tableau vide puis append',
+    );
+
+    $stringLoopElf = $compilePhp('string-loop', $stringLoopSource, 'elf');
+    T::same(
+        "300\n",
+        shell_exec(escapeshellarg((string) $stringLoopElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : chaînes vivantes pendant la GC',
+    );
+
+    $arrayLoopElf = $compilePhp('array-loop', $arrayLoopSource, 'elf');
+    T::same(
+        "200 19900\n",
+        shell_exec(escapeshellarg((string) $arrayLoopElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : tableaux vivants pendant la GC',
+    );
+
+    $functionGcElf = $compilePhp('function-gc', <<<'PHP'
+<?php
+function make(int $i): string {
+    return "v" . $i;
+}
+
+$result = "";
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $result = make($i) . $result;
+}
+echo strlen($result), "\n";
+PHP, 'elf');
+    T::same(
+        "1090\n",
+        shell_exec(escapeshellarg((string) $functionGcElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : retour de chaîne à travers la GC',
+    );
+
+    $arrayStringsElf = $compilePhp('array-strings', <<<'PHP'
+<?php
+$items = [];
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $items[] = "x" . $i;
+}
+$length = 0;
+foreach ($items as $item) {
+    $length = $length + strlen($item);
+}
+echo count($items), " ", $length, "\n";
+PHP, 'elf');
+    T::same(
+        "300 1090\n",
+        shell_exec(escapeshellarg((string) $arrayStringsElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : chaînes dans un tableau pendant la GC',
+    );
+
+    $floatForeachElf = $compilePhp('float-foreach', <<<'PHP'
+<?php
+$items = [1, 2, 3];
+$value = 0.0;
+foreach ($items as $value) {
+    echo $value, " ";
+}
+echo "\n";
+PHP, 'elf');
+    T::same(
+        "1 2 3 \n",
+        shell_exec(escapeshellarg((string) $floatForeachElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : foreach int vers variable float',
+    );
+
+    $boundsElf = $compilePhp('bounds', $boundsSource, 'elf');
+    $boundsOut = [];
+    $boundsStatus = 0;
+    exec(escapeshellarg((string) $boundsElf['binaryPath']) . ' 2>&1', $boundsOut, $boundsStatus);
+    T::same(1, $boundsStatus, 'compilateur PHP : index hors limites refusé');
+    T::ok(
+        str_contains(implode("\n", $boundsOut), 'hors limites'),
+        'compilateur PHP : message d’index hors limites',
+    );
+
+    $runtimeC = $phpRoot . '/runtime-check.c';
+    file_put_contents($runtimeC, <<<'C'
+#include "cyonima_runtime.h"
+
+int main(void)
+{
+    cy_runtime_init();
+
+    const char *text = cy_string_concat("a", "b");
+    CyArray *items = cy_array_new();
+    cy_array_push_int(items, 7);
+    cy_array_push_int(items, 8);
+
+    CyRoot roots[] = {
+        {CY_ROOT_STRING, (void *) &text},
+        {CY_ROOT_ARRAY, (void *) &items},
+    };
+    CyRootFrame frame;
+    cy_roots_push(&frame, roots, 2);
+
+    CyArray *garbage = cy_array_new();
+    (void) garbage;
+    cy_gc_collect();
+
+    if (strcmp(text, "ab") != 0) {
+        return 1;
+    }
+
+    if (cy_array_count(items) != 2) {
+        return 2;
+    }
+
+    if (cy_array_get_int(items, 1) != 8) {
+        return 3;
+    }
+
+    cy_roots_pop(&frame);
+    text = NULL;
+    items = NULL;
+    cy_gc_collect();
+
+    if (cy_allocations != NULL) {
+        return 4;
+    }
+
+    cy_runtime_shutdown();
+
+    return 0;
+}
+C);
+    $runtimeBuildOut = [];
+    $runtimeBuildStatus = 0;
+    exec(
+        'gcc -std=c11 -O2 -I ' . escapeshellarg(dirname(__DIR__) . '/runtime/native')
+        . ' -o ' . escapeshellarg($phpRoot . '/runtime-check')
+        . ' ' . escapeshellarg($runtimeC) . ' -lm 2>&1',
+        $runtimeBuildOut,
+        $runtimeBuildStatus,
+    );
+    T::same(0, $runtimeBuildStatus, 'runtime natif : compilation du test mémoire');
+    $runtimeRunOut = [];
+    $runtimeRunStatus = 0;
+    exec(escapeshellarg($phpRoot . '/runtime-check'), $runtimeRunOut, $runtimeRunStatus);
+    T::same(0, $runtimeRunStatus, 'runtime natif : racines GC et libération');
+}
+
+$arrayErrors = [
+    ['tableau hétérogène', '<?php $a = [1, "x"];', 'tableau hétérogène'],
+    ['tableau associatif', '<?php $a = ["x" => 1];', 'tableaux associatifs non supportés'],
+    ['foreach non-tableau', '<?php $x = 1; foreach ($x as $v) {}', 'foreach attend un tableau'],
+    ['foreach sans type', '<?php $a = []; foreach ($a as $v) {}', 'type d’élément inconnu'],
+    ['echo de tableau', '<?php $a = [1]; echo $a;', 'echo ne peut pas afficher'],
+    ['count non-tableau', '<?php $x = 1; echo count($x);', 'count attend un tableau'],
+    ['index manquant', '<?php $a = [1]; echo $a[];', 'index manquant en lecture'],
+    ['tableau incompatible', '<?php $a = [1]; $a = ["x"];', 'valeur array<string> refusée'],
+];
+
+foreach ($arrayErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('array-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('17. Analyse de flux — affectation définie et retours');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des contrôles de flux non testée');
+} else {
+    $flowOkElf = $compilePhp('flow-ok', <<<'PHP'
+<?php
+function choose(bool $flag): int {
+    if ($flag) {
+        $value = 1;
+    } else {
+        $value = 2;
+    }
+    return $value;
+}
+echo choose(true), " ", choose(false), "\n";
+PHP, 'elf');
+    T::same(
+        "1 2\n",
+        shell_exec(escapeshellarg((string) $flowOkElf['binaryPath']) . ' 2>&1'),
+        'analyse de flux : branches complètes',
+    );
+
+    $returnOkElf = $compilePhp('return-ok', <<<'PHP'
+<?php
+function choose(int $value): int {
+    if ($value > 0) {
+        return 1;
+    } else {
+        return 2;
+    }
+}
+echo choose(5), " ", choose(-1), "\n";
+PHP, 'elf');
+    T::same(
+        "1 2\n",
+        shell_exec(escapeshellarg((string) $returnOkElf['binaryPath']) . ' 2>&1'),
+        'analyse de flux : retours exhaustifs',
+    );
+
+    $forAfterElf = $compilePhp('for-after', <<<'PHP'
+<?php
+for ($i = 0; $i < 3; $i = $i + 1) {
+    $x = $i;
+}
+echo $i, "\n";
+PHP, 'elf');
+    T::same(
+        "3\n",
+        shell_exec(escapeshellarg((string) $forAfterElf['binaryPath']) . ' 2>&1'),
+        'analyse de flux : variable de for après la boucle',
+    );
+}
+
+$flowErrors = [
+    ['affectation partielle', '<?php function f(bool $c): int { if ($c) { $x = 1; } return $x; }', 'peut ne pas être affectée'],
+    ['retour partiel', '<?php function f(int $x): int { if ($x > 0) { return 1; } }', 'ne retourne pas sur tous les chemins'],
+    ['while non garanti', '<?php $i = 0; while ($i < 3) { $x = $i; $i = $i + 1; } echo $x;', 'peut ne pas être affectée'],
+    ['foreach non garanti', '<?php $a = [1]; foreach ($a as $v) {} echo $v;', 'peut ne pas être affectée'],
+    ['court-circuit', '<?php function f(bool $c): void { $c && ($x = true); echo $x; }', 'peut ne pas être affectée'],
+    ['top-level partiel', '<?php $c = true; if ($c) { $x = 1; } echo $x;', 'peut ne pas être affectée'],
+];
+
+foreach ($flowErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('flow-error-' . $index, $source, 'c');
+        T::ok(false, 'analyse de flux : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'analyse de flux : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('18. Compilateur PHP — runtime UI natif GTK4');
+
+$uiSource = <<<'PHP'
+<?php
+function show(int $label): void {
+    ui_set_text($label, "Cliqué !");
+}
+
+function stop(): void {
+    ui_quit();
+}
+
+ui_init("com.cyonima.nativeui.test");
+$window = ui_window("Cyonima natif", 400, 200);
+$box = ui_box(true, 8);
+$label = ui_label("Bonjour");
+$button = ui_button("Cliquer");
+ui_append($box, $label);
+ui_append($box, $button);
+ui_set_child($window, $box);
+ui_on_click($button, "show", $label);
+ui_present($window);
+ui_after(200, "stop");
+ui_run();
+PHP;
+
+$uiC = $compilePhp('ui', $uiSource, 'c');
+$uiCSource = (string) file_get_contents($uiC['cPath']);
+T::ok(str_contains($uiCSource, '#include "cyonima_ui.h"'), 'UI native : include GTK');
+T::ok(str_contains($uiCSource, 'cy_ui_window'), 'UI native : fenêtre');
+T::ok(str_contains($uiCSource, 'cy_ui_button'), 'UI native : bouton');
+T::ok(str_contains($uiCSource, 'cy_ui_widget_show'), 'UI native : wrapper de clic');
+T::ok(str_contains($uiCSource, 'cy_ui_timer_stop'), 'UI native : wrapper de timer');
+T::ok(
+    str_contains($uiCSource, '(gpointer)(intptr_t)(v_label)'),
+    'UI native : handle transmis au gestionnaire',
+);
+T::ok(str_contains($uiCSource, 'cy_ui_run()'), 'UI native : boucle GTK');
+
+$exampleUiC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-ui.php',
+    null,
+    'c',
+);
+$exampleUiSource = (string) file_get_contents($exampleUiC['cPath']);
+T::ok(
+    str_contains($exampleUiSource, 'cy_ui_widget_show')
+    && str_contains($exampleUiSource, 'cy_ui_widget_quit'),
+    'UI native : exemple du dépôt',
+);
+
+$gtkPkg = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$hasDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$gtkPkg) {
+    T::skip('GTK4 dev absent : exécution UI native non testée');
+} elseif (!$hasDisplay) {
+    T::skip('DISPLAY absent : exécution UI native non testée');
+} else {
+    $uiElf = $compilePhp('ui', $uiSource, 'elf');
+    $runner = 'timeout 8 ' . escapeshellarg((string) $uiElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $runner = 'dbus-run-session -- ' . $runner;
+    }
+
+    $uiOut = [];
+    $uiStatus = 0;
+    exec($runner . ' 2>&1', $uiOut, $uiStatus);
+    T::ok(
+        $uiStatus === 0,
+        'UI native : application GTK exécutée',
+        implode("\n", $uiOut),
+    );
+}
+
+$uiErrors = [
+    ['gestionnaire inconnu', '<?php ui_init("x"); ui_on_click(1, "absent");', 'gestionnaire inconnu'],
+    ['gestionnaire signé', '<?php function h(int $a, int $b): void {} ui_init("x"); ui_on_click(1, "h");', 'doit être déclaré'],
+    ['gestionnaire retour', '<?php function h(): int { return 1; } ui_init("x"); ui_on_click(1, "h");', 'doit être déclaré'],
+    ['gestionnaire variable', '<?php $name = "h"; ui_init("x"); ui_on_click(1, $name);', 'nom de fonction littéral'],
+];
+
+foreach ($uiErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('ui-error-' . $index, $source, 'c');
+        T::ok(false, 'UI native : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'UI native : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$removeTree($phpRoot);
 
 exit(T::report());

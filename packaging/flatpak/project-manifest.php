@@ -23,7 +23,7 @@ $phpModule = [
     'name' => 'php',
     'buildsystem' => 'simple',
     'build-commands' => [
-        'export PKG_CONFIG_PATH="/app/lib/pkgconfig:/app/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"; ./configure --prefix=/app --disable-all --enable-cli --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --with-curl --enable-intl --enable-pdo --with-pdo-sqlite --with-sqlite3 --with-zip --enable-gd --with-jpeg --with-freetype --with-webp --enable-simplexml --enable-dom --with-libxml',
+        'export PKG_CONFIG_PATH="/app/lib/pkgconfig:/app/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"; ./configure --prefix=/app --disable-all --enable-ctype --enable-cli --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --with-curl --enable-intl --enable-pdo --with-pdo-sqlite --with-sqlite3 --with-zip --enable-gd --with-jpeg --with-freetype --with-webp --enable-simplexml --enable-dom --with-libxml',
         'make -j${FLATPAK_BUILDER_N_JOBS:-4}',
         'make install',
     ],

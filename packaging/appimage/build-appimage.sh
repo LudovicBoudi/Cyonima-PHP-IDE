@@ -68,12 +68,14 @@ fi
 cp -r \
     "$ROOT/autoload.php" \
     "$ROOT/src" \
+    "$ROOT/runtime" \
     "$ROOT/examples" \
     "$ROOT/spec" \
     "$APPDIR/usr/share/cyonima/"
 
 mkdir -p "$APPDIR/usr/share/cyonima/bin" "$APPDIR/usr/share/cyonima/packaging/appimage" "$APPDIR/usr/share/cyonima/packaging/flatpak" "$APPDIR/usr/share/cyonima/packaging/icon"
 install -m 0644 "$ROOT/bin/cyonima.php" "$APPDIR/usr/share/cyonima/bin/cyonima.php"
+install -m 0755 "$ROOT/bin/cyonima-compile" "$APPDIR/usr/share/cyonima/bin/cyonima-compile"
 install -m 0755 "$ROOT/packaging/appimage/build-project.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/build-project.sh"
 install -m 0755 "$ROOT/packaging/appimage/build-project-bundle.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/build-project-bundle.sh"
 install -m 0755 "$ROOT/packaging/appimage/bundle-gtk.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/bundle-gtk.sh"
