@@ -7,15 +7,24 @@ namespace Cyonima\Compiler;
 /**
  * Façade objet minimale de l’UI native.
  *
- * Ce code est analysé uniquement lorsqu’un programme instancie l’une des
- * classes ci-dessous. Les widgets restent identifiés par un handle entier ;
- * les compositions utilisent explicitement `$widget->handle` dans cette
- * première version.
+ * Ce prélude est analysé uniquement lorsqu’un programme instancie l’une des
+ * classes UI. Les widgets partagent la classe `Widget` et son handle ; les
+ * compositions acceptent directement des objets Widget.
  */
 final class UiPrelude
 {
     public const SOURCE = <<<'PHP'
 <?php
+
+class Widget
+{
+    public int $handle;
+
+    public function setVisible(bool $visible): void
+    {
+        ui_set_visible($this->handle, $visible);
+    }
+}
 
 class Application
 {
@@ -43,55 +52,39 @@ class Application
     }
 }
 
-class Window
+class Window extends Widget
 {
-    public int $handle;
-
     public function __construct(string $title, int $width, int $height)
     {
         $this->handle = ui_window($title, $width, $height);
     }
 
-    public function setChild(int $child): void
+    public function setChild(Widget $child): void
     {
-        ui_set_child($this->handle, $child);
+        ui_set_child($this->handle, $child->handle);
     }
 
     public function present(): void
     {
         ui_present($this->handle);
     }
-
-    public function setVisible(bool $visible): void
-    {
-        ui_set_visible($this->handle, $visible);
-    }
 }
 
-class Box
+class Box extends Widget
 {
-    public int $handle;
-
     public function __construct(bool $vertical, int $spacing)
     {
         $this->handle = ui_box($vertical, $spacing);
     }
 
-    public function append(int $child): void
+    public function append(Widget $child): void
     {
-        ui_append($this->handle, $child);
-    }
-
-    public function setVisible(bool $visible): void
-    {
-        ui_set_visible($this->handle, $visible);
+        ui_append($this->handle, $child->handle);
     }
 }
 
-class Label
+class Label extends Widget
 {
-    public int $handle;
-
     public function __construct(string $text)
     {
         $this->handle = ui_label($text);
@@ -101,17 +94,10 @@ class Label
     {
         ui_set_text($this->handle, $text);
     }
-
-    public function setVisible(bool $visible): void
-    {
-        ui_set_visible($this->handle, $visible);
-    }
 }
 
-class Button
+class Button extends Widget
 {
-    public int $handle;
-
     public function __construct(string $text)
     {
         $this->handle = ui_button($text);
@@ -122,16 +108,14 @@ class Button
         ui_on_click_closure($this->handle, $callback);
     }
 
-    public function setVisible(bool $visible): void
+    public function click(): void
     {
-        ui_set_visible($this->handle, $visible);
+        ui_click($this->handle);
     }
 }
 
-class Entry
+class Entry extends Widget
 {
-    public int $handle;
-
     public function __construct(string $placeholder)
     {
         $this->handle = ui_entry($placeholder);
@@ -145,11 +129,6 @@ class Entry
     public function onActivate(callable():void $callback): void
     {
         ui_on_activate_closure($this->handle, $callback);
-    }
-
-    public function setVisible(bool $visible): void
-    {
-        ui_set_visible($this->handle, $visible);
     }
 }
 PHP;

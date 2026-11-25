@@ -23,6 +23,12 @@ enum TokenType: string
     case FnKeyword = 'fn';
     case UseKeyword = 'use';
     case ClassKeyword = 'class';
+    case InterfaceKeyword = 'interface';
+    case AbstractKeyword = 'abstract';
+    case ImplementsKeyword = 'implements';
+    case ExtendsKeyword = 'extends';
+    case ParentKeyword = 'parent';
+    case StaticKeyword = 'static';
     case NewKeyword = 'new';
     case PublicKeyword = 'public';
     case PrivateKeyword = 'private';
@@ -84,6 +90,7 @@ enum TokenType: string
     case Comma = 'comma';
     case Semicolon = 'semicolon';
     case Colon = 'colon';
+    case DoubleColon = 'double-colon';
     case Arrow = 'arrow';
     case ObjectArrow = 'object-arrow';
 

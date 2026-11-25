@@ -2786,15 +2786,15 @@ $window = new Window('Cyonima facade', 400, 200);
 $box = new Box(true, 8);
 $label = new Label('Bonjour');
 $button = new Button('Cliquer');
-$box->append($label->handle);
-$box->append($button->handle);
-$window->setChild($box->handle);
+$box->append($label);
+$box->append($button);
+$window->setChild($box);
 $button->onClicked(function () use ($label): void {
     $label->setText('Cliqué !');
     echo "clicked\n";
 });
 $window->present();
-$app->after(100, fn () => ui_click($button->handle));
+$app->after(100, fn () => $button->click());
 $app->after(300, fn () => $app->quit());
 $app->run();
 PHP;
@@ -2870,6 +2870,864 @@ foreach ($facadeErrors as $index => [$label, $source, $needle]) {
         T::ok(
             str_contains($exception->getMessage(), $needle),
             'façade UI : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('25. Compilateur PHP — héritage et objets en signatures');
+
+$inheritanceSource = <<<'PHP'
+<?php
+class Animal {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function speak(): string {
+        return "...";
+    }
+
+    public function label(): string {
+        return $this->name;
+    }
+}
+
+class Dog extends Animal {
+    public function speak(): string {
+        return "Woof";
+    }
+}
+
+class Cat extends Animal {
+    public function speak(): string {
+        return "Miaou";
+    }
+}
+
+function describe(Animal $animal): string {
+    return $animal->label() . ": " . $animal->speak();
+}
+
+function make(string $kind): Animal {
+    if ($kind == "dog") {
+        return new Dog("Rex");
+    }
+    return new Cat("Minou");
+}
+
+$dog = new Dog("Rex");
+$cat = new Cat("Minou");
+echo describe($dog), "\n";
+echo describe($cat), "\n";
+echo describe(make("dog")), "\n";
+echo describe(make("cat")), "\n";
+PHP;
+
+$inheritanceC = $compilePhp('inheritance', $inheritanceSource, 'c');
+$inheritanceCSource = (string) file_get_contents($inheritanceC['cPath']);
+T::ok(str_contains($inheritanceCSource, 'CyVTable_Animal'), 'héritage : vtable parent');
+T::ok(str_contains($inheritanceCSource, 'CyVTable_Dog'), 'héritage : vtable enfant');
+T::ok(str_contains($inheritanceCSource, 'cy_vtable_Dog'), 'héritage : instance de vtable');
+T::ok(str_contains($inheritanceCSource, 'cy_vtable'), 'héritage : champ vtable');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution de l’héritage non testée');
+} else {
+    $inheritanceElf = $compilePhp('inheritance', $inheritanceSource, 'elf');
+    T::same(
+        "Rex: Woof\nMinou: Miaou\nRex: Woof\nMinou: Miaou\n",
+        shell_exec(escapeshellarg((string) $inheritanceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : héritage, override et dispatch dynamique',
+    );
+
+    $objectPropertyElf = $compilePhp('inheritance-property', <<<'PHP'
+<?php
+class Animal {
+    public string $name;
+    public function __construct(string $name) { $this->name = $name; }
+    public function speak(): string { return "..."; }
+}
+class Dog extends Animal {
+    public function speak(): string { return "Woof"; }
+}
+class Owner {
+    public Animal $pet;
+    public function setPet(Animal $pet): void { $this->pet = $pet; }
+    public function label(): string { return $this->pet->speak(); }
+}
+$owner = new Owner();
+$owner->setPet(new Dog("Rex"));
+echo $owner->label(), "\n";
+PHP, 'elf');
+    T::same(
+        "Woof\n",
+        shell_exec(escapeshellarg((string) $objectPropertyElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propriété objet et dispatch',
+    );
+
+    $inheritedConstructorElf = $compilePhp('inheritance-constructor', <<<'PHP'
+<?php
+class Base {
+    public string $name;
+    public function __construct(string $name) { $this->name = $name; }
+    public function name(): string { return $this->name; }
+}
+class Child extends Base {}
+echo (new Child("X"))->name(), "\n";
+PHP, 'elf');
+    T::same(
+        "X\n",
+        shell_exec(escapeshellarg((string) $inheritedConstructorElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : constructeur hérité',
+    );
+}
+
+$inheritanceErrors = [
+    ['parent inconnu', '<?php class A extends Missing {}', 'classe parente inconnue'],
+    ['cycle héritage', '<?php class A extends B {} class B extends A {}', 'cycle d’héritage'],
+    ['propriété redéclarée', '<?php class A { public int $x; } class B extends A { public int $x; }', 'propriété déjà définie'],
+    ['override incompatible', '<?php class A { function f(int $x): int { return $x; } } class B extends A { function f(string $x): int { return 1; } }', 'signature incompatible'],
+    ['parent vers enfant', '<?php class A {} class B extends A {} function f(B $b): void {} f(new A());', 'attend B, reçu A'],
+    ['assignation parent vers enfant', '<?php class A {} class B extends A {} $b = new B(); $a = new A(); $b = $a;', 'valeur A refusée'],
+    ['type inconnu', '<?php function f(Missing $x): void {}', 'type inconnu'],
+    ['constructeur hérité incomplet', '<?php class A { function __construct(int $x): void {} } class B extends A {} new B();', 'attend 1 argument'],
+    ['retour incompatible', '<?php class A {} class B extends A {} function f(): B { return new A(); }', 'return attend B, reçu A'],
+];
+
+foreach ($inheritanceErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('inheritance-error-' . $index, $source, 'c');
+        T::ok(false, 'héritage : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'héritage : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('26. Compilateur PHP — interfaces, classes abstraites et parent::');
+
+$interfaceSource = <<<'PHP'
+<?php
+interface Speaker {
+    public function speak(): string;
+}
+
+class Dog implements Speaker {
+    public function speak(): string {
+        return "Woof";
+    }
+}
+
+function talk(Speaker $speaker): string {
+    return $speaker->speak();
+}
+
+echo talk(new Dog()), "\n";
+PHP;
+
+$interfaceC = $compilePhp('interface', $interfaceSource, 'c');
+$interfaceCSource = (string) file_get_contents($interfaceC['cPath']);
+T::ok(str_contains($interfaceCSource, 'CyObjectHeader'), 'interface : en-tête objet');
+T::ok(str_contains($interfaceCSource, 'cy_ifaces'), 'interface : tableaux d’interfaces');
+T::ok(str_contains($interfaceCSource, 'CyVTable_Speaker'), 'interface : vtable');
+T::ok(str_contains($interfaceCSource, 'cy_iface_Dog_Speaker'), 'interface : implémentation');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des interfaces non testée');
+} else {
+    $interfaceElf = $compilePhp('interface', $interfaceSource, 'elf');
+    T::same(
+        "Woof\n",
+        shell_exec(escapeshellarg((string) $interfaceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : interface et dispatch',
+    );
+
+    $abstractElf = $compilePhp('abstract-class', <<<'PHP'
+<?php
+abstract class Shape {
+    public abstract function area(): float;
+
+    public function label(): string {
+        return "shape";
+    }
+}
+
+class Square extends Shape {
+    public float $side;
+
+    public function __construct(float $side) {
+        $this->side = $side;
+    }
+
+    public function area(): float {
+        return $this->side * $this->side;
+    }
+}
+
+$square = new Square(3.0);
+echo $square->area(), " ", $square->label(), "\n";
+PHP, 'elf');
+    T::same(
+        "9 shape\n",
+        shell_exec(escapeshellarg((string) $abstractElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : classe abstraite et méthode implémentée',
+    );
+
+    $parentElf = $compilePhp('parent-call', <<<'PHP'
+<?php
+class Animal {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function speak(): string {
+        return "...";
+    }
+}
+
+class Dog extends Animal {
+    public function __construct(string $name) {
+        parent::__construct($name . "!");
+    }
+
+    public function speak(): string {
+        return parent::speak() . " Woof";
+    }
+}
+
+$dog = new Dog("Rex");
+echo $dog->name, " ", $dog->speak(), "\n";
+PHP, 'elf');
+    T::same(
+        "Rex! ... Woof\n",
+        shell_exec(escapeshellarg((string) $parentElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : parent::__construct et parent::méthode',
+    );
+
+    $multiElf = $compilePhp('multi-interface', <<<'PHP'
+<?php
+interface A {
+    public function a(): string;
+}
+
+interface B {
+    public function b(): string;
+}
+
+class C implements A, B {
+    public function a(): string { return "a"; }
+    public function b(): string { return "b"; }
+}
+
+function combine(A $left, B $right): string {
+    return $left->a() . $right->b();
+}
+
+echo combine(new C(), new C()), "\n";
+PHP, 'elf');
+    T::same(
+        "ab\n",
+        shell_exec(escapeshellarg((string) $multiElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : plusieurs interfaces',
+    );
+
+    $abstractInterfaceElf = $compilePhp('abstract-interface', <<<'PHP'
+<?php
+interface I {
+    public function x(): int;
+}
+
+abstract class Base implements I {
+    public function y(): int { return 1; }
+}
+
+class Impl extends Base {
+    public function x(): int { return 2; }
+}
+
+$impl = new Impl();
+echo $impl->x() + $impl->y(), "\n";
+PHP, 'elf');
+    T::same(
+        "3\n",
+        shell_exec(escapeshellarg((string) $abstractInterfaceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : interface via classe abstraite',
+    );
+
+    $interfaceInheritanceElf = $compilePhp('interface-inheritance', <<<'PHP'
+<?php
+interface Speaker {
+    public function speak(): string;
+}
+
+interface Named extends Speaker {
+    public function name(): string;
+}
+
+class Dog implements Named {
+    public function speak(): string { return "Woof"; }
+    public function name(): string { return "Rex"; }
+}
+
+function talk(Speaker $speaker): string {
+    return $speaker->speak();
+}
+
+function identify(Named $named): string {
+    return $named->name();
+}
+
+$dog = new Dog();
+echo talk($dog), " ", identify($dog), "\n";
+PHP, 'elf');
+    T::same(
+        "Woof Rex\n",
+        shell_exec(escapeshellarg((string) $interfaceInheritanceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : interface héritée et dispatch parent',
+    );
+
+    $interfaceDiamondElf = $compilePhp('interface-diamond', <<<'PHP'
+<?php
+interface A { public function x(): string; }
+interface B extends A { public function y(): string; }
+interface C extends A { public function z(): string; }
+interface D extends B, C { public function w(): string; }
+
+class Impl implements D {
+    public function x(): string { return "x"; }
+    public function y(): string { return "y"; }
+    public function z(): string { return "z"; }
+    public function w(): string { return "w"; }
+}
+
+function viaA(A $a): string { return $a->x(); }
+function viaB(B $b): string { return $b->y(); }
+function viaC(C $c): string { return $c->z(); }
+function viaD(D $d): string { return $d->w(); }
+
+$impl = new Impl();
+echo viaA($impl), viaB($impl), viaC($impl), viaD($impl), "\n";
+PHP, 'elf');
+    T::same(
+        "xyzw\n",
+        shell_exec(escapeshellarg((string) $interfaceDiamondElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : héritage multiple d’interfaces',
+    );
+
+    $covariantElf = $compilePhp('covariant-inheritance', <<<'PHP'
+<?php
+class Animal {
+    public function name(): string { return "animal"; }
+}
+
+class Dog extends Animal {
+    public function name(): string { return "dog"; }
+}
+
+class BaseFactory {
+    public function make(): Animal { return new Animal(); }
+}
+
+class DogFactory extends BaseFactory {
+    public function make(): Dog { return new Dog(); }
+}
+
+function label(BaseFactory $factory): string {
+    return $factory->make()->name();
+}
+
+echo label(new DogFactory()), " ", label(new BaseFactory()), "\n";
+PHP, 'elf');
+    T::same(
+        "dog animal\n",
+        shell_exec(escapeshellarg((string) $covariantElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retour covariant par héritage',
+    );
+
+    $covariantInterfaceElf = $compilePhp('covariant-interface', <<<'PHP'
+<?php
+interface Named {
+    public function name(): string;
+}
+
+class Dog implements Named {
+    public function name(): string { return "dog"; }
+}
+
+class Animal implements Named {
+    public function name(): string { return "animal"; }
+}
+
+interface Factory {
+    public function make(): Named;
+}
+
+class DogFactory implements Factory {
+    public function make(): Dog { return new Dog(); }
+}
+
+function label(Factory $factory): string {
+    return $factory->make()->name();
+}
+
+echo label(new DogFactory()), "\n";
+PHP, 'elf');
+    T::same(
+        "dog\n",
+        shell_exec(escapeshellarg((string) $covariantInterfaceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retour covariant via interface',
+    );
+
+    $covariantDiamondElf = $compilePhp('covariant-diamond', <<<'PHP'
+<?php
+class Animal {}
+class Dog extends Animal {}
+
+interface A { public function make(): Animal; }
+interface B { public function make(): Dog; }
+interface C extends B, A {}
+
+class Impl implements C {
+    public function make(): Dog { return new Dog(); }
+}
+
+echo "ok\n";
+PHP, 'elf');
+    T::same(
+        "ok\n",
+        shell_exec(escapeshellarg((string) $covariantDiamondElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : fusion de retours covariants',
+    );
+}
+
+$oopErrors = [
+    ['new abstrait', '<?php abstract class A { public abstract function f(): void; } new A();', 'classe abstraite interdite'],
+    ['new interface', '<?php interface I { public function f(): void; } new I();', 'interface interdite'],
+    ['abstract manquante', '<?php abstract class A { public abstract function f(): void; } class B extends A {} new B();', 'doit implémenter f'],
+    ['interface manquante', '<?php interface I { public function f(): void; } class A implements I {} new A();', 'doit implémenter I::f'],
+    ['interface signature', '<?php interface I { public function f(int $x): int; } class A implements I { public function f(string $x): int { return 1; } }', 'signature incompatible'],
+    ['interface parent inconnu', '<?php interface A extends Missing {}', 'interface parente inconnue'],
+    ['interface cycle', '<?php interface A extends B {} interface B extends A {}', 'cycle d’héritage d’interface'],
+    ['interface hérite classe', '<?php class Base {} interface A extends Base {}', 'une interface ne peut pas hériter d’une classe'],
+    ['interface conflit', '<?php interface A { public function f(int $x): int; } interface B { public function f(string $x): int; } interface C extends A, B {}', 'signature incompatible'],
+    ['interface héritée manquante', '<?php interface A { public function f(): void; } interface B extends A { public function g(): void; } class Impl implements B { public function f(): void {} }', 'doit implémenter B::g'],
+    ['classe implémentée comme interface', '<?php class Base {} class Impl implements Base {}', 'une classe ne peut pas implémenter une classe'],
+    ['covariance élargie', '<?php class Animal {} class Dog extends Animal {} class Base { public function make(): Dog { return new Dog(); } } class Child extends Base { public function make(): Animal { return new Animal(); } }', 'signature incompatible'],
+    ['covariance non liée', '<?php class Animal {} class Rock {} class Base { public function make(): Animal { return new Animal(); } } class Child extends Base { public function make(): Rock { return new Rock(); } }', 'signature incompatible'],
+    ['covariance scalaire', '<?php class Base { public function value(): float { return 1.0; } } class Child extends Base { public function value(): int { return 1; } }', 'signature incompatible'],
+    ['covariance paramètres', '<?php class Animal {} class Base { public function make(int $x): Animal { return new Animal(); } } class Child extends Base { public function make(string $x): Animal { return new Animal(); } }', 'signature incompatible'],
+    ['fusion retours incompatibles', '<?php class Animal {} class Rock {} interface A { public function make(): Animal; } interface B { public function make(): Rock; } interface C extends A, B {}', 'signature incompatible pour la fusion'],
+    ['interface retour élargi', '<?php class Animal {} class Dog extends Animal {} interface A { public function make(): Dog; } interface B extends A { public function make(): Animal; }', 'signature incompatible'],
+    ['parent hors méthode', '<?php parent::foo();', 'parent:: utilisé hors d’une méthode'],
+    ['parent absent', '<?php class A { function f(): void { parent::f(); } }', 'n’a pas de classe parente'],
+    ['parent inconnu', '<?php class A { function f(): void {} } class B extends A { function f(): void { parent::missing(); } }', 'méthode parente inconnue'],
+    ['parent abstrait', '<?php abstract class A { public abstract function f(): void; } class B extends A { function f(): void { parent::f(); } }', 'méthode abstraite parente'],
+    ['propriété interface', '<?php interface I { public int $x; }', 'une interface ne peut contenir que des méthodes'],
+    ['abstract avec corps', '<?php abstract class A { abstract function f(): void { } }', 'ne peut pas avoir de corps'],
+    ['méthode sans corps', '<?php class A { function f(): void; }', 'méthode sans corps'],
+    ['extends interface', '<?php interface I { function f(): void; } class A extends I {}', 'ne peut pas hériter d’une interface'],
+];
+
+foreach ($oopErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('oop-error-' . $index, $source, 'c');
+        T::ok(false, 'OOP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'OOP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('27. Compilateur PHP — membres static');
+
+$staticSource = <<<'PHP'
+<?php
+class Counter {
+    public static int $count;
+    public static string $label;
+
+    public static function increment(): int {
+        self::$count = self::$count + 1;
+        return self::$count;
+    }
+
+    public static function label(): string {
+        return self::$label;
+    }
+}
+
+Counter::$label = "n";
+echo Counter::increment(), "\n";
+echo Counter::increment(), "\n";
+Counter::$count = 10;
+echo Counter::$count, "\n";
+echo Counter::label(), "\n";
+PHP;
+
+$staticC = $compilePhp('static-basic', $staticSource, 'c');
+$staticCSource = (string) file_get_contents($staticC['cPath']);
+T::ok(str_contains($staticCSource, 'cy_static_Counter_count'), 'static : globale de propriété');
+T::ok(str_contains($staticCSource, 'cy_static_Counter_label'), 'static : globale chaîne');
+T::ok(str_contains($staticCSource, 'fn_Counter__increment'), 'static : fonction de méthode');
+T::ok(str_contains($staticCSource, 'cy_add_root_slot'), 'static : racine GC enregistrée');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des membres static non testée');
+} else {
+    $staticElf = $compilePhp('static-basic', $staticSource, 'elf');
+    T::same(
+        "1\n2\n10\nn\n",
+        shell_exec(escapeshellarg((string) $staticElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propriétés et méthodes static',
+    );
+
+    $staticInheritElf = $compilePhp('static-inherit', <<<'PHP'
+<?php
+class Base {
+    public static int $count;
+    public static string $name;
+
+    public static function bump(): int {
+        self::$count = self::$count + 1;
+        return self::$count;
+    }
+
+    public static function who(): string {
+        return "base";
+    }
+}
+
+class Child extends Base {
+    public static function who(): string {
+        return "child";
+    }
+}
+
+echo Child::bump(), "\n";
+Child::$count = Child::$count + 1;
+echo Base::$count, "\n";
+echo Base::who(), " ", Child::who(), "\n";
+Child::$name = "partage";
+echo Base::$name, "\n";
+PHP, 'elf');
+    T::same(
+        "1\n2\nbase child\npartage\n",
+        shell_exec(escapeshellarg((string) $staticInheritElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : static partagé et override',
+    );
+
+    $staticObjectElf = $compilePhp('static-object', <<<'PHP'
+<?php
+class Packet {
+    public string $value;
+
+    public function __construct(string $value) {
+        $this->value = $value;
+    }
+
+    public function get(): string {
+        return $this->value;
+    }
+}
+
+class Registry {
+    public static Packet $box;
+    public static string $label;
+
+    public static function install(Packet $box): void {
+        self::$box = $box;
+        self::$label = $box->get();
+    }
+}
+
+Registry::install(new Packet("native"));
+$i = 0;
+
+while ($i < 2000) {
+    $tmp = strval($i);
+    $i = $i + 1;
+}
+
+echo Registry::$box->get(), " ", Registry::$label, "\n";
+PHP, 'elf');
+    T::same(
+        "native native\n",
+        shell_exec(escapeshellarg((string) $staticObjectElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propriété statique objet et GC',
+    );
+
+    $staticClosureElf = $compilePhp('static-closure', <<<'PHP'
+<?php
+class Hooks {
+    public static callable(int):int $double;
+
+    public static function install(callable(int):int $hook): void {
+        self::$double = $hook;
+    }
+
+    public static function run(int $value): int {
+        $fn = self::$double;
+        return $fn($value);
+    }
+}
+
+Hooks::install(fn (int $x): int => $x * 2);
+echo Hooks::run(21), "\n";
+PHP, 'elf');
+    T::same(
+        "42\n",
+        shell_exec(escapeshellarg((string) $staticClosureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propriété statique callable',
+    );
+
+    $staticThrowElf = $compilePhp('static-throw', <<<'PHP'
+<?php
+class Guard {
+    public static function check(int $value): int {
+        if ($value < 0) {
+            throw "negatif";
+        }
+
+        return $value;
+    }
+}
+
+try {
+    echo Guard::check(2), "\n";
+    Guard::check(-1);
+    echo "jamais\n";
+} catch (string $error) {
+    echo "erreur: ", $error, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "2\nerreur: negatif\n",
+        shell_exec(escapeshellarg((string) $staticThrowElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception depuis une méthode statique',
+    );
+}
+
+$staticErrors = [
+    ['this statique', '<?php class A { public static function f(): void { echo $this; } }', '$this n’est pas disponible dans une méthode statique'],
+    ['non statique statique', '<?php class A { public function f(): void {} } A::f();', 'méthode non statique appelée statiquement'],
+    ['statique via objet', '<?php class A { public static function f(): void {} } $a = new A(); $a->f();', 'méthode statique appelée via ->'],
+    ['static abstraite', '<?php abstract class A { public abstract static function f(): void; }', 'méthode static abstraite non supportée'],
+    ['static interface', '<?php interface I { public static function f(): void; }', 'membre static interdit dans une interface'],
+    ['static::', '<?php class A { public static function f(): void { static::f(); } }', 'static:: non supporté'],
+    ['parent static', '<?php class A { public static function f(): void {} } class B extends A { public static function g(): void { parent::f(); } }', 'parent:: non supporté dans une méthode statique'],
+    ['propriété statique inconnue', '<?php class A {} A::$missing = 1;', 'propriété statique inconnue A::$missing'],
+    ['méthode statique inconnue', '<?php class A {} A::missing();', 'méthode inconnue A::missing'],
+    ['accès statique interface', '<?php interface I {} I::$x = 1;', 'accès statique interdit sur l’interface I'],
+    ['static incompatible', '<?php class A { public static function f(): void {} } class B extends A { public function f(): void {} }', 'static incompatible'],
+    ['collision statique', '<?php class A { public static int $x; } class B extends A { public int $x; }', 'propriété déjà définie dans l’héritage'],
+    ['constante de classe', '<?php class A {} echo A::VALUE;', 'constante de classe non supportée'],
+    ['self hors classe', '<?php self::f();', 'self:: utilisé hors d’une classe'],
+];
+
+foreach ($staticErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('static-error-' . $index, $source, 'c');
+        T::ok(false, 'static : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'static : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('28. Compilateur PHP — tableaux typés en signatures');
+
+$arraySignatureSource = <<<'PHP'
+<?php
+/**
+ * @param array<int> $values
+ */
+function total(array $values): int {
+    $sum = 0;
+
+    foreach ($values as $value) {
+        $sum = $sum + $value;
+    }
+
+    return $sum;
+}
+
+/**
+ * @param array<string,int> $table
+ */
+function lookup(array $table, string $key): int {
+    return $table[$key];
+}
+
+/**
+ * @return array<int>
+ */
+function build(int $size): array {
+    $values = [];
+    $i = 0;
+
+    while ($i < $size) {
+        $values[] = $i * 10;
+        $i = $i + 1;
+    }
+
+    return $values;
+}
+
+/**
+ * @param array<int> $values
+ */
+function mutate(array $values): void {
+    $values[] = 99;
+}
+
+$values = build(4);
+echo total($values), " ", count($values), "\n";
+mutate($values);
+echo count($values), "\n";
+
+$table = ["a" => 1, "b" => 2];
+echo lookup($table, "b"), "\n";
+PHP;
+
+$arraySignatureC = $compilePhp('array-signature', $arraySignatureSource, 'c');
+$arraySignatureCSource = (string) file_get_contents($arraySignatureC['cPath']);
+T::ok(
+    str_contains($arraySignatureCSource, 'static cy_int fn_total(CyArray *)'),
+    'tableaux : prototype de paramètre indexé',
+);
+T::ok(
+    str_contains($arraySignatureCSource, 'static cy_int fn_lookup(CyMap *, const char *)'),
+    'tableaux : prototype de table associative',
+);
+T::ok(
+    str_contains($arraySignatureCSource, 'cy_array_copy('),
+    'tableaux : copie au passage d’argument',
+);
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des tableaux en signatures non testée');
+} else {
+    $arraySignatureElf = $compilePhp('array-signature', $arraySignatureSource, 'elf');
+    T::same(
+        "60 4\n4\n2\n",
+        shell_exec(escapeshellarg((string) $arraySignatureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : paramètres et retours tableaux',
+    );
+
+    $arrayObjectElf = $compilePhp('array-object-signature', <<<'PHP'
+<?php
+interface BagInterface {
+    /** @return array<int> */
+    public function values(): array;
+    public function size(): int;
+}
+
+class Bag implements BagInterface {
+    /** @var array<int> */
+    public array $items;
+
+    /** @param array<int> $items */
+    public function __construct(array $items) {
+        $this->items = $items;
+    }
+
+    /** @param array<int> $items */
+    public function replace(array $items): void {
+        $this->items = $items;
+    }
+
+    /** @return array<int> */
+    public function values(): array {
+        return $this->items;
+    }
+
+    public function size(): int {
+        return count($this->items);
+    }
+}
+
+$bag = new Bag([1, 2]);
+$bag->replace([1, 2, 3]);
+$copy = $bag->values();
+$copy[] = 100;
+echo $bag->size(), " ", count($copy), "\n";
+PHP, 'elf');
+    T::same(
+        "3 4\n",
+        shell_exec(escapeshellarg((string) $arrayObjectElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : tableaux en méthodes, interfaces et propriétés',
+    );
+
+    $arrayAliasElf = $compilePhp('array-alias-signature', <<<'PHP'
+<?php
+class Store {
+    /** @var array<int> */
+    public static array $items;
+}
+
+Store::$items = [1];
+
+/** @return array<int> */
+function take(): array {
+    return Store::$items;
+}
+
+/** @return array<string,int> */
+function emptyTable(): array {
+    return [];
+}
+
+/** @param array<string,int> $table */
+function size(array $table): int {
+    return count($table);
+}
+
+$got = take();
+$got[] = 2;
+echo count(Store::$items), " ", count($got), " ", count(emptyTable()), " ", size([]), "\n";
+PHP, 'elf');
+    T::same(
+        "1 2 0 0\n",
+        shell_exec(escapeshellarg((string) $arrayAliasElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : copie des tableaux et littéraux vides typés',
+    );
+}
+
+$arraySignatureErrors = [
+    ['tableau sans annotation', '<?php function f(array $values): void {}', 'type de tableau incomplet'],
+    ['annotation non scalaire', '<?php /** @param array<Dog> $values */ function f(array $values): void {}', 'type de tableau incomplet'],
+    ['liste vers table', '<?php /** @param array<string,int> $table */ function f(array $table): void {} f([1, 2]);', 'attend array<string,int>, reçu array<int>'],
+    ['éléments incompatibles', '<?php /** @param array<int> $values */ function f(array $values): void {} $floats = [1.5, 2.5]; f($floats);', 'attend array<int>, reçu array<float>'],
+    ['retour incompatible', '<?php /** @return array<int> */ function f(): array { return ["a" => 1]; }', 'return attend array<int>, reçu array<string,int>'],
+    ['affectation incompatible', '<?php /** @param array<string,int> $table */ function f(array $table): void { $table = [1, 2]; }', 'valeur array<int> refusée'],
+];
+
+foreach ($arraySignatureErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('array-signature-error-' . $index, $source, 'c');
+        T::ok(false, 'tableaux : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'tableaux : erreur ' . $label,
             $exception->getMessage(),
         );
     }

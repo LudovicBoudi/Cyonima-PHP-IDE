@@ -11,7 +11,9 @@ final class MethodDecl extends Node
         public readonly string $name,
         public readonly array $params,
         public readonly string $returnType,
-        public readonly Block $body,
+        public readonly ?Block $body,
+        public readonly bool $isAbstract,
+        public readonly bool $isStatic,
         int $line,
     ) {
         parent::__construct($line);

@@ -364,29 +364,38 @@ bin/cyonima-compile --project=./mon-projet --php=examples/native-ui.php --emit=e
 Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
 typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, `switch`, `match`,
 `isset`, les exceptions `throw`/`try`/`catch`, les classes et objets
-(`class`, propriétés, `new`, `$this`, méthodes), les closures et arrow
-functions, les tableaux indexés homogènes, les tables associatives
-`string => valeur`, l’interpolation de chaînes, `echo`, les opérateurs usuels
-et les natives `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`.
+(`class`, propriétés, `new`, `$this`, méthodes), l’héritage avec dispatch
+dynamique, la covariance des retours, les interfaces avec héritage multiple,
+les classes abstraites, `parent::`, les membres
+`static` (`Classe::méthode()`, `Classe::$propriété`, `self::`), les objets en
+paramètres/retours/propriétés, les closures et arrow functions, les tableaux
+indexés homogènes, les tables associatives `string => valeur`, les signatures
+annotées `array<T>` et `array<string,T>` via PHPDoc avec copie à l’appel,
+l’interpolation
+de chaînes, `echo`, les opérateurs usuels et les natives `strlen`, `intval`,
+`floatval`, `strval`, `abs`, `count`.
 
 L’analyse vérifie les types, l’affectation définie sur tous les chemins et les
-retours exhaustifs. Les clés associatives entières, l’héritage, les captures
-par référence et `finally` restent refusés explicitement avec un numéro de
-ligne.
+retours exhaustifs. Les clés associatives entières, `static::`, `parent::`
+statique, les méthodes statiques abstraites ou d’interface, l’héritage multiple
+de classes, la contravariance des paramètres, les tableaux imbriqués et les
+captures par référence restent refusés explicitement avec un numéro de ligne.
 
 Une couche UI native expose `ui_init`, `ui_window`, `ui_box`,
 `ui_label`, `ui_button`, `ui_entry`, `ui_append`, `ui_on_click`, `ui_after`,
 `ui_run`, etc. Les callbacks acceptent des noms de fonctions ou des closures.
 
-La façade objet `Application` / `Window` / `Box` / `Label` / `Button` /
-`Entry` est injectée automatiquement dès qu’un programme instancie l’une de
-ces classes :
+La façade objet `Application` / `Widget` / `Window` / `Box` / `Label` /
+`Button` / `Entry` est injectée automatiquement dès qu’un programme instancie
+l’une de ces classes :
 
 ```php
+$box->append($label);
+$window->setChild($box);
 $button->onClicked(fn () => $label->setText('Cliqué !'));
 ```
 
-La composition utilise encore `$widget->handle` dans cette première version.
+Les widgets héritent de `Widget` et se composent directement par objets.
 Voir `examples/native-ui-object.php`.
 
 Le concepteur d’interface expose aussi **Compiler en natif**. En l’absence de

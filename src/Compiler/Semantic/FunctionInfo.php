@@ -6,6 +6,10 @@ namespace Cyonima\Compiler\Semantic;
 
 final class FunctionInfo
 {
+    public bool $isAbstract = false;
+
+    public bool $isStatic = false;
+
     /** @var array<string, string> */
     public array $variables = [];
 

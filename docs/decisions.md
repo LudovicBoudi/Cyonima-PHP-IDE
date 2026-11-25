@@ -463,6 +463,79 @@ Trois écarts assumés par rapport au miroir strict du C :
     encore par `$widget->handle` ; l’héritage et les objets en paramètres
     viendront ensuite.
 
+47. **Héritage et objets en signatures** : `class X extends Y` hérite des
+    propriétés et méthodes, avec surcharge de signature identique. Chaque
+    classe possède une vtable ; les appels de méthode passent par un slot et
+    dispatchent l’implémentation la plus dérivée. Les objets sont acceptés en
+    paramètres, retours et propriétés ; un enfant est assignable à un parent,
+    avec cast C explicite. Les constructeurs sont hérités si l’enfant n’en
+    déclare pas. Les structures C gardent un préfixe compatible
+    (`cy_vtable` + propriétés du parent), ce qui permet le dispatch et l’accès
+    aux propriétés héritées. La façade UI utilise désormais `Widget` comme
+    base et compose directement `$box->append($label)` /
+    `$window->setChild($box)`. Pas encore d’interfaces, classes abstraites,
+    `parent::`, covariance ni membres `static`.
+
+48. **Interfaces, classes abstraites et parent::** : `interface` +
+    `implements` (plusieurs interfaces), méthodes d’interface abstraites,
+    `abstract class` non instanciable, `abstract function` sans corps,
+    implémentation obligatoire dans les classes concrètes. Chaque objet porte
+    un `CyObjectHeader` avec la vtable de classe et un tableau `cy_ifaces` ;
+    les appels via une interface utilisent la vtable d’interface. `parent::`
+    appelle directement l’implémentation parente (constructeur ou méthode),
+    avec cast de `$this` vers la classe propriétaire. Les membres `static`,
+    l’héritage d’interfaces et la covariance restent hors périmètre.
+
+49. **Membres statiques** : `static` sur propriétés et méthodes. Une propriété
+    statique est une globale C `cy_static_<Classe>_<propriété>`, déclarée une
+    seule fois dans la classe propriétaire et partagée par les sous-classes.
+    Les méthodes statiques sont compilées en fonctions C sans paramètre
+    `$this` et ne figurent pas dans les vtables. `Classe::méthode()`,
+    `Classe::$propriété`, `self::` et `self::$propriété` sont abaissés en
+    appels/accès directs ; la classe cible est résolue à l’analyse. Toutes les
+    propriétés statiques de type référence (chaîne, tableau/table, objet,
+    closure) sont enregistrées comme racines GC permanentes via
+    `cy_add_root_slot`. Sont refusés explicitement : `static::`, `parent::`
+    statique, méthodes statiques abstraites ou d’interface, appels croisés
+    instance/statique et valeurs par défaut de propriétés statiques.
+
+50. **Héritage d’interfaces** : `interface B extends A` et
+    `interface C extends A, B`. La résolution est récursive, détecte les
+    cycles et fusionne les méthodes héritées dans l’ordre des parents puis des
+    déclarations locales. Une redéclaration doit avoir une signature
+    strictement identique ; les collisions entre parents sont refusées. La
+    liste `interfaces` d’une interface contient tous ses ancêtres, et celle
+    d’une classe est étendue transitivement : un objet implémentant une
+    interface enfant est donc dispatchable via chaque interface parente, avec
+    une vtable d’interface dédiée par interface. Une interface ne peut hériter
+    que d’interfaces, une classe ne peut implémenter qu’une interface.
+
+51. **Covariance des retours** : une méthode enfant peut déclarer un retour
+    plus précis que celui du parent (`Dog` pour `Animal`, classe pour
+    interface, interface fille pour interface parente). Les paramètres restent
+    invariants ; les scalaires, `void` et les callables restent invariants.
+    La vérification s’appuie sur une carte `rawTypes` construite avant la
+    résolution, ce qui permet de comparer des types encore en cours de
+    résolution sans dépendre des `ClassInfo` complets. Pour la fusion de
+    plusieurs interfaces parentes, le retour le plus précis est conservé quel
+    que soit l’ordre de déclaration ; deux retours non liés sont refusés.
+    Aucun changement d’ABI : les vtables stockent des pointeurs de fonction
+    opaques et les appels utilisent le type statique de la classe ou de
+    l’interface.
+
+52. **Tableaux en signatures** : annotations `array<T>` et
+    `array<string,T>` dans les paramètres, retours, propriétés, méthodes,
+    constructeurs et interfaces. Le code source reste du PHP valide : le type
+    PHP est `array`, raffiné par les annotations PHPDoc `@param`, `@return`
+    et `@var` (`array<int>`, `array<string,T>`). Le lexer attache le docblock
+    au prochain jeton, le parser l’applique à la déclaration et l’analyse
+    refuse `array` seul. Les tableaux restent homogènes et scalaires. La
+    sémantique de valeur PHP est préservée : copie à l’affectation, au passage
+    d’argument, au retour via l’affectation du résultat, et à l’écriture d’une
+    propriété ou d’une propriété statique. Un littéral `[]` est raffiné par le
+    contexte typé (argument, retour, affectation). Les tableaux de tableaux,
+    les tableaux dans les closures et les callables restent hors périmètre.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

@@ -20,6 +20,7 @@ final class Lexer
     private int $length;
     private int $position = 0;
     private int $line = 1;
+    private ?string $pendingDocComment = null;
 
     public function __construct(private readonly string $source)
     {
@@ -36,7 +37,7 @@ final class Lexer
             $this->scanToken();
         }
 
-        $this->tokens[] = new Token(TokenType::Eof, '', null, $this->line);
+        $this->pushToken(TokenType::Eof, '', null, $this->line);
 
         return $this->tokens;
     }
@@ -129,6 +130,7 @@ final class Lexer
     private function skipBlockComment(): void
     {
         $start = $this->line;
+        $startPosition = $this->position;
         $this->advance();
         $this->advance();
 
@@ -136,12 +138,38 @@ final class Lexer
             if ($this->peek() === '*' && $this->peek(1) === '/') {
                 $this->advance();
                 $this->advance();
+                $text = substr(
+                    $this->source,
+                    $startPosition,
+                    $this->position - $startPosition,
+                );
+
+                if (str_starts_with($text, '/**') && !str_starts_with($text, '/***')) {
+                    $this->pendingDocComment = $text;
+                }
+
                 return;
             }
             $this->advance();
         }
 
         throw new CompilerException("ligne {$start} : commentaire /* non terminé");
+    }
+
+    private function pushToken(
+        TokenType $type,
+        string $lexeme,
+        mixed $literal,
+        int $line,
+    ): void {
+        $this->tokens[] = new Token(
+            $type,
+            $lexeme,
+            $literal,
+            $line,
+            $this->pendingDocComment,
+        );
+        $this->pendingDocComment = null;
     }
 
     private function scanVariable(): void
@@ -163,7 +191,7 @@ final class Lexer
             throw new CompilerException("ligne {$line} : nom de variable attendu après $");
         }
 
-        $this->tokens[] = new Token(TokenType::Variable, $lexeme, $name, $line);
+        $this->pushToken(TokenType::Variable, $lexeme, $name, $line);
     }
 
     private function scanIdentifier(): void
@@ -181,6 +209,12 @@ final class Lexer
             'fn' => TokenType::FnKeyword,
             'use' => TokenType::UseKeyword,
             'class' => TokenType::ClassKeyword,
+            'interface' => TokenType::InterfaceKeyword,
+            'abstract' => TokenType::AbstractKeyword,
+            'implements' => TokenType::ImplementsKeyword,
+            'extends' => TokenType::ExtendsKeyword,
+            'parent' => TokenType::ParentKeyword,
+            'static' => TokenType::StaticKeyword,
             'new' => TokenType::NewKeyword,
             'public' => TokenType::PublicKeyword,
             'private' => TokenType::PrivateKeyword,
@@ -215,7 +249,7 @@ final class Lexer
             default => TokenType::Identifier,
         };
 
-        $this->tokens[] = new Token($type, $lexeme, $lexeme, $line);
+        $this->pushToken($type, $lexeme, $lexeme, $line);
     }
 
     private function scanNumber(): void
@@ -254,7 +288,7 @@ final class Lexer
 
         $lexeme = substr($this->source, $start, $this->position - $start);
         $literal = $isFloat ? (float) $lexeme : (int) $lexeme;
-        $this->tokens[] = new Token(
+        $this->pushToken(
             $isFloat ? TokenType::Float : TokenType::Integer,
             $lexeme,
             $literal,
@@ -281,12 +315,12 @@ final class Lexer
 
             if ($char === $quote) {
                 if ($quote === "'") {
-                    $this->tokens[] = new Token(TokenType::String, $value, $value, $line);
+                    $this->pushToken(TokenType::String, $value, $value, $line);
                     return;
                 }
 
                 $flush();
-                $this->tokens[] = new Token(TokenType::InterpolatedString, '"', $parts, $line);
+                $this->pushToken(TokenType::InterpolatedString, '"', $parts, $line);
                 return;
             }
 
@@ -407,7 +441,7 @@ final class Lexer
 
         if ($threeChar !== null) {
             $this->position += 3;
-            $this->tokens[] = new Token($threeChar, $three, null, $line);
+            $this->pushToken($threeChar, $three, null, $line);
             return;
         }
 
@@ -420,12 +454,13 @@ final class Lexer
             '||' => TokenType::OrOr,
             '=>' => TokenType::Arrow,
             '->' => TokenType::ObjectArrow,
+            '::' => TokenType::DoubleColon,
             default => null,
         };
 
         if ($twoChar !== null) {
             $this->position += 2;
-            $this->tokens[] = new Token($twoChar, $two, null, $line);
+            $this->pushToken($twoChar, $two, null, $line);
             return;
         }
 
@@ -457,7 +492,7 @@ final class Lexer
         }
 
         $this->advance();
-        $this->tokens[] = new Token($single, $char, null, $line);
+        $this->pushToken($single, $char, null, $line);
     }
 
     private function peek(int $offset = 0): string

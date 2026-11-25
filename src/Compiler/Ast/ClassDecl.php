@@ -12,6 +12,9 @@ final class ClassDecl extends Node
      */
     public function __construct(
         public readonly string $name,
+        public readonly ?string $parentName,
+        public readonly array $interfaces,
+        public readonly bool $isAbstract,
         public readonly array $properties,
         public readonly array $methods,
         int $line,

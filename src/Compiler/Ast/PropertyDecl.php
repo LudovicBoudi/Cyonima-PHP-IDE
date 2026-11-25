@@ -9,6 +9,7 @@ final class PropertyDecl extends Node
     public function __construct(
         public readonly string $type,
         public readonly string $name,
+        public readonly bool $isStatic,
         int $line,
     ) {
         parent::__construct($line);

@@ -142,6 +142,8 @@ static inline void cy_runtime_init(void)
 
 static void *cy_extra_roots[CY_EXTRA_ROOT_CAPACITY];
 static size_t cy_extra_root_count = 0;
+static void **cy_extra_root_slots[CY_EXTRA_ROOT_CAPACITY];
+static size_t cy_extra_root_slot_count = 0;
 
 static inline void cy_add_root(void *pointer)
 {
@@ -151,6 +153,16 @@ static inline void cy_add_root(void *pointer)
     }
 
     cy_extra_roots[cy_extra_root_count++] = pointer;
+}
+
+static inline void cy_add_root_slot(void *address)
+{
+    if (cy_extra_root_slot_count >= CY_EXTRA_ROOT_CAPACITY) {
+        fputs("cyonima: capacité de racines statiques atteinte\n", stderr);
+        exit(1);
+    }
+
+    cy_extra_root_slots[cy_extra_root_slot_count++] = (void **) address;
 }
 
 static const char *cy_current_exception = NULL;
@@ -226,6 +238,8 @@ struct CyMap {
 typedef struct {
     void *invoke;
 } CyClosure;
+
+typedef void (*CyVTableSlot)(void);
 
 typedef enum {
     CY_ROOT_STRING = 0,
@@ -330,6 +344,12 @@ static inline void cy_gc_collect(void)
 
     for (size_t i = 0; i < cy_extra_root_count; i++) {
         cy_mark_pointer(cy_extra_roots[i]);
+    }
+
+    for (size_t i = 0; i < cy_extra_root_slot_count; i++) {
+        void *value = NULL;
+        memcpy(&value, cy_extra_root_slots[i], sizeof(void *));
+        cy_mark_pointer(value);
     }
 
     for (CyRootFrame *frame = cy_root_frames; frame != NULL; frame = frame->previous) {

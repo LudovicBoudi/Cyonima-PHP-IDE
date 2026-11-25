@@ -37,11 +37,15 @@ use Cyonima\Compiler\Ir\MapValueInstruction;
 use Cyonima\Compiler\Ir\MethodCallInstruction;
 use Cyonima\Compiler\Ir\NewInstruction;
 use Cyonima\Compiler\Ir\Operand;
+use Cyonima\Compiler\Ir\ParentCallInstruction;
 use Cyonima\Compiler\Ir\PropertyGetInstruction;
 use Cyonima\Compiler\Ir\PropertySetInstruction;
 use Cyonima\Compiler\Ir\ReturnInstruction;
 use Cyonima\Compiler\Ir\SetIndexInstruction;
 use Cyonima\Compiler\Ir\SetMapIndexInstruction;
+use Cyonima\Compiler\Ir\StaticCallInstruction;
+use Cyonima\Compiler\Ir\StaticPropertyGetInstruction;
+use Cyonima\Compiler\Ir\StaticPropertySetInstruction;
 use Cyonima\Compiler\Ir\TemporaryOperand;
 use Cyonima\Compiler\Ir\ThrowInstruction;
 use Cyonima\Compiler\Ir\UnaryInstruction;
@@ -85,6 +89,8 @@ final class PhpCGenerator
 
     /** @var null|array<string, string> */
     private ?array $closureCaptures = null;
+
+    private ?string $currentReturnType = null;
 
     public function usesUi(IrProgram $program): bool
     {
@@ -140,8 +146,16 @@ final class PhpCGenerator
             $sections[] = '#include "cyonima_ui.h"';
         }
 
+        $sections[] = $this->objectHeaderCode();
+
         foreach ($this->classes as $class) {
             $sections[] = $this->classCode($class);
+        }
+
+        $staticCode = $this->staticPropertiesCode();
+
+        if ($staticCode !== '') {
+            $sections[] = $staticCode;
         }
 
         foreach ($program->closures as $closure) {
@@ -158,6 +172,22 @@ final class PhpCGenerator
 
         foreach ($program->closures as $closure) {
             $sections[] = $this->closurePrototype($closure);
+        }
+
+        foreach ($this->classes as $class) {
+            $sections[] = $this->vtableCode($class);
+        }
+
+        foreach ($this->classes as $class) {
+            if ($class->isInterface) {
+                continue;
+            }
+
+            $interfaceCode = $this->interfaceVtableCode($class);
+
+            if ($interfaceCode !== '') {
+                $sections[] = $interfaceCode;
+            }
         }
 
         if ($program->functions !== [] || $program->methods !== []
@@ -190,12 +220,36 @@ final class PhpCGenerator
         return implode("\n", $sections) . "\n";
     }
 
+    private function interfaceCount(): int
+    {
+        $count = 0;
+
+        foreach ($this->classes as $class) {
+            if ($class->isInterface) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    private function objectHeaderCode(): string
+    {
+        $slots = max(1, $this->interfaceCount());
+
+        return "typedef struct {\n"
+            . "    void *cy_vtable;\n"
+            . "    void *cy_ifaces[" . $slots . "];\n"
+            . "} CyObjectHeader;";
+    }
+
     private function classCode(ClassInfo $class): string
     {
         $type = $this->classType($class->name);
         $lines = [
             'typedef struct ' . $type . ' ' . $type . ';',
             'struct ' . $type . ' {',
+            '    CyObjectHeader header;',
         ];
 
         foreach ($class->properties as $name => $propertyType) {
@@ -226,6 +280,81 @@ final class PhpCGenerator
         $lines[] = '}';
 
         return implode("\n", $lines);
+    }
+
+    private function staticPropertyName(string $class, string $property): string
+    {
+        return 'cy_static_' . $this->identifier($class) . '_' . $this->identifier($property);
+    }
+
+    private function staticPropertiesCode(): string
+    {
+        $lines = [];
+
+        foreach ($this->classes as $class) {
+            if ($class->isInterface) {
+                continue;
+            }
+
+            foreach ($class->staticProperties as $name => $type) {
+                $owner = $class->staticPropertyOwners[$name] ?? $class->name;
+
+                if ($owner !== $class->name) {
+                    continue;
+                }
+
+                $lines[] = 'static ' . $this->cType($type) . ' '
+                    . $this->staticPropertyName($owner, $name)
+                    . ' = ' . $this->staticDefaultValue($type) . ';';
+            }
+        }
+
+        return $lines === [] ? '' : implode("\n", $lines);
+    }
+
+    private function staticInitCode(): string
+    {
+        $lines = [];
+
+        foreach ($this->classes as $class) {
+            if ($class->isInterface) {
+                continue;
+            }
+
+            foreach ($class->staticProperties as $name => $type) {
+                $owner = $class->staticPropertyOwners[$name] ?? $class->name;
+
+                if ($owner !== $class->name) {
+                    continue;
+                }
+
+                $global = $this->staticPropertyName($owner, $name);
+
+                if ($this->isListType($type)) {
+                    $lines[] = '    ' . $global . ' = cy_array_new();';
+                } elseif ($this->isMapType($type)) {
+                    $lines[] = '    ' . $global . ' = cy_map_new();';
+                }
+
+                if ($this->rootKind($type) !== null) {
+                    $lines[] = '    cy_add_root_slot((void *) &' . $global . ');';
+                }
+            }
+        }
+
+        return $lines === [] ? '' : implode("\n", $lines);
+    }
+
+    private function staticDefaultValue(string $type): string
+    {
+        if ($this->isCallableType($type)
+            || isset($this->classes[$type])
+            || $this->isListType($type)
+            || $this->isMapType($type)) {
+            return 'NULL';
+        }
+
+        return $this->defaultValue($type);
     }
 
     private function closureType(IrClosure $closure): string
@@ -311,12 +440,14 @@ final class PhpCGenerator
         }
 
         $this->closureCaptures = $captures;
+        $this->currentReturnType = $closure->returnType;
 
         foreach ($closure->function->instructions as $instruction) {
             $lines[] = $this->instruction($instruction, '    ');
         }
 
         $this->closureCaptures = null;
+        $this->currentReturnType = null;
         $lines[] = '}';
 
         return implode("\n", $lines);
@@ -337,6 +468,79 @@ final class PhpCGenerator
             '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
             $type,
         ) === 1;
+    }
+
+    private function vtableType(ClassInfo $class): string
+    {
+        return 'CyVTable_' . $this->identifier($class->name);
+    }
+
+    private function vtableCode(ClassInfo $class): string
+    {
+        $type = $this->vtableType($class);
+        $count = count($class->vtable);
+        $slots = max(1, $count);
+        $lines = [
+            'typedef struct {',
+            '    CyVTableSlot slots[' . $slots . '];',
+            '} ' . $type . ';',
+        ];
+
+        if ($class->isInterface) {
+            return implode("\n", $lines);
+        }
+
+        $lines[] = '';
+        $lines[] = 'static const ' . $type . ' cy_vtable_' . $this->identifier($class->name) . ' = {';
+
+        if ($count === 0) {
+            $lines[] = '    { NULL },';
+        } else {
+            $lines[] = '    {';
+
+            foreach ($class->vtable as [$owner, $method]) {
+                $lines[] = $owner === null
+                    ? '        NULL,'
+                    : '        (CyVTableSlot) ' . $this->methodFunctionName($owner, $method) . ',';
+            }
+
+            $lines[] = '    },';
+        }
+
+        $lines[] = '};';
+
+        return implode("\n", $lines);
+    }
+
+    private function interfaceVtableCode(ClassInfo $class): string
+    {
+        $lines = [];
+
+        foreach ($class->interfaceVtables as $interfaceName => $data) {
+            $interface = $this->classes[$interfaceName] ?? null;
+
+            if ($interface === null || $data['vtable'] === []) {
+                continue;
+            }
+
+            $type = $this->vtableType($interface);
+            $constant = 'cy_iface_' . $this->identifier($class->name)
+                . '_' . $this->identifier($interfaceName);
+            $lines[] = 'static const ' . $type . ' ' . $constant . ' = {';
+            $lines[] = '    {';
+
+            foreach ($data['vtable'] as [$owner, $method]) {
+                $lines[] = $owner === null
+                    ? '        NULL,'
+                    : '        (CyVTableSlot) ' . $this->methodFunctionName($owner, $method) . ',';
+            }
+
+            $lines[] = '    },';
+            $lines[] = '};';
+            $lines[] = '';
+        }
+
+        return $lines === [] ? '' : rtrim(implode("\n", $lines));
     }
 
     private function prototype(IrFunction $function): string
@@ -366,11 +570,13 @@ final class PhpCGenerator
         $lines[] = '{';
         $this->declarations($function, $lines);
         $this->rootsCode($function, $function->name, $lines);
+        $this->currentReturnType = $function->returnType;
 
         foreach ($function->instructions as $instruction) {
             $lines[] = $this->instruction($instruction, '    ');
         }
 
+        $this->currentReturnType = null;
         $lines[] = '}';
 
         return implode("\n", $lines);
@@ -379,13 +585,21 @@ final class PhpCGenerator
     private function mainCode(IrFunction $main): string
     {
         $lines = ['int main(void)', '{', '    cy_runtime_init();'];
+        $staticInit = $this->staticInitCode();
+
+        if ($staticInit !== '') {
+            $lines[] = $staticInit;
+        }
+
         $this->declarations($main, $lines);
         $this->rootsCode($main, 'main', $lines);
+        $this->currentReturnType = 'int';
 
         foreach ($main->instructions as $instruction) {
             $lines[] = $this->instruction($instruction, '    ');
         }
 
+        $this->currentReturnType = null;
         $lines[] = '    return 0;';
         $lines[] = '}';
 
@@ -571,7 +785,7 @@ final class PhpCGenerator
             } elseif ($this->isListType($instruction->value->type)) {
                 $value = 'cy_array_copy(' . $this->operand($instruction->value) . ')';
             } else {
-                $value = $this->operand($instruction->value);
+                $value = $this->castOperand($instruction->value, $instruction->target->type);
             }
 
             return $indent . $this->operand($instruction->target) . ' = ' . $value . ';';
@@ -688,9 +902,15 @@ final class PhpCGenerator
         }
 
         if ($instruction instanceof ReturnInstruction) {
-            return $indent . ($instruction->value === null
-                ? 'return;'
-                : 'return ' . $this->operand($instruction->value) . ';');
+            if ($instruction->value === null) {
+                return $indent . 'return;';
+            }
+
+            $value = $this->currentReturnType !== null
+                ? $this->castOperand($instruction->value, $this->currentReturnType)
+                : $this->operand($instruction->value);
+
+            return $indent . 'return ' . $value . ';';
         }
 
         if ($instruction instanceof GcInstruction) {
@@ -722,6 +942,11 @@ final class PhpCGenerator
                     $value = 'cy_map_copy(' . $value . ')';
                 } elseif ($this->isListType($captureType)) {
                     $value = 'cy_array_copy(' . $value . ')';
+                } else {
+                    $value = $this->castOperand(
+                        $instruction->captures[$index],
+                        $captureType,
+                    );
                 }
 
                 $lines[] = $data . '->cap_' . $this->identifier($name) . ' = ' . $value . ';';
@@ -739,10 +964,14 @@ final class PhpCGenerator
                 $parameters[] = $this->cType($parameterType);
             }
 
-            $arguments = array_map(
-                fn (Operand $argument): string => $this->operand($argument),
-                $instruction->arguments,
-            );
+            $arguments = [];
+
+            foreach ($instruction->arguments as $index => $argument) {
+                $arguments[] = $this->castOperand(
+                    $argument,
+                    $instruction->parameterTypes[$index] ?? $argument->type,
+                );
+            }
             $call = '((' . $this->cType($instruction->returnType) . ' (*)('
                 . implode(', ', $parameters) . ')) '
                 . $this->operand($instruction->closure) . '->invoke)('
@@ -757,6 +986,29 @@ final class PhpCGenerator
             return $indent . $this->operand($instruction->result) . ' = ' . $call . ';';
         }
 
+        if ($instruction instanceof ParentCallInstruction) {
+            $arguments = [];
+
+            foreach ($instruction->arguments as $index => $argument) {
+                $arguments[] = $this->valueExpression(
+                    $argument,
+                    $instruction->parameterTypes[$index] ?? $argument->type,
+                );
+            }
+
+            $object = $this->castOperand($instruction->object, $instruction->className);
+            $call = $this->methodFunctionName($instruction->className, $instruction->method)
+                . '(' . $object
+                . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
+                . ');';
+
+            if ($instruction->result === null) {
+                return $indent . $call;
+            }
+
+            return $indent . $this->operand($instruction->result) . ' = ' . $call;
+        }
+
         if ($instruction instanceof NewInstruction) {
             $class = $this->classes[$instruction->className]
                 ?? throw new CompilerException(
@@ -767,21 +1019,47 @@ final class PhpCGenerator
             $lines = [
                 $result . ' = (' . $type . ' *) cy_object_new(sizeof(' . $type . '), '
                     . 'cy_obj_mark_' . $this->identifier($class->name) . ');',
+                $result . '->header.cy_vtable = (void *) &cy_vtable_'
+                    . $this->identifier($class->name) . ';',
             ];
+
+            foreach ($class->interfaceVtables as $interfaceName => $data) {
+                if ($data['vtable'] === []) {
+                    continue;
+                }
+
+                $lines[] = $result . '->header.cy_ifaces[' . $data['id'] . '] = (void *) &cy_iface_'
+                    . $this->identifier($class->name) . '_'
+                    . $this->identifier($interfaceName) . ';';
+            }
 
             foreach ($class->properties as $name => $propertyType) {
                 if ($propertyType === 'string') {
                     $lines[] = $result . '->' . $this->property($name) . ' = "";';
+                } elseif ($this->isListType($propertyType)) {
+                    $lines[] = $result . '->' . $this->property($name)
+                        . ' = cy_array_new();';
+                } elseif ($this->isMapType($propertyType)) {
+                    $lines[] = $result . '->' . $this->property($name)
+                        . ' = cy_map_new();';
                 }
             }
 
             if ($class->constructor !== null) {
-                $arguments = array_map(
-                    fn (Operand $argument): string => $this->operand($argument),
-                    $instruction->arguments,
-                );
-                $lines[] = $this->methodFunctionName($class->name, $class->constructor)
-                    . '(' . $result
+                $constructor = $class->methods[$class->constructor];
+                $parameters = array_values($constructor->params);
+                $arguments = [];
+
+                foreach ($instruction->arguments as $index => $argument) {
+                    $arguments[] = $this->valueExpression(
+                        $argument,
+                        $parameters[$index] ?? $argument->type,
+                    );
+                }
+
+                $owner = $class->constructorClass ?? $class->name;
+                $lines[] = $this->methodFunctionName($owner, $class->constructor)
+                    . '((' . $this->classType($owner) . ' *) ' . $result
                     . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
                     . ');';
             }
@@ -796,26 +1074,106 @@ final class PhpCGenerator
         }
 
         if ($instruction instanceof PropertySetInstruction) {
+            $propertyType = null;
+
+            if (isset($this->classes[$instruction->object->type])) {
+                $propertyType = $this->classes[$instruction->object->type]
+                    ->properties[$instruction->property] ?? null;
+            }
+
+            $value = $propertyType !== null
+                ? $this->valueExpression($instruction->value, $propertyType)
+                : $this->operand($instruction->value);
+
             return $indent . $this->operand($instruction->object)
                 . '->' . $this->property($instruction->property)
-                . ' = ' . $this->operand($instruction->value) . ';';
+                . ' = ' . $value . ';';
         }
 
-        if ($instruction instanceof MethodCallInstruction) {
-            $arguments = array_map(
-                fn (Operand $argument): string => $this->operand($argument),
-                $instruction->arguments,
-            );
+        if ($instruction instanceof StaticPropertyGetInstruction) {
+            return $indent . $this->operand($instruction->result)
+                . ' = ' . $this->staticPropertyName(
+                    $instruction->className,
+                    $instruction->property,
+                ) . ';';
+        }
+
+        if ($instruction instanceof StaticPropertySetInstruction) {
+            $value = $this->valueExpression($instruction->value, $instruction->propertyType);
+
+            return $indent . $this->staticPropertyName(
+                $instruction->className,
+                $instruction->property,
+            ) . ' = ' . $value . ';';
+        }
+
+        if ($instruction instanceof StaticCallInstruction) {
+            $arguments = [];
+
+            foreach ($instruction->arguments as $index => $argument) {
+                $arguments[] = $this->valueExpression(
+                    $argument,
+                    $instruction->parameterTypes[$index] ?? $argument->type,
+                );
+            }
+
             $call = $this->methodFunctionName($instruction->className, $instruction->method)
-                . '(' . $this->operand($instruction->object)
-                . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
-                . ');';
+                . '(' . implode(', ', $arguments) . ');';
 
             if ($instruction->result === null) {
                 return $indent . $call;
             }
 
             return $indent . $this->operand($instruction->result) . ' = ' . $call;
+        }
+
+        if ($instruction instanceof MethodCallInstruction) {
+            $class = $this->classes[$instruction->className]
+                ?? throw new CompilerException(
+                    'classe absente du backend : ' . $instruction->className,
+                );
+            $method = $class->methods[$instruction->method]
+                ?? throw new CompilerException(
+                    'méthode absente du backend : ' . $instruction->className . '::' . $instruction->method,
+                );
+            $slot = $class->vtableSlots[$instruction->method]
+                ?? throw new CompilerException(
+                    'slot absent pour ' . $instruction->className . '::' . $instruction->method,
+                );
+            $parameters = ['void *'];
+            $arguments = [];
+            $parameterTypes = array_values($method->params);
+
+            foreach ($parameterTypes as $index => $parameterType) {
+                $parameters[] = $this->cType($parameterType);
+                $arguments[] = $this->valueExpression(
+                    $instruction->arguments[$index],
+                    $parameterType,
+                );
+            }
+
+            $object = $this->operand($instruction->object);
+
+            if ($class->isInterface) {
+                $vtable = '((CyVTable_' . $this->identifier($class->name) . ' *) '
+                    . '((CyObjectHeader *) ' . $object . ')->cy_ifaces['
+                    . ($class->interfaceId ?? 0) . '])';
+            } else {
+                $vtable = '((CyVTable_' . $this->identifier($class->name) . ' *) '
+                    . $object . '->header.cy_vtable)';
+            }
+
+            $call = '((' . $this->cType($method->returnType) . ' (*)('
+                . implode(', ', $parameters) . ')) ' . $vtable . '->slots['
+                . $slot . '])(' . $object
+                . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
+                . ')';
+
+            if ($instruction->result === null) {
+                return $indent . $call . ';';
+            }
+
+            return $indent . $this->operand($instruction->result) . ' = ' . $call . ';';
         }
 
         if ($instruction instanceof ExceptionCheckInstruction) {
@@ -889,6 +1247,18 @@ final class PhpCGenerator
     private function callExpression(CallInstruction $instruction): string
     {
         $arguments = array_map(fn (Operand $argument): string => $this->operand($argument), $instruction->arguments);
+
+        if ($instruction->parameterTypes !== null) {
+            $arguments = [];
+
+            foreach ($instruction->arguments as $index => $argument) {
+                $arguments[] = $this->valueExpression(
+                    $argument,
+                    $instruction->parameterTypes[$index] ?? $argument->type,
+                );
+            }
+        }
+
         $data = isset($arguments[2])
             ? '(gpointer)(intptr_t)(' . $arguments[2] . ')'
             : 'NULL';
@@ -1023,6 +1393,14 @@ final class PhpCGenerator
     private function constant(ConstantOperand $operand): string
     {
         if ($operand->value === null) {
+            if ($this->isListType($operand->type)) {
+                return 'cy_array_new()';
+            }
+
+            if ($this->isMapType($operand->type)) {
+                return 'cy_map_new()';
+            }
+
             return 'NULL';
         }
 
@@ -1073,7 +1451,9 @@ final class PhpCGenerator
         }
 
         if (isset($this->classes[$type])) {
-            return $this->classType($type) . ' *';
+            return $this->classes[$type]->isInterface
+                ? 'CyObjectHeader *'
+                : $this->classType($type) . ' *';
         }
 
         if ($this->isMapType($type)) {
@@ -1150,6 +1530,93 @@ final class PhpCGenerator
     private function classType(string $name): string
     {
         return 'CyObj_' . $this->identifier($name);
+    }
+
+    private function isSubclassOf(string $child, string $parent): bool
+    {
+        $current = $child;
+        $seen = [];
+
+        while ($current !== null && isset($this->classes[$current]) && !isset($seen[$current])) {
+            if ($current === $parent) {
+                return true;
+            }
+
+            $seen[$current] = true;
+            $current = $this->classes[$current]->parentName;
+        }
+
+        return false;
+    }
+
+    private function implementsInterface(string $class, string $interface): bool
+    {
+        $current = $class;
+        $seen = [];
+
+        while ($current !== null && isset($this->classes[$current]) && !isset($seen[$current])) {
+            $info = $this->classes[$current];
+
+            if (in_array($interface, $info->interfaces, true)) {
+                return true;
+            }
+
+            $seen[$current] = true;
+            $current = $info->parentName;
+        }
+
+        return false;
+    }
+
+    private function isAssignable(string $actual, string $expected): bool
+    {
+        if ($actual === $expected) {
+            return true;
+        }
+
+        if (!isset($this->classes[$actual]) || !isset($this->classes[$expected])) {
+            return false;
+        }
+
+        if ($this->classes[$expected]->isInterface) {
+            return $this->implementsInterface($actual, $expected);
+        }
+
+        return $this->isSubclassOf($actual, $expected);
+    }
+
+    private function valueExpression(Operand $value, string $targetType): string
+    {
+        if ($this->isMapType($targetType)) {
+            return 'cy_map_copy(' . $this->operand($value) . ')';
+        }
+
+        if ($this->isListType($targetType)) {
+            return 'cy_array_copy(' . $this->operand($value) . ')';
+        }
+
+        return $this->castOperand($value, $targetType);
+    }
+
+    private function castOperand(Operand $operand, string $targetType): string
+    {
+        $value = $this->operand($operand);
+
+        if ($targetType === $operand->type) {
+            return $value;
+        }
+
+        if (isset($this->classes[$targetType])
+            && isset($this->classes[$operand->type])
+            && $this->isAssignable($operand->type, $targetType)) {
+            if ($this->classes[$targetType]->isInterface) {
+                return '(CyObjectHeader *) ' . $value;
+            }
+
+            return '(' . $this->classType($targetType) . ' *) ' . $value;
+        }
+
+        return $value;
     }
 
     private function property(string $name): string

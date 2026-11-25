@@ -118,17 +118,24 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Famille | Support |
 |---|---|
 | Balise | `<?php`, fichiers `.php` |
-| Types | `int`, `float`, `bool`, `string`, `void` |
+| Types | `int`, `float`, `bool`, `string`, `void`, `array` annoté `array<T>` / `array<string,T>` |
 | Variables | `$nom`, affectation simple |
 | Littéraux | entiers, flottants, chaînes, `true`, `false`, `null` |
 | Chaînes | concaténation `.`, interpolation `"Bonjour $nom"` et `"{$nom}"` |
 | Tableaux indexés | homogènes, `[...]`, `array(...)`, `$a[i]`, `$a[]`, `count` |
 | Tableaux associatifs | `['clé' => valeur]`, `$a['clé']`, `foreach` clé/valeur, `count` |
+| Signatures de tableaux | paramètres, retours et propriétés `array<T>`, copie à l’appel |
 | Opérateurs | `+ - * / % .`, comparaisons, `===`, `!==`, `&&`, `\|\|`, `!` |
 | Contrôle | `if`, `elseif`, `else`, `while`, `for`, `foreach`, `switch` (fall-through, `break`), `match` |
 | Vérification | `isset($a[$clé])` |
 | Exceptions | `throw`, `try` / `catch (string $e)`, propagation entre fonctions |
 | Classes | `class`, propriétés typées, `new`, `$this`, méthodes, `__construct` |
+| Héritage | `class X extends Y`, propriétés/méthodes héritées, override, dispatch dynamique, retours covariants |
+| Interfaces | `interface`, `implements`, `extends` multiple, dispatch via table d’interfaces |
+| Abstrait | `abstract class`, `abstract function`, classes non instanciables |
+| Parent | `parent::__construct(...)`, `parent::méthode(...)` |
+| Statique | `static` propriétés/méthodes, `Classe::méthode()`, `Classe::$propriété`, `self::` |
+| Objets | objets en paramètres, retours et propriétés |
 | Closures | `function (...) use (...)` et `fn (...) => ...`, appels `$fn(...)` |
 | Fonctions | déclaration typée, paramètres, retour, appels |
 | Sortie | `echo` multi-arguments |
@@ -271,16 +278,151 @@ echo $p->sum();
 $p->x = 10;
 ```
 
-- propriétés typées `int`, `float`, `bool`, `string`, initialisées à
-  `0` / `false` / `""` ;
-- constructeur `__construct` optionnel, appelé par `new Class(...)` ;
+- propriétés typées `int`, `float`, `bool`, `string`, callable ou classe,
+  initialisées à `0` / `false` / `""` / `NULL` ;
+- constructeur `__construct` optionnel, appelé par `new Class(...)` ; un
+  constructeur peut être hérité ;
 - méthodes compilées en fonctions C avec un paramètre `$this` ;
 - accès et affectation `$objet->propriété`, appels `$objet->méthode()` ;
+- objets en paramètres, retours et propriétés ;
 - affectation d’objet = partage de référence, comme en PHP ;
-- GC : une fonction de marquage par classe protège les propriétés chaîne.
+- GC : une fonction de marquage par classe protège les propriétés chaîne,
+  tableau/table, objet et closure.
+
+### Héritage
+
+```php
+class Animal {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function speak(): string {
+        return '...';
+    }
+}
+
+class Dog extends Animal {
+    public function speak(): string {
+        return 'Woof';
+    }
+}
+
+function describe(Animal $animal): string {
+    return $animal->name . ': ' . $animal->speak();
+}
+
+echo describe(new Dog('Rex')); // Rex: Woof
+```
+
+- propriétés et méthodes héritées ;
+- surcharge de méthode avec paramètres identiques ;
+- **retour covariant** : une méthode enfant peut retourner une sous-classe ou
+  une classe implémentant l’interface déclarée par le parent ;
+- les types scalaires et callables restent invariants ;
+- dispatch dynamique via une vtable par classe ;
+- un enfant est assignable à un paramètre/retour du parent ;
+- `$this` garde le type statique de la classe où la méthode est déclarée ;
+- `parent::__construct(...)` et `parent::méthode(...)` appellent
+  l’implémentation parente directe.
+
+### Interfaces et classes abstraites
+
+```php
+interface Speaker {
+    public function speak(): string;
+}
+
+interface Named extends Speaker {
+    public function name(): string;
+}
+
+abstract class Shape implements Speaker {
+    public abstract function area(): float;
+
+    public function speak(): string {
+        return 'shape';
+    }
+}
+
+class Square extends Shape {
+    public float $side;
+
+    public function __construct(float $side) {
+        $this->side = $side;
+    }
+
+    public function area(): float {
+        return $this->side * $this->side;
+    }
+}
+
+function talk(Speaker $speaker): string {
+    return $speaker->speak();
+}
+```
+
+- `interface` + `implements`, plusieurs interfaces possibles ;
+- `interface B extends A` et `interface C extends A, B`, avec héritage
+  transitif ;
+- une classe qui implémente une interface enfant est aussi dispatchable via
+  toutes ses interfaces parentes ;
+- les méthodes héritées doivent être implémentées par les classes concrètes ;
+- une interface peut redéclarer une méthode héritée avec les mêmes paramètres
+  et un retour covariant ; un retour plus large est refusé ;
+- les collisions entre deux interfaces parentes sont refusées, sauf si un
+  retour est un sous-type de l’autre : le type le plus précis est conservé,
+  quel que soit l’ordre des parents ;
+- méthodes d’interface sans corps ;
+- `abstract class` non instanciable ;
+- `abstract function` sans corps, obligatoirement implémentée par une classe
+  concrète ;
+- une classe abstraite peut laisser des méthodes d’interface non implémentées ;
+- dispatch d’interface via `CyObjectHeader` et la table `cy_ifaces` ;
+- `new` sur une interface ou une classe abstraite est refusé.
+
+### Membres statiques
+
+```php
+class Counter {
+    public static int $count;
+    public static string $label;
+
+    public static function increment(): int {
+        self::$count = self::$count + 1;
+        return self::$count;
+    }
+}
+
+Counter::$label = 'n';
+echo Counter::increment(); // 1
+echo Counter::$count;      // 1
+```
+
+- propriétés `static` typées, stockées dans une globale C par classe
+  propriétaire ;
+- méthodes `static` compilées sans paramètre `$this` ;
+- appels `Classe::méthode(...)`, `self::méthode(...)` ;
+- accès et affectation `Classe::$propriété`, `self::$propriété` ;
+- une propriété statique héritée est partagée avec la classe qui la déclare ;
+- une méthode statique héritée peut être surchargée ; `Classe::méthode()`
+  appelle l’implémentation de cette classe, `self::` reste lié à la classe
+  d’écriture ;
+- `$this` est refusé dans une méthode statique ;
+- les propriétés statiques objet, chaîne, tableau/table et closure sont
+  enregistrées comme racines GC permanentes ;
+- les méthodes statiques ne figurent pas dans les vtables d’instance ;
+- refus explicites : `static::`, `parent::` statique, méthode statique
+  abstraite, membre statique d’interface, appel statique d’une méthode
+  d’instance et appel via `->` d’une méthode statique.
 
 Un exemple complet est fourni dans
-[`examples/native-classes.php`](../examples/native-classes.php).
+[`examples/native-static.php`](../examples/native-static.php).
+
+Un exemple des interfaces, de leur héritage et des classes abstraites est
+fourni dans [`examples/native-interfaces.php`](../examples/native-interfaces.php).
 
 ### Closures et callbacks
 
@@ -318,13 +460,16 @@ Les constructions suivantes sont refusées avec un message et un numéro de
 ligne :
 
 - clés associatives entières (les tables associatives sont `string => valeur`) ;
-- tableaux imbriqués, tableaux passés en paramètre ou retournés par une fonction ;
+- tableaux imbriqués, tableaux dans les signatures de closures et de
+  callables ;
 - `break`/`continue` dans les boucles (seul `break` de `switch` est supporté) ;
 - `match` sans `default` et `isset` avec plusieurs arguments ;
-- héritage, interfaces, classes abstraites, membres `static`, application de la
-  visibilité (les mots-clés sont acceptés mais ignorés) ;
-- objets en paramètres, retours ou propriétés, valeurs par défaut de
-  propriétés, `clone`, `instanceof` ;
+- héritage multiple de classes, application de la visibilité (les mots-clés
+  sont acceptés mais ignorés) ;
+- `static::`, `parent::` statique, méthodes statiques abstraites ou
+  d’interface, valeurs par défaut de propriétés statiques ;
+- appel explicite à `__construct` hors `parent::`, contravariance des
+  paramètres, valeurs par défaut de propriétés, `clone`, `instanceof` ;
 - capture par référence `use (&$x)`, capture de `$this`, closures `static` ;
 - closures en paramètres, retours, propriétés ou éléments de tableau,
   invocation immédiate `(function () {})()` ;
@@ -342,10 +487,61 @@ Les tables associatives utilisent des clés `string` et des valeurs homogènes.
 Une affectation de tableau ou de table associative crée une copie, comme en
 PHP pour les affectations par valeur.
 
-Un tableau vide `[]` doit être raffiné par un premier ajout indexé (`$a[] =`)
-ou une première clé (`$a['clé'] =`) avant tout autre usage : sa nature
-(indexée ou associative) et son type de valeur doivent être connus à la
-compilation.
+Un tableau vide `[]` est raffiné par le contexte lorsqu’il est affecté à une
+variable annotée, passé à un paramètre typé ou retourné par une fonction
+typée. Sinon, il doit être raffiné par un premier ajout indexé (`$a[] =`) ou
+une première clé (`$a['clé'] =`) avant tout autre usage : sa nature (indexée
+ou associative) et son type de valeur doivent être connus à la compilation.
+
+### Tableaux en signatures
+
+Le code source reste du PHP valide : le type PHP est `array`, et le type des
+éléments est précisé par une annotation PHPDoc.
+
+```php
+/**
+ * @param array<int> $values
+ */
+function total(array $values): int {
+    $sum = 0;
+    foreach ($values as $value) {
+        $sum = $sum + $value;
+    }
+    return $sum;
+}
+
+/**
+ * @param array<string,int> $table
+ */
+function lookup(array $table, string $key): int {
+    return $table[$key];
+}
+
+/**
+ * @return array<int>
+ */
+function build(): array {
+    return [1, 2, 3];
+}
+```
+
+```php
+class Bag {
+    /** @var array<int> */
+    public array $items;
+}
+```
+
+- `array<T>` : tableau indexé homogène (`T` scalaire) ;
+- `array<string,T>` : table associative `string => T` ;
+- annotations acceptées : `@param`, `@return`, `@var` ;
+- l’annotation est obligatoire dans une signature : `array` seul est refusé ;
+- une annotation ne raffine que le type PHP `array` ;
+- affectation, passage en argument et retour créent une **copie** : une
+  mutation dans la fonction ne modifie pas le tableau de l’appelant ;
+- une propriété tableau est initialisée à un tableau vide par `new` ;
+- les tableaux de tableaux restent refusés, ainsi que les annotations dans
+  les closures et les callables.
 
 ### Modèle mémoire
 
@@ -472,9 +668,9 @@ $box = new Box(true, 12);
 $label = new Label('Bonjour');
 $button = new Button('Cliquer');
 
-$box->append($label->handle);
-$box->append($button->handle);
-$window->setChild($box->handle);
+$box->append($label);
+$box->append($button);
+$window->setChild($box);
 
 $button->onClicked(fn () => $label->setText('Cliqué !'));
 
@@ -482,17 +678,18 @@ $window->present();
 $app->run();
 ```
 
+- `Widget` est la classe de base des widgets, avec le handle et
+  `setVisible(bool)` ;
 - les callbacks sont des closures `callable():void` enregistrées via
   `ui_on_click_closure` et maintenues en vie par les racines GC ;
 - fermer la fenêtre arrête la boucle ;
-- la composition utilise encore `$widget->handle` dans cette version ;
 - un exemple complet est fourni dans
   [`examples/native-ui-object.php`](../examples/native-ui-object.php).
 
 ### Limites de cette première couche
 
-- façade objet disponible, mais composition via `$widget->handle` ; pas
-  encore d’héritage ni d’objets en paramètres/retours ;
+- façade objet et composition par objets disponibles ; widgets limités à la
+  fenêtre, la boîte, le libellé, le bouton et l’entrée ;
 - callbacks UI limités à `callable():void` ;
 - une seule boucle GTK par programme, 256 widgets maximum ;
 - pas encore de CSS, de menus, de listes ni de modèles de données ;
@@ -629,6 +826,10 @@ La suite couvre :
 - `switch`, `match` et `isset` ;
 - les exceptions `throw` / `try` / `catch` et leur propagation ;
 - les classes, objets, propriétés, constructeurs et méthodes ;
+- l’héritage, la covariance des retours, les vtables, les objets en
+  paramètres/retours et propriétés ;
+- les interfaces, leur héritage multiple, les classes abstraites et appels
+  `parent::` ;
 - les closures, captures par valeur et arrow functions ;
 - l’analyse de flux (affectation définie, retours exhaustifs) ;
 - le runtime mémoire (racines, GC mark-sweep, libération à l’arrêt) ;
@@ -649,9 +850,8 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 4 | modules natifs : `libcurl`, `libssh2`, SQLite, etc. | à venir |
 | 5 | packaging : `--package=appimage` et `--package=flatpak` | à venir |
 
-Le sous-ensemble doit encore couvrir l’héritage, les objets et callables en
-paramètres/retours, les tableaux associatifs à clés entières et la capture par
-référence. La façade objet `Cyonima\UI` sera construite au-dessus de la couche
-procédurale `ui_*`. Le
+Le sous-ensemble doit encore couvrir la capture par référence. La façade objet
+`Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la
+composition par objets. Le
 compilateur reste extensible : nouveaux types, nouveaux contrôles et nouvelles
 constructions s’ajoutent derrière l’AST et l’IR, sans réécrire le backend C.

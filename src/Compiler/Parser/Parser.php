@@ -25,6 +25,7 @@ use Cyonima\Compiler\Ast\FunctionDecl;
 use Cyonima\Compiler\Ast\IfStmt;
 use Cyonima\Compiler\Ast\IndexAssignExpr;
 use Cyonima\Compiler\Ast\IndexExpr;
+use Cyonima\Compiler\Ast\InterfaceDecl;
 use Cyonima\Compiler\Ast\Literal;
 use Cyonima\Compiler\Ast\MatchArm;
 use Cyonima\Compiler\Ast\MatchExpr;
@@ -32,11 +33,15 @@ use Cyonima\Compiler\Ast\MethodCallExpr;
 use Cyonima\Compiler\Ast\MethodDecl;
 use Cyonima\Compiler\Ast\NewExpr;
 use Cyonima\Compiler\Ast\Param;
+use Cyonima\Compiler\Ast\ParentCallExpr;
 use Cyonima\Compiler\Ast\Program;
 use Cyonima\Compiler\Ast\PropertyAccessExpr;
 use Cyonima\Compiler\Ast\PropertyAssignExpr;
 use Cyonima\Compiler\Ast\PropertyDecl;
 use Cyonima\Compiler\Ast\ReturnStmt;
+use Cyonima\Compiler\Ast\StaticCallExpr;
+use Cyonima\Compiler\Ast\StaticPropertyAssignExpr;
+use Cyonima\Compiler\Ast\StaticPropertyExpr;
 use Cyonima\Compiler\Ast\Stmt;
 use Cyonima\Compiler\Ast\SwitchCase;
 use Cyonima\Compiler\Ast\SwitchStmt;
@@ -68,6 +73,7 @@ final class Parser
     {
         $functions = [];
         $classes = [];
+        $interfaces = [];
         $statements = [];
 
         while (!$this->check(TokenType::Eof)) {
@@ -81,15 +87,27 @@ final class Parser
                 continue;
             }
 
+            if ($this->match(TokenType::AbstractKeyword)) {
+                $abstract = $this->previous();
+                $this->consume(TokenType::ClassKeyword, 'attendu : class après abstract');
+                $classes[] = $this->parseClassAfterKeyword($abstract, true);
+                continue;
+            }
+
             if ($this->match(TokenType::ClassKeyword)) {
-                $classes[] = $this->parseClassAfterKeyword($this->previous());
+                $classes[] = $this->parseClassAfterKeyword($this->previous(), false);
+                continue;
+            }
+
+            if ($this->match(TokenType::InterfaceKeyword)) {
+                $interfaces[] = $this->parseInterfaceAfterKeyword($this->previous());
                 continue;
             }
 
             $statements[] = $this->parseStatement();
         }
 
-        return new Program($functions, $classes, $statements);
+        return new Program($functions, $classes, $interfaces, $statements);
     }
 
     private function parseDeclareRemainder(): void
@@ -130,6 +148,10 @@ final class Parser
             $returnType = $this->parseType();
         }
 
+        $doc = $keyword->docComment;
+        $params = $this->applyParamDocblock($params, $doc);
+        $returnType = $this->applyReturnDocblock($returnType, $doc);
+
         $this->consume(TokenType::LeftBrace, 'attendu : { pour le corps de la fonction');
         $body = $this->parseBlockAfterBrace($keyword->line);
 
@@ -142,30 +164,86 @@ final class Parser
         );
     }
 
-    private function parseClassAfterKeyword(Token $keyword): ClassDecl
+    private function parseClassAfterKeyword(Token $keyword, bool $isAbstract): ClassDecl
     {
         $name = $this->consume(TokenType::Identifier, 'attendu : nom de classe après class');
+        $parentName = null;
+
+        if ($this->match(TokenType::ExtendsKeyword)) {
+            $parent = $this->consume(
+                TokenType::Identifier,
+                'attendu : nom de classe parente après extends',
+            );
+            $parentName = (string) $parent->literal;
+        }
+
+        $interfaces = [];
+
+        if ($this->match(TokenType::ImplementsKeyword)) {
+            do {
+                $interface = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : nom d’interface après implements',
+                );
+                $interfaces[] = (string) $interface->literal;
+            } while ($this->match(TokenType::Comma));
+        }
+
         $this->consume(TokenType::LeftBrace, 'attendu : { après le nom de classe');
         $properties = [];
         $methods = [];
 
         while (!$this->check(TokenType::RightBrace) && !$this->check(TokenType::Eof)) {
             $line = $this->peek()->line;
-            $this->match(TokenType::PublicKeyword, TokenType::PrivateKeyword, TokenType::ProtectedKeyword);
+            $doc = $this->peek()->docComment;
+            $memberAbstract = false;
+            $memberStatic = false;
+
+            while (true) {
+                if ($this->match(TokenType::AbstractKeyword)) {
+                    $memberAbstract = true;
+                    continue;
+                }
+
+                if ($this->match(TokenType::StaticKeyword)) {
+                    $memberStatic = true;
+                    continue;
+                }
+
+                if ($this->match(
+                    TokenType::PublicKeyword,
+                    TokenType::PrivateKeyword,
+                    TokenType::ProtectedKeyword,
+                )) {
+                    continue;
+                }
+
+                break;
+            }
 
             if ($this->match(TokenType::Function)) {
-                $function = $this->parseFunctionAfterKeyword($this->previous());
-                $methods[] = new MethodDecl(
-                    $function->name,
-                    $function->params,
-                    $function->returnType,
-                    $function->body,
-                    $function->line,
+                if ($memberStatic && $memberAbstract) {
+                    throw new CompilerException(
+                        "ligne {$line} : méthode static abstraite non supportée",
+                    );
+                }
+
+                $methods[] = $this->parseMethodAfterFunctionKeyword(
+                    $this->previous(),
+                    $memberAbstract,
+                    $memberStatic,
+                    $doc,
                 );
                 continue;
             }
 
-            $type = $this->parseType();
+            if ($memberAbstract) {
+                throw new CompilerException(
+                    "ligne {$line} : abstract doit précéder une méthode",
+                );
+            }
+
+            $type = $this->applyPropertyDocblock($this->parseType(), $doc);
 
             if ($type === 'void') {
                 throw new CompilerException(
@@ -186,6 +264,7 @@ final class Parser
             $properties[] = new PropertyDecl(
                 $type,
                 (string) $variable->literal,
+                $memberStatic,
                 $line,
             );
         }
@@ -194,8 +273,123 @@ final class Parser
 
         return new ClassDecl(
             (string) $name->literal,
+            $parentName,
+            $interfaces,
+            $isAbstract,
             $properties,
             $methods,
+            $keyword->line,
+        );
+    }
+
+    private function parseInterfaceAfterKeyword(Token $keyword): InterfaceDecl
+    {
+        $name = $this->consume(TokenType::Identifier, 'attendu : nom d’interface');
+        $parents = [];
+
+        if ($this->match(TokenType::ExtendsKeyword)) {
+            do {
+                $parent = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : nom d’interface parente après extends',
+                );
+                $parents[] = (string) $parent->literal;
+            } while ($this->match(TokenType::Comma));
+        }
+
+        $this->consume(TokenType::LeftBrace, 'attendu : { après le nom d’interface');
+        $methods = [];
+
+        while (!$this->check(TokenType::RightBrace) && !$this->check(TokenType::Eof)) {
+            $line = $this->peek()->line;
+            $doc = $this->peek()->docComment;
+            $this->match(TokenType::AbstractKeyword);
+            $this->match(TokenType::PublicKeyword, TokenType::PrivateKeyword, TokenType::ProtectedKeyword);
+            $this->match(TokenType::AbstractKeyword);
+
+            if ($this->match(TokenType::StaticKeyword)) {
+                throw new CompilerException(
+                    "ligne {$line} : membre static interdit dans une interface",
+                );
+            }
+
+            if (!$this->match(TokenType::Function)) {
+                throw new CompilerException(
+                    "ligne {$line} : une interface ne peut contenir que des méthodes",
+                );
+            }
+
+            $methods[] = $this->parseMethodAfterFunctionKeyword(
+                $this->previous(),
+                true,
+                false,
+                $doc,
+            );
+        }
+
+        $this->consume(TokenType::RightBrace, 'attendu : } après l’interface');
+
+        return new InterfaceDecl(
+            (string) $name->literal,
+            $parents,
+            $methods,
+            $keyword->line,
+        );
+    }
+
+    private function parseMethodAfterFunctionKeyword(
+        Token $keyword,
+        bool $isAbstract,
+        bool $isStatic = false,
+        ?string $doc = null,
+    ): MethodDecl {
+        $name = $this->consume(TokenType::Identifier, 'attendu : nom de méthode après function');
+
+        if ($isStatic && $name->literal === '__construct') {
+            throw new CompilerException(
+                "ligne {$name->line} : __construct ne peut pas être static",
+            );
+        }
+
+        $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de méthode');
+        $params = $this->parseParameters();
+        $this->consume(TokenType::RightParen, 'attendu : ) après les paramètres');
+        $returnType = 'void';
+
+        if ($this->match(TokenType::Colon)) {
+            $returnType = $this->parseType();
+        }
+
+        $doc = $keyword->docComment ?? $doc;
+        $params = $this->applyParamDocblock($params, $doc);
+        $returnType = $this->applyReturnDocblock($returnType, $doc);
+
+        $body = null;
+
+        if ($this->match(TokenType::Semicolon)) {
+            if (!$isAbstract) {
+                throw new CompilerException(
+                    "ligne {$keyword->line} : méthode sans corps : ajoutez abstract",
+                );
+            }
+        } else {
+            if ($isAbstract) {
+                throw new CompilerException(
+                    "ligne {$keyword->line} : une méthode abstraite ne peut pas avoir de corps",
+                );
+            }
+
+            $this->consume(TokenType::LeftBrace, 'attendu : { pour le corps de la méthode');
+            $body = $this->parseBlockAfterBrace($keyword->line);
+        }
+
+        return new MethodDecl(
+            (string) $name->literal,
+            $params,
+            $returnType,
+            $body,
+            $isAbstract,
+            $isStatic,
             $keyword->line,
         );
     }
@@ -524,6 +718,15 @@ final class Parser
                 );
             }
 
+            if ($expression instanceof StaticPropertyExpr) {
+                return new StaticPropertyAssignExpr(
+                    $expression->className,
+                    $expression->property,
+                    $value,
+                    $operator->line,
+                );
+            }
+
             if ($expression instanceof IndexExpr) {
                 if ($expression->index === null) {
                     return new AppendExpr($expression->array, $value, $operator->line);
@@ -821,6 +1024,38 @@ final class Parser
             return new NewExpr((string) $className->literal, $arguments, $token->line);
         }
 
+        if ($this->match(TokenType::ParentKeyword)) {
+            $token = $this->previous();
+            $this->consume(TokenType::DoubleColon, 'attendu : :: après parent');
+            $method = $this->consume(TokenType::Identifier, 'attendu : nom de méthode après parent::');
+            $this->consume(TokenType::LeftParen, 'attendu : ( après parent::');
+            $arguments = [];
+
+            if (!$this->check(TokenType::RightParen)) {
+                do {
+                    $arguments[] = $this->parseExpression();
+                } while ($this->match(TokenType::Comma));
+            }
+
+            $this->consume(TokenType::RightParen, 'attendu : ) après parent::');
+
+            return new ParentCallExpr((string) $method->literal, $arguments, $token->line);
+        }
+
+        if ($this->match(TokenType::StaticKeyword)) {
+            $token = $this->previous();
+
+            if ($this->check(TokenType::DoubleColon)) {
+                throw new CompilerException(
+                    "ligne {$token->line} : static:: non supporté, utilisez self::",
+                );
+            }
+
+            throw new CompilerException(
+                "ligne {$token->line} : static utilisé hors d’une déclaration de membre",
+            );
+        }
+
         if ($this->match(TokenType::True, TokenType::False)) {
             $token = $this->previous();
 
@@ -850,6 +1085,10 @@ final class Parser
                 );
             }
 
+            if ($this->check(TokenType::DoubleColon)) {
+                return $this->parseStaticAccess($token, $name);
+            }
+
             $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de fonction');
             $arguments = [];
 
@@ -874,6 +1113,51 @@ final class Parser
         $token = $this->peek();
         throw new CompilerException(
             "ligne {$token->line} : expression attendue, trouvé {$token->description()}",
+        );
+    }
+
+    private function parseStaticAccess(Token $classToken, string $className): Expr
+    {
+        $this->consume(TokenType::DoubleColon, 'attendu : ::');
+
+        if ($this->match(TokenType::Variable)) {
+            $property = $this->previous();
+
+            return new StaticPropertyExpr(
+                $className,
+                (string) $property->literal,
+                $classToken->line,
+            );
+        }
+
+        $member = $this->consume(
+            TokenType::Identifier,
+            'attendu : nom de méthode, $propriété ou constante après ::',
+        );
+
+        if (!$this->check(TokenType::LeftParen)) {
+            throw new CompilerException(
+                "ligne {$classToken->line} : constante de classe non supportée : "
+                . $className . '::' . $member->literal,
+            );
+        }
+
+        $this->consume(TokenType::LeftParen, 'attendu : ( après ::');
+        $arguments = [];
+
+        if (!$this->check(TokenType::RightParen)) {
+            do {
+                $arguments[] = $this->parseExpression();
+            } while ($this->match(TokenType::Comma));
+        }
+
+        $this->consume(TokenType::RightParen, 'attendu : ) après les arguments');
+
+        return new StaticCallExpr(
+            $className,
+            (string) $member->literal,
+            $arguments,
+            $classToken->line,
         );
     }
 
@@ -1074,6 +1358,17 @@ final class Parser
             return 'callable';
         }
 
+        if ($token->type === TokenType::Identifier) {
+            $this->advance();
+            $name = (string) $token->literal;
+
+            if (strtolower($name) === 'array' && $this->check(TokenType::Less)) {
+                return $this->parseArrayType($token);
+            }
+
+            return $name;
+        }
+
         $type = match ($token->type) {
             TokenType::IntType => 'int',
             TokenType::FloatType => 'float',
@@ -1092,6 +1387,178 @@ final class Parser
         $this->advance();
 
         return $type;
+    }
+
+    private function parseArrayType(Token $token): string
+    {
+        $this->consume(TokenType::Less, 'attendu : < après array');
+
+        if ($this->match(TokenType::StringType)) {
+            if ($this->match(TokenType::Comma)) {
+                $value = $this->parseArrayElementType($token);
+                $this->consume(
+                    TokenType::Greater,
+                    'attendu : > après le type de tableau associatif',
+                );
+
+                return 'array<string,' . $value . '>';
+            }
+
+            $this->consume(TokenType::Greater, 'attendu : > après le type de tableau');
+
+            return 'array<string>';
+        }
+
+        $element = $this->parseArrayElementType($token);
+        $this->consume(TokenType::Greater, 'attendu : > après le type de tableau');
+
+        return 'array<' . $element . '>';
+    }
+
+    private function parseArrayElementType(Token $token): string
+    {
+        $element = match ($this->peek()->type) {
+            TokenType::IntType => 'int',
+            TokenType::FloatType => 'float',
+            TokenType::BoolType => 'bool',
+            TokenType::StringType => 'string',
+            default => null,
+        };
+
+        if ($element === null) {
+            throw new CompilerException(
+                "ligne {$token->line} : élément de tableau scalaire attendu (int, float, bool, string)",
+            );
+        }
+
+        $this->advance();
+
+        return $element;
+    }
+
+    /**
+     * @param list<Param> $params
+     * @return list<Param>
+     */
+    private function applyParamDocblock(array $params, ?string $doc): array
+    {
+        $annotations = $this->parseDocblock($doc);
+
+        if ($annotations['params'] === []) {
+            return $params;
+        }
+
+        $result = [];
+
+        foreach ($params as $param) {
+            $type = $param->type;
+
+            if ($type === 'array' && isset($annotations['params'][$param->name])) {
+                $type = $annotations['params'][$param->name];
+            }
+
+            $result[] = $type === $param->type
+                ? $param
+                : new Param($param->name, $type, $param->line);
+        }
+
+        return $result;
+    }
+
+    private function applyReturnDocblock(string $returnType, ?string $doc): string
+    {
+        if ($returnType !== 'array') {
+            return $returnType;
+        }
+
+        $annotations = $this->parseDocblock($doc);
+
+        return $annotations['return'] ?? $returnType;
+    }
+
+    private function applyPropertyDocblock(string $type, ?string $doc): string
+    {
+        if ($type !== 'array') {
+            return $type;
+        }
+
+        $annotations = $this->parseDocblock($doc);
+
+        return $annotations['var'] ?? $type;
+    }
+
+    /**
+     * @return array{params: array<string, string>, return: ?string, var: ?string}
+     */
+    private function parseDocblock(?string $doc): array
+    {
+        $annotations = ['params' => [], 'return' => null, 'var' => null];
+
+        if ($doc === null) {
+            return $annotations;
+        }
+
+        foreach (preg_split('/\R/', $doc) ?: [] as $line) {
+            $line = ltrim(trim($line), "*/ \t");
+
+            if ($line === '') {
+                continue;
+            }
+
+            if (preg_match(
+                '/^@param\s+(.+?)\s+\$([A-Za-z_][A-Za-z0-9_]*)/',
+                $line,
+                $matches,
+            ) === 1) {
+                $type = $this->docblockArrayType($matches[1]);
+
+                if ($type !== null) {
+                    $annotations['params'][$matches[2]] = $type;
+                }
+
+                continue;
+            }
+
+            if (preg_match(
+                '/^@return\s+(array<[^>]+>|[^\s]+)/',
+                $line,
+                $matches,
+            ) === 1) {
+                $type = $this->docblockArrayType($matches[1]);
+
+                if ($type !== null) {
+                    $annotations['return'] = $type;
+                }
+
+                continue;
+            }
+
+            if (preg_match(
+                '/^@var\s+(array<[^>]+>|[^\s]+)/',
+                $line,
+                $matches,
+            ) === 1) {
+                $type = $this->docblockArrayType($matches[1]);
+
+                if ($type !== null) {
+                    $annotations['var'] = $type;
+                }
+            }
+        }
+
+        return $annotations;
+    }
+
+    private function docblockArrayType(string $type): ?string
+    {
+        $type = str_replace([' ', "\t"], '', $type);
+
+        if (preg_match('/^array<(int|float|bool|string)>$/', $type) === 1
+            || preg_match('/^array<string,(int|float|bool|string)>$/', $type) === 1) {
+            return $type;
+        }
+
+        return null;
     }
 
     private function match(TokenType ...$types): bool

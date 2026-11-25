@@ -51,6 +51,7 @@ final class PhpCompiler
             $program = new Program(
                 array_merge($prelude->functions, $program->functions),
                 array_merge($prelude->classes, $program->classes),
+                array_merge($prelude->interfaces, $program->interfaces),
                 $program->statements,
                 $program->line,
             );
@@ -140,7 +141,7 @@ final class PhpCompiler
     /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
     private function usesUiClasses(array $tokens): bool
     {
-        $classes = ['Application', 'Window', 'Box', 'Label', 'Button', 'Entry'];
+        $classes = ['Application', 'Widget', 'Window', 'Box', 'Label', 'Button', 'Entry'];
         $count = count($tokens);
 
         for ($index = 0; $index < $count - 1; $index++) {

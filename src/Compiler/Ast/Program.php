@@ -9,11 +9,13 @@ final class Program extends Node
     /**
      * @param list<FunctionDecl> $functions
      * @param list<ClassDecl> $classes
+     * @param list<InterfaceDecl> $interfaces
      * @param list<Stmt> $statements
      */
     public function __construct(
         public readonly array $functions,
         public readonly array $classes,
+        public readonly array $interfaces,
         public readonly array $statements,
         int $line = 1,
     ) {

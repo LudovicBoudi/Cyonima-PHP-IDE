@@ -26,10 +26,15 @@ use Cyonima\Compiler\Ast\IndexExpr;
 use Cyonima\Compiler\Ast\Literal;
 use Cyonima\Compiler\Ast\MatchExpr;
 use Cyonima\Compiler\Ast\MethodCallExpr;
+use Cyonima\Compiler\Ast\MethodDecl;
 use Cyonima\Compiler\Ast\NewExpr;
+use Cyonima\Compiler\Ast\ParentCallExpr;
 use Cyonima\Compiler\Ast\Program;
 use Cyonima\Compiler\Ast\PropertyAccessExpr;
 use Cyonima\Compiler\Ast\PropertyAssignExpr;
+use Cyonima\Compiler\Ast\StaticCallExpr;
+use Cyonima\Compiler\Ast\StaticPropertyAssignExpr;
+use Cyonima\Compiler\Ast\StaticPropertyExpr;
 use Cyonima\Compiler\Ast\ReturnStmt;
 use Cyonima\Compiler\Ast\Stmt;
 use Cyonima\Compiler\Ast\SwitchStmt;
@@ -55,6 +60,18 @@ final class SemanticAnalyzer
     private array $classes = [];
 
     /**
+     * Hiérarchie brute des types déclarés, utilisée pendant la résolution pour
+     * vérifier la covariance avant que tous les ClassInfo soient construits.
+     *
+     * @var array<string, array{kind: 'class'|'interface', parent: ?string, interfaces: list<string>}>
+     */
+    private array $rawTypes = [];
+
+    private ?string $currentClass = null;
+
+    private bool $currentStatic = false;
+
+    /**
      * @param array<string, FunctionInfo> $functions
      */
     public function analyze(Program $program): Analysis
@@ -62,6 +79,24 @@ final class SemanticAnalyzer
         $functions = $this->collectFunctions($program);
         $classes = $this->collectClasses($program);
         $this->classes = $classes;
+
+        foreach ($program->functions as $function) {
+            foreach ($function->params as $param) {
+                $this->validateDeclaredType(
+                    $param->type,
+                    $param->line,
+                    "paramètre de {$function->name}",
+                    false,
+                );
+            }
+
+            $this->validateDeclaredType(
+                $function->returnType,
+                $function->line,
+                "retour de {$function->name}",
+                true,
+            );
+        }
 
         foreach ($program->functions as $function) {
             $info = $functions[$function->name];
@@ -80,21 +115,34 @@ final class SemanticAnalyzer
         }
 
         foreach ($classes as $class) {
-            foreach ($class->methods as $methodName => $method) {
+            foreach ($class->declaredMethods as $methodName => $method) {
                 $declaration = $class->methodDeclarations[$methodName]
                     ?? throw new CompilerException(
                         "méthode absente de l’AST : {$class->name}::{$methodName}",
                     );
-                $scope = new Scope(['this' => $class->name] + $method->params);
+
+                if ($method->isAbstract || $declaration->body === null) {
+                    continue;
+                }
+
+                $scope = new Scope(
+                    $method->isStatic
+                        ? $method->params
+                        : ['this' => $class->name] + $method->params,
+                );
+                $this->currentClass = $class->name;
+                $this->currentStatic = $method->isStatic;
                 $this->analyzeStatements(
                     $declaration->body->statements,
                     $scope,
                     $method->returnType,
                     $functions,
                 );
+                $this->currentClass = null;
+                $this->currentStatic = false;
                 $method->variables = $scope->variables;
 
-                $assigned = ['this' => true];
+                $assigned = $method->isStatic ? [] : ['this' => true];
 
                 foreach ($method->params as $name => $_type) {
                     $assigned[$name] = true;
@@ -170,31 +218,95 @@ final class SemanticAnalyzer
      */
     private function collectClasses(Program $program): array
     {
-        $classes = [];
+        $rawClasses = [];
+        $rawInterfaces = [];
+        $this->rawTypes = [];
+        $reserved = ['array', 'int', 'float', 'bool', 'string', 'void', 'this', 'callable', 'parent', 'self', 'static'];
 
-        foreach ($program->classes as $declaration) {
-            if (in_array(strtolower($declaration->name), ['array', 'int', 'float', 'bool', 'string', 'void', 'this', 'callable'], true)) {
+        foreach ($program->interfaces as $declaration) {
+            $name = $declaration->name;
+
+            if (in_array(strtolower($name), $reserved, true)) {
                 throw new CompilerException(
-                    "ligne {$declaration->line} : nom de classe réservé : {$declaration->name}",
+                    "ligne {$declaration->line} : nom d’interface réservé : {$name}",
                 );
             }
 
-            if (isset($classes[$declaration->name])) {
+            if (isset($rawClasses[$name]) || isset($rawInterfaces[$name])) {
                 throw new CompilerException(
-                    "ligne {$declaration->line} : classe déjà définie : {$declaration->name}",
+                    "ligne {$declaration->line} : type déjà défini : {$name}",
+                );
+            }
+
+            $methods = [];
+            $methodDeclarations = [];
+
+            foreach ($declaration->methods as $method) {
+                if (isset($methods[$method->name])) {
+                    throw new CompilerException(
+                        "ligne {$method->line} : méthode dupliquée {$name}::{$method->name}",
+                    );
+                }
+
+                if ($method->name === '__construct') {
+                    throw new CompilerException(
+                        "ligne {$method->line} : constructeur d’interface non supporté",
+                    );
+                }
+
+                $params = $this->collectMethodParams($method);
+                $info = new FunctionInfo($method->name, $params, $method->returnType);
+                $info->isAbstract = true;
+                $methods[$method->name] = $info;
+                $methodDeclarations[$method->name] = $method;
+            }
+
+            $rawInterfaces[$name] = [
+                'parents' => $declaration->parents,
+                'methods' => $methods,
+                'declarations' => $methodDeclarations,
+                'line' => $declaration->line,
+            ];
+            $this->rawTypes[$name] = [
+                'kind' => 'interface',
+                'parent' => null,
+                'interfaces' => $declaration->parents,
+            ];
+        }
+
+        foreach ($program->classes as $declaration) {
+            $name = $declaration->name;
+
+            if (in_array(strtolower($name), $reserved, true)) {
+                throw new CompilerException(
+                    "ligne {$declaration->line} : nom de classe réservé : {$name}",
+                );
+            }
+
+            if (isset($rawClasses[$name]) || isset($rawInterfaces[$name])) {
+                throw new CompilerException(
+                    "ligne {$declaration->line} : type déjà défini : {$name}",
                 );
             }
 
             $properties = [];
+            $staticProperties = [];
+            $propertyNames = [];
 
             foreach ($declaration->properties as $property) {
-                if (isset($properties[$property->name])) {
+                if (isset($propertyNames[$property->name])) {
                     throw new CompilerException(
                         "ligne {$property->line} : propriété dupliquée \${$property->name}",
                     );
                 }
 
-                $properties[$property->name] = $property->type;
+                $propertyNames[$property->name] = true;
+
+                if ($property->isStatic) {
+                    $staticProperties[$property->name] = $property->type;
+                } else {
+                    $properties[$property->name] = $property->type;
+                }
             }
 
             $methods = [];
@@ -204,37 +316,20 @@ final class SemanticAnalyzer
             foreach ($declaration->methods as $method) {
                 if (isset($methods[$method->name])) {
                     throw new CompilerException(
-                        "ligne {$method->line} : méthode dupliquée {$declaration->name}::{$method->name}",
+                        "ligne {$method->line} : méthode dupliquée {$name}::{$method->name}",
                     );
                 }
 
-                $methodDeclarations[$method->name] = $method;
-
-                $params = [];
-
-                foreach ($method->params as $param) {
-                    if ($param->type === 'void') {
-                        throw new CompilerException(
-                            "ligne {$param->line} : un paramètre ne peut pas être de type void",
-                        );
-                    }
-
-                    if ($param->name === 'this') {
-                        throw new CompilerException(
-                            "ligne {$param->line} : \$this est réservé aux méthodes",
-                        );
-                    }
-
-                    if (isset($params[$param->name])) {
-                        throw new CompilerException(
-                            "ligne {$param->line} : paramètre dupliqué \${$param->name}",
-                        );
-                    }
-
-                    $params[$param->name] = $param->type;
-                }
+                $params = $this->collectMethodParams($method);
+                $isAbstract = $method->isAbstract || $method->body === null;
 
                 if ($method->name === '__construct') {
+                    if ($isAbstract) {
+                        throw new CompilerException(
+                            "ligne {$method->line} : constructeur abstrait non supporté",
+                        );
+                    }
+
                     if ($method->returnType !== 'void') {
                         throw new CompilerException(
                             "ligne {$method->line} : __construct doit retourner void",
@@ -244,23 +339,687 @@ final class SemanticAnalyzer
                     $constructor = $method->name;
                 }
 
-                $methods[$method->name] = new FunctionInfo(
-                    $method->name,
-                    $params,
-                    $method->returnType,
+                if ($method->isStatic && $isAbstract) {
+                    throw new CompilerException(
+                        "ligne {$method->line} : méthode static abstraite non supportée",
+                    );
+                }
+
+                if ($method->isStatic && $method->name === '__construct') {
+                    throw new CompilerException(
+                        "ligne {$method->line} : __construct ne peut pas être static",
+                    );
+                }
+
+                $info = new FunctionInfo($method->name, $params, $method->returnType);
+                $info->isAbstract = $isAbstract;
+                $info->isStatic = $method->isStatic;
+                $methods[$method->name] = $info;
+                $methodDeclarations[$method->name] = $method;
+            }
+
+            if (!$declaration->isAbstract) {
+                foreach ($methods as $methodName => $methodInfo) {
+                    if ($methodInfo->isAbstract) {
+                        throw new CompilerException(
+                            "ligne {$declaration->line} : classe concrète {$name} avec méthode abstraite {$methodName}",
+                        );
+                    }
+                }
+            }
+
+            $rawClasses[$name] = [
+                'parent' => $declaration->parentName,
+                'interfaces' => $declaration->interfaces,
+                'isAbstract' => $declaration->isAbstract,
+                'properties' => $properties,
+                'staticProperties' => $staticProperties,
+                'methods' => $methods,
+                'declarations' => $methodDeclarations,
+                'constructor' => $constructor,
+                'line' => $declaration->line,
+            ];
+            $this->rawTypes[$name] = [
+                'kind' => 'class',
+                'parent' => $declaration->parentName,
+                'interfaces' => $declaration->interfaces,
+            ];
+        }
+
+        $interfaceIds = [];
+
+        foreach (array_keys($rawInterfaces) as $index => $name) {
+            $interfaceIds[$name] = $index;
+        }
+
+        $resolved = [];
+        $resolving = [];
+
+        $resolveInterface = function (string $name) use (
+            &$resolveInterface,
+            &$rawInterfaces,
+            &$rawClasses,
+            &$resolved,
+            &$resolving,
+            $interfaceIds,
+        ): ClassInfo {
+            if (isset($resolved[$name])) {
+                return $resolved[$name];
+            }
+
+            if (isset($resolving[$name])) {
+                throw new CompilerException(
+                    "ligne {$rawInterfaces[$name]['line']} : cycle d’héritage d’interface autour de {$name}",
                 );
             }
 
-            $classes[$declaration->name] = new ClassInfo(
-                $declaration->name,
-                $properties,
+            if (!isset($rawInterfaces[$name])) {
+                throw new CompilerException("interface inconnue : {$name}");
+            }
+
+            $resolving[$name] = true;
+            $data = $rawInterfaces[$name];
+            $methods = [];
+            $owners = [];
+            $declarations = [];
+            $parents = [];
+
+            foreach ($data['parents'] as $parentName) {
+                if (!isset($rawInterfaces[$parentName])) {
+                    if (isset($rawClasses[$parentName])) {
+                        throw new CompilerException(
+                            "ligne {$data['line']} : une interface ne peut pas hériter d’une classe : {$parentName}",
+                        );
+                    }
+
+                    throw new CompilerException(
+                        "ligne {$data['line']} : interface parente inconnue : {$parentName}",
+                    );
+                }
+
+                $parent = $resolveInterface($parentName);
+
+                if (!in_array($parentName, $parents, true)) {
+                    $parents[] = $parentName;
+                }
+
+                foreach ($parent->interfaces as $ancestor) {
+                    if (!in_array($ancestor, $parents, true)) {
+                        $parents[] = $ancestor;
+                    }
+                }
+
+                foreach ($parent->methods as $methodName => $methodInfo) {
+                    if (isset($methods[$methodName])) {
+                        $merged = $this->mergeInterfaceMethod(
+                            $methods[$methodName],
+                            $methodInfo,
+                            $data['line'],
+                            $name . '::' . $methodName,
+                        );
+                        $methods[$methodName] = $merged;
+
+                        if ($merged === $methodInfo) {
+                            $owners[$methodName] = $parent->methodOwners[$methodName]
+                                ?? $parentName;
+                            $declarations[$methodName] = $parent->methodDeclarations[$methodName];
+                        }
+
+                        continue;
+                    }
+
+                    $methods[$methodName] = $methodInfo;
+                    $owners[$methodName] = $parent->methodOwners[$methodName]
+                        ?? $parentName;
+                    $declarations[$methodName] = $parent->methodDeclarations[$methodName];
+                }
+            }
+
+            foreach ($data['methods'] as $methodName => $methodInfo) {
+                if (isset($methods[$methodName])) {
+                    $this->validateOverride(
+                        $methods[$methodName],
+                        $methodInfo,
+                        $data['line'],
+                        $name . '::' . $methodName,
+                    );
+                }
+
+                $methods[$methodName] = $methodInfo;
+                $owners[$methodName] = $name;
+                $declarations[$methodName] = $data['declarations'][$methodName];
+            }
+
+            $vtable = [];
+            $vtableSlots = [];
+
+            foreach ($methods as $methodName => $methodInfo) {
+                if ($methodInfo->isStatic) {
+                    continue;
+                }
+
+                $vtableSlots[$methodName] = count($vtable);
+                $vtable[] = [$owners[$methodName], $methodName];
+            }
+
+            $info = new ClassInfo(
+                $name,
+                null,
+                true,
+                true,
+                $parents,
+                [],
+                [],
+                [],
                 $methods,
-                $methodDeclarations,
+                $data['methods'],
+                $declarations,
+                $owners,
+                null,
+                null,
+                $vtable,
+                $vtableSlots,
+                [],
+                $interfaceIds[$name],
+            );
+            unset($resolving[$name]);
+            $resolved[$name] = $info;
+
+            return $info;
+        };
+
+        foreach (array_keys($rawInterfaces) as $name) {
+            $resolveInterface($name);
+        }
+
+        $resolveClass = function (string $name) use (
+            &$resolveClass,
+            &$resolveInterface,
+            &$rawClasses,
+            &$rawInterfaces,
+            &$resolved,
+            &$resolving,
+            $interfaceIds,
+        ): ClassInfo {
+            if (isset($resolved[$name])) {
+                return $resolved[$name];
+            }
+
+            if (isset($resolving[$name])) {
+                throw new CompilerException(
+                    "ligne {$rawClasses[$name]['line']} : cycle d’héritage autour de {$name}",
+                );
+            }
+
+            if (!isset($rawClasses[$name])) {
+                throw new CompilerException("classe inconnue : {$name}");
+            }
+
+            $resolving[$name] = true;
+            $data = $rawClasses[$name];
+            $parent = null;
+
+            if ($data['parent'] !== null) {
+                if (!isset($rawClasses[$data['parent']])) {
+                    if (isset($rawInterfaces[$data['parent']])) {
+                        throw new CompilerException(
+                            "ligne {$data['line']} : une classe ne peut pas hériter d’une interface : {$data['parent']}",
+                        );
+                    }
+
+                    throw new CompilerException(
+                        "ligne {$data['line']} : classe parente inconnue : {$data['parent']}",
+                    );
+                }
+
+                $parent = $resolveClass($data['parent']);
+            }
+
+            $properties = $parent?->properties ?? [];
+            $staticProperties = $parent?->staticProperties ?? [];
+            $staticOwners = $parent?->staticPropertyOwners ?? [];
+
+            foreach ($data['properties'] as $propertyName => $propertyType) {
+                if (isset($properties[$propertyName]) || isset($staticProperties[$propertyName])) {
+                    throw new CompilerException(
+                        "ligne {$data['line']} : propriété déjà définie dans l’héritage : \${$propertyName}",
+                    );
+                }
+
+                $properties[$propertyName] = $propertyType;
+            }
+
+            foreach ($data['staticProperties'] as $propertyName => $propertyType) {
+                if (isset($properties[$propertyName]) || isset($staticProperties[$propertyName])) {
+                    throw new CompilerException(
+                        "ligne {$data['line']} : propriété statique déjà définie dans l’héritage : \${$propertyName}",
+                    );
+                }
+
+                $staticProperties[$propertyName] = $propertyType;
+                $staticOwners[$propertyName] = $name;
+            }
+
+            $methods = $parent?->methods ?? [];
+            $owners = $parent?->methodOwners ?? [];
+            $vtable = $parent?->vtable ?? [];
+            $vtableSlots = $parent?->vtableSlots ?? [];
+            $interfaces = $parent?->interfaces ?? [];
+            $constructor = $parent?->constructor;
+            $constructorClass = $parent?->constructorClass;
+
+            foreach ($data['interfaces'] as $interfaceName) {
+                if (!isset($rawInterfaces[$interfaceName])) {
+                    if (isset($rawClasses[$interfaceName])) {
+                        throw new CompilerException(
+                            "ligne {$data['line']} : une classe ne peut pas implémenter une classe : {$interfaceName}",
+                        );
+                    }
+
+                    throw new CompilerException(
+                        "ligne {$data['line']} : interface inconnue : {$interfaceName}",
+                    );
+                }
+
+                $interface = $resolved[$interfaceName]
+                    ?? $resolveInterface($interfaceName);
+
+                if (!in_array($interfaceName, $interfaces, true)) {
+                    $interfaces[] = $interfaceName;
+                }
+
+                foreach ($interface->interfaces as $ancestor) {
+                    if (!in_array($ancestor, $interfaces, true)) {
+                        $interfaces[] = $ancestor;
+                    }
+                }
+            }
+
+            foreach ($data['methods'] as $methodName => $methodInfo) {
+                if ($methodName === '__construct') {
+                    $constructor = '__construct';
+                    $constructorClass = $name;
+                    $methods[$methodName] = $methodInfo;
+                    $owners[$methodName] = $name;
+                    continue;
+                }
+
+                $parentMethod = $parent?->methods[$methodName] ?? null;
+
+                if ($parentMethod !== null) {
+                    $this->validateOverride(
+                        $parentMethod,
+                        $methodInfo,
+                        $data['line'],
+                        $name . '::' . $methodName,
+                    );
+                    $methods[$methodName] = $methodInfo;
+                    $owners[$methodName] = $name;
+
+                    if ($methodInfo->isStatic) {
+                        continue;
+                    }
+
+                    $slot = $vtableSlots[$methodName] ?? throw new CompilerException(
+                        "ligne {$data['line']} : slot de méthode absent pour {$methodName}",
+                    );
+                    $vtable[$slot] = $methodInfo->isAbstract
+                        ? [null, $methodName]
+                        : [$name, $methodName];
+                    continue;
+                }
+
+                $methods[$methodName] = $methodInfo;
+                $owners[$methodName] = $name;
+
+                if ($methodInfo->isStatic) {
+                    continue;
+                }
+
+                $slot = count($vtable);
+                $vtable[] = $methodInfo->isAbstract
+                    ? [null, $methodName]
+                    : [$name, $methodName];
+                $vtableSlots[$methodName] = $slot;
+            }
+
+            if (!$data['isAbstract']) {
+                foreach ($methods as $methodName => $methodInfo) {
+                    if ($methodInfo->isAbstract) {
+                        throw new CompilerException(
+                            "ligne {$data['line']} : classe concrète {$name} doit implémenter {$methodName}",
+                        );
+                    }
+                }
+            }
+
+            $interfaceVtables = [];
+
+            foreach ($interfaces as $interfaceName) {
+                $interface = $resolved[$interfaceName] ?? throw new CompilerException(
+                    "interface absente : {$interfaceName}",
+                );
+                $entries = [];
+
+                foreach ($interface->methods as $methodName => $interfaceMethod) {
+                    if (!isset($methods[$methodName])) {
+                        if (!$data['isAbstract']) {
+                            throw new CompilerException(
+                                "ligne {$data['line']} : {$name} doit implémenter {$interfaceName}::{$methodName}",
+                            );
+                        }
+
+                        $entries[] = [null, $methodName];
+                        continue;
+                    }
+
+                    $implementation = $methods[$methodName];
+                    $this->validateOverride(
+                        $interfaceMethod,
+                        $implementation,
+                        $data['line'],
+                        $name . '::' . $methodName,
+                    );
+
+                    if ($implementation->isAbstract) {
+                        if (!$data['isAbstract']) {
+                            throw new CompilerException(
+                                "ligne {$data['line']} : {$name} doit implémenter {$interfaceName}::{$methodName}",
+                            );
+                        }
+
+                        $entries[] = [null, $methodName];
+                        continue;
+                    }
+
+                    $entries[] = [$owners[$methodName], $methodName];
+                }
+
+                $interfaceVtables[$interfaceName] = [
+                    'id' => $interfaceIds[$interfaceName],
+                    'vtable' => $entries,
+                ];
+            }
+
+            $class = new ClassInfo(
+                $name,
+                $data['parent'],
+                false,
+                $data['isAbstract'],
+                $interfaces,
+                $properties,
+                $staticProperties,
+                $staticOwners,
+                $methods,
+                $data['methods'],
+                $data['declarations'],
+                $owners,
                 $constructor,
+                $constructorClass,
+                $vtable,
+                $vtableSlots,
+                $interfaceVtables,
+                null,
+            );
+            unset($resolving[$name]);
+            $resolved[$name] = $class;
+
+            return $class;
+        };
+
+        foreach (array_keys($rawClasses) as $name) {
+            $resolveClass($name);
+        }
+
+        $this->classes = $resolved;
+
+        foreach ($rawClasses as $name => $data) {
+            $class = $resolved[$name];
+
+            foreach ($class->properties as $propertyType) {
+                $this->validateDeclaredType(
+                    $propertyType,
+                    $data['line'],
+                    "propriété de {$name}",
+                    false,
+                );
+            }
+
+            foreach ($class->staticProperties as $propertyType) {
+                $this->validateDeclaredType(
+                    $propertyType,
+                    $data['line'],
+                    "propriété statique de {$name}",
+                    false,
+                );
+            }
+
+            foreach ($data['declarations'] as $methodName => $method) {
+                foreach ($method->params as $param) {
+                    $this->validateDeclaredType(
+                        $param->type,
+                        $param->line,
+                        "paramètre de {$name}::{$methodName}",
+                        false,
+                    );
+                }
+
+                $this->validateDeclaredType(
+                    $method->returnType,
+                    $method->line,
+                    "retour de {$name}::{$methodName}",
+                    true,
+                );
+            }
+        }
+
+        foreach ($rawInterfaces as $name => $data) {
+            foreach ($data['declarations'] as $methodName => $method) {
+                foreach ($method->params as $param) {
+                    $this->validateDeclaredType(
+                        $param->type,
+                        $param->line,
+                        "paramètre de {$name}::{$methodName}",
+                        false,
+                    );
+                }
+
+                $this->validateDeclaredType(
+                    $method->returnType,
+                    $method->line,
+                    "retour de {$name}::{$methodName}",
+                    true,
+                );
+            }
+        }
+
+        return $resolved;
+    }
+
+    /** @return array<string, string> */
+    private function collectMethodParams(MethodDecl $method): array
+    {
+        $params = [];
+
+        foreach ($method->params as $param) {
+            if ($param->type === 'void') {
+                throw new CompilerException(
+                    "ligne {$param->line} : un paramètre ne peut pas être de type void",
+                );
+            }
+
+            if ($param->name === 'this') {
+                throw new CompilerException(
+                    "ligne {$param->line} : \$this est réservé aux méthodes",
+                );
+            }
+
+            if (isset($params[$param->name])) {
+                throw new CompilerException(
+                    "ligne {$param->line} : paramètre dupliqué \${$param->name}",
+                );
+            }
+
+            $params[$param->name] = $param->type;
+        }
+
+        return $params;
+    }
+
+    private function resolveStaticClass(string $name, int $line): ClassInfo
+    {
+        $className = strtolower($name) === 'self' ? $this->currentClass : $name;
+
+        if ($className === null) {
+            throw new CompilerException(
+                "ligne {$line} : self:: utilisé hors d’une classe",
             );
         }
 
-        return $classes;
+        $class = $this->classes[$className] ?? throw new CompilerException(
+            "ligne {$line} : classe inconnue : {$name}",
+        );
+
+        if ($class->isInterface) {
+            throw new CompilerException(
+                "ligne {$line} : accès statique interdit sur l’interface {$className}",
+            );
+        }
+
+        return $class;
+    }
+
+    private function validateOverride(
+        FunctionInfo $parent,
+        FunctionInfo $child,
+        int $line,
+        string $context,
+    ): void {
+        if ($parent->isStatic !== $child->isStatic) {
+            throw new CompilerException(
+                "ligne {$line} : static incompatible pour la surcharge de {$context}",
+            );
+        }
+
+        $parentParams = array_values($parent->params);
+        $childParams = array_values($child->params);
+
+        if (!$this->returnTypeIsCovariant($child->returnType, $parent->returnType)
+            || $parentParams !== $childParams) {
+            throw new CompilerException(
+                "ligne {$line} : signature incompatible pour la surcharge de {$context}",
+            );
+        }
+    }
+
+    private function returnTypeIsCovariant(string $child, string $parent): bool
+    {
+        if ($child === $parent) {
+            return true;
+        }
+
+        if (!isset($this->rawTypes[$child]) || !isset($this->rawTypes[$parent])) {
+            return false;
+        }
+
+        $queue = [$child];
+        $seen = [];
+
+        while ($queue !== []) {
+            $type = array_shift($queue);
+
+            if ($type === $parent) {
+                return true;
+            }
+
+            if (isset($seen[$type])) {
+                continue;
+            }
+
+            $seen[$type] = true;
+            $info = $this->rawTypes[$type] ?? null;
+
+            if ($info === null) {
+                continue;
+            }
+
+            if ($info['parent'] !== null) {
+                $queue[] = $info['parent'];
+            }
+
+            foreach ($info['interfaces'] as $interface) {
+                $queue[] = $interface;
+            }
+        }
+
+        return false;
+    }
+
+    private function mergeInterfaceMethod(
+        FunctionInfo $left,
+        FunctionInfo $right,
+        int $line,
+        string $context,
+    ): FunctionInfo {
+        if ($left->isStatic !== $right->isStatic
+            || array_values($left->params) !== array_values($right->params)) {
+            throw new CompilerException(
+                "ligne {$line} : signature incompatible pour la fusion de {$context}",
+            );
+        }
+
+        if ($left->returnType === $right->returnType) {
+            return $left;
+        }
+
+        if ($this->returnTypeIsCovariant($left->returnType, $right->returnType)) {
+            return $left;
+        }
+
+        if ($this->returnTypeIsCovariant($right->returnType, $left->returnType)) {
+            return $right;
+        }
+
+        throw new CompilerException(
+            "ligne {$line} : signature incompatible pour la fusion de {$context}",
+        );
+    }
+
+    private function validateDeclaredType(
+        string $type,
+        int $line,
+        string $context,
+        bool $allowVoid,
+    ): void {
+        if (in_array($type, ['int', 'float', 'bool', 'string'], true)) {
+            return;
+        }
+
+        if ($allowVoid && $type === 'void') {
+            return;
+        }
+
+        if ($type === 'array') {
+            throw new CompilerException(
+                "ligne {$line} : type de tableau incomplet pour {$context} ; utilisez array<int> ou array<string,T>",
+            );
+        }
+
+        if ($this->isListType($type) || $this->isMapType($type)) {
+            return;
+        }
+
+        if ($this->isCallableType($type)) {
+            return;
+        }
+
+        if (isset($this->classes[$type])) {
+            return;
+        }
+
+        throw new CompilerException(
+            "ligne {$line} : type inconnu pour {$context} : {$type}",
+        );
     }
 
     /**
@@ -322,6 +1081,11 @@ final class SemanticAnalyzer
             }
 
             $type = $this->analyzeExpr($statement->value, $scope, $functions);
+
+            if ($this->coerceEmptyArrayType($statement->value, $returnType)) {
+                $type = $returnType;
+            }
+
             $this->requireType($type, $returnType, $statement->line, 'return');
 
             return;
@@ -724,6 +1488,88 @@ final class SemanticAnalyzer
             return $signature['return'];
         }
 
+        if ($expression instanceof ParentCallExpr) {
+            if ($this->currentStatic) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : parent:: non supporté dans une méthode statique",
+                );
+            }
+
+            $thisType = $scope->typeOf('this');
+
+            if ($thisType === null) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : parent:: utilisé hors d’une méthode",
+                );
+            }
+
+            $class = $this->classes[$thisType];
+            $parentName = $class->parentName;
+
+            if ($parentName === null) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : {$thisType} n’a pas de classe parente",
+                );
+            }
+
+            $parent = $this->classes[$parentName];
+
+            if (!isset($parent->methods[$expression->method])) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : méthode parente inconnue {$parentName}::{$expression->method}",
+                );
+            }
+
+            $method = $parent->methods[$expression->method];
+
+            if ($method->isStatic) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : appel parent:: d’une méthode statique non supporté",
+                );
+            }
+
+            if ($method->isAbstract) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : appel à une méthode abstraite parente {$parentName}::{$expression->method}",
+                );
+            }
+
+            $parameters = array_values($method->params);
+            $arguments = array_map(
+                fn (Expr $argument): string => $this->analyzeExpr($argument, $scope, $functions),
+                $expression->arguments,
+            );
+
+            if (count($arguments) !== count($parameters)) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : {$parentName}::{$expression->method} attend "
+                    . count($parameters) . ' argument(s)',
+                );
+            }
+
+            foreach ($expression->arguments as $index => $argument) {
+                $argumentType = $arguments[$index];
+
+                if ($this->coerceEmptyArrayType($argument, $parameters[$index])) {
+                    $argumentType = $parameters[$index];
+                }
+
+                $this->requireType(
+                    $argumentType,
+                    $parameters[$index],
+                    $expression->line,
+                    $parentName . '::' . $expression->method,
+                );
+            }
+
+            $expression->targetClass = $method->isAbstract
+                ? null
+                : ($parent->methodOwners[$expression->method] ?? $parentName);
+            $expression->type = $method->returnType;
+
+            return $method->returnType;
+        }
+
         if ($expression instanceof NewExpr) {
             if (!isset($this->classes[$expression->className])) {
                 throw new CompilerException(
@@ -732,6 +1578,19 @@ final class SemanticAnalyzer
             }
 
             $class = $this->classes[$expression->className];
+
+            if ($class->isInterface) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : instanciation d’une interface interdite : {$class->name}",
+                );
+            }
+
+            if ($class->isAbstract) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : instanciation d’une classe abstraite interdite : {$class->name}",
+                );
+            }
+
             $arguments = array_map(
                 fn (Expr $argument): string => $this->analyzeExpr($argument, $scope, $functions),
                 $expression->arguments,
@@ -754,7 +1613,13 @@ final class SemanticAnalyzer
                     );
                 }
 
-                foreach ($arguments as $index => $argumentType) {
+                foreach ($expression->arguments as $index => $argument) {
+                    $argumentType = $arguments[$index];
+
+                    if ($this->coerceEmptyArrayType($argument, $parameters[$index])) {
+                        $argumentType = $parameters[$index];
+                    }
+
                     $this->requireType(
                         $argumentType,
                         $parameters[$index],
@@ -822,6 +1687,104 @@ final class SemanticAnalyzer
             return $propertyType;
         }
 
+        if ($expression instanceof StaticPropertyExpr) {
+            $class = $this->resolveStaticClass($expression->className, $expression->line);
+
+            if (!isset($class->staticProperties[$expression->property])) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : propriété statique inconnue {$class->name}::\${$expression->property}",
+                );
+            }
+
+            $expression->ownerClass = $class->staticPropertyOwners[$expression->property]
+                ?? $class->name;
+            $expression->type = $class->staticProperties[$expression->property];
+
+            return $expression->type;
+        }
+
+        if ($expression instanceof StaticPropertyAssignExpr) {
+            $class = $this->resolveStaticClass($expression->className, $expression->line);
+
+            if (!isset($class->staticProperties[$expression->property])) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : propriété statique inconnue {$class->name}::\${$expression->property}",
+                );
+            }
+
+            $propertyType = $class->staticProperties[$expression->property];
+            $valueType = $this->analyzeExpr($expression->value, $scope, $functions);
+            $this->requireType(
+                $valueType,
+                $propertyType,
+                $expression->line,
+                $class->name . '::$' . $expression->property,
+            );
+            $expression->ownerClass = $class->staticPropertyOwners[$expression->property]
+                ?? $class->name;
+            $expression->type = $propertyType;
+
+            return $propertyType;
+        }
+
+        if ($expression instanceof StaticCallExpr) {
+            $class = $this->resolveStaticClass($expression->className, $expression->line);
+
+            if (!isset($class->methods[$expression->method])) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : méthode inconnue {$class->name}::{$expression->method}",
+                );
+            }
+
+            $method = $class->methods[$expression->method];
+
+            if (!$method->isStatic) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : méthode non statique appelée statiquement : {$class->name}::{$expression->method}",
+                );
+            }
+
+            if ($method->isAbstract) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : appel à une méthode statique abstraite : {$class->name}::{$expression->method}",
+                );
+            }
+
+            $parameters = array_values($method->params);
+            $arguments = array_map(
+                fn (Expr $argument): string => $this->analyzeExpr($argument, $scope, $functions),
+                $expression->arguments,
+            );
+
+            if (count($arguments) !== count($parameters)) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : {$class->name}::{$expression->method} attend "
+                    . count($parameters) . ' argument(s)',
+                );
+            }
+
+            foreach ($expression->arguments as $index => $argument) {
+                $argumentType = $arguments[$index];
+
+                if ($this->coerceEmptyArrayType($argument, $parameters[$index])) {
+                    $argumentType = $parameters[$index];
+                }
+
+                $this->requireType(
+                    $argumentType,
+                    $parameters[$index],
+                    $expression->line,
+                    $class->name . '::' . $expression->method,
+                );
+            }
+
+            $expression->resolvedClass = $class->methodOwners[$expression->method]
+                ?? $class->name;
+            $expression->type = $method->returnType;
+
+            return $method->returnType;
+        }
+
         if ($expression instanceof MethodCallExpr) {
             $objectType = $this->analyzeExpr($expression->object, $scope, $functions);
 
@@ -833,6 +1796,12 @@ final class SemanticAnalyzer
 
             $class = $this->classes[$objectType];
 
+            if ($expression->method === '__construct') {
+                throw new CompilerException(
+                    "ligne {$expression->line} : appel explicite à __construct non supporté",
+                );
+            }
+
             if (!isset($class->methods[$expression->method])) {
                 throw new CompilerException(
                     "ligne {$expression->line} : méthode inconnue {$objectType}::{$expression->method}",
@@ -840,6 +1809,13 @@ final class SemanticAnalyzer
             }
 
             $method = $class->methods[$expression->method];
+
+            if ($method->isStatic) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : méthode statique appelée via -> : {$objectType}::{$expression->method}",
+                );
+            }
+
             $parameters = array_values($method->params);
             $arguments = array_map(
                 fn (Expr $argument): string => $this->analyzeExpr($argument, $scope, $functions),
@@ -853,7 +1829,13 @@ final class SemanticAnalyzer
                 );
             }
 
-            foreach ($arguments as $index => $argumentType) {
+            foreach ($expression->arguments as $index => $argument) {
+                $argumentType = $arguments[$index];
+
+                if ($this->coerceEmptyArrayType($argument, $parameters[$index])) {
+                    $argumentType = $parameters[$index];
+                }
+
                 $this->requireType(
                     $argumentType,
                     $parameters[$index],
@@ -939,6 +1921,12 @@ final class SemanticAnalyzer
         }
 
         if ($expression instanceof VariableExpr) {
+            if ($expression->name === 'this' && $this->currentStatic) {
+                throw new CompilerException(
+                    "ligne {$expression->line} : \$this n’est pas disponible dans une méthode statique",
+                );
+            }
+
             $type = $scope->typeOf($expression->name);
 
             if ($type === null) {
@@ -975,6 +1963,11 @@ final class SemanticAnalyzer
 
             if ($scope->has($expression->name)) {
                 $existing = (string) $scope->typeOf($expression->name);
+
+                if ($this->coerceEmptyArrayType($expression->value, $existing)) {
+                    $valueType = $existing;
+                }
+
                 $result = $this->assignType($existing, $valueType, $expression->line, $expression->name);
 
                 if ($result !== $existing) {
@@ -1460,6 +2453,11 @@ final class SemanticAnalyzer
 
         foreach ($expression->arguments as $index => $argument) {
             $type = $this->analyzeExpr($argument, $scope, $functions);
+
+            if ($this->coerceEmptyArrayType($argument, $parameters[$index])) {
+                $type = $parameters[$index];
+            }
+
             $this->requireType($type, $parameters[$index], $expression->line, $expression->name);
         }
 
@@ -1672,6 +2670,14 @@ final class SemanticAnalyzer
             return $assigned;
         }
 
+        if ($expression instanceof ParentCallExpr) {
+            foreach ($expression->arguments as $argument) {
+                $assigned = $this->flowExpr($argument, $assigned);
+            }
+
+            return $assigned;
+        }
+
         if ($expression instanceof NewExpr) {
             foreach ($expression->arguments as $argument) {
                 $assigned = $this->flowExpr($argument, $assigned);
@@ -1710,6 +2716,22 @@ final class SemanticAnalyzer
             $assigned = $this->flowExpr($expression->object, $assigned);
 
             return $this->flowExpr($expression->value, $assigned);
+        }
+
+        if ($expression instanceof StaticPropertyExpr) {
+            return $assigned;
+        }
+
+        if ($expression instanceof StaticPropertyAssignExpr) {
+            return $this->flowExpr($expression->value, $assigned);
+        }
+
+        if ($expression instanceof StaticCallExpr) {
+            foreach ($expression->arguments as $argument) {
+                $assigned = $this->flowExpr($argument, $assigned);
+            }
+
+            return $assigned;
         }
 
         if ($expression instanceof MethodCallExpr) {
@@ -1904,13 +2926,26 @@ final class SemanticAnalyzer
         return 'bool';
     }
 
-    private function requireType(string $actual, string $expected, int $line, string $context): void
+    private function coerceEmptyArrayType(Expr $expression, string $expected): bool
     {
-        if ($actual === $expected || ($expected === 'float' && $actual === 'int')) {
-            return;
+        if (!$expression instanceof ArrayExpr
+            || $expression->type !== 'array'
+            || $expected === 'array') {
+            return false;
         }
 
-        if ($expected === 'callable' && $this->isCallableType($actual)) {
+        if (!$this->isListType($expected) && !$this->isMapType($expected)) {
+            return false;
+        }
+
+        $expression->type = $expected;
+
+        return true;
+    }
+
+    private function requireType(string $actual, string $expected, int $line, string $context): void
+    {
+        if ($this->isAssignable($actual, $expected)) {
             return;
         }
 
@@ -1964,7 +2999,11 @@ final class SemanticAnalyzer
                 return $valueType;
             }
 
-            if ($valueType === 'array' || $valueType === $existing) {
+            if ($valueType === $existing) {
+                return $existing;
+            }
+
+            if ($valueType === 'array' && $this->isListType($existing)) {
                 return $existing;
             }
 
@@ -1976,6 +3015,22 @@ final class SemanticAnalyzer
         if ($this->isArrayType($valueType)) {
             throw new CompilerException(
                 "ligne {$line} : \${$name} est de type {$existing}, tableau {$valueType} refusé",
+            );
+        }
+
+        if (isset($this->classes[$existing])) {
+            if ($this->isAssignable($valueType, $existing)) {
+                return $existing;
+            }
+
+            throw new CompilerException(
+                "ligne {$line} : \${$name} est de type {$existing}, valeur {$valueType} refusée",
+            );
+        }
+
+        if (isset($this->classes[$valueType])) {
+            throw new CompilerException(
+                "ligne {$line} : \${$name} est de type {$existing}, objet {$valueType} refusé",
             );
         }
 
@@ -2068,6 +3123,71 @@ final class SemanticAnalyzer
     private function isObjectType(string $type): bool
     {
         return isset($this->classes[$type]);
+    }
+
+    private function isSubclassOf(string $child, string $parent): bool
+    {
+        $current = $child;
+        $seen = [];
+
+        while ($current !== null && isset($this->classes[$current]) && !isset($seen[$current])) {
+            if ($current === $parent) {
+                return true;
+            }
+
+            $seen[$current] = true;
+            $current = $this->classes[$current]->parentName;
+        }
+
+        return false;
+    }
+
+    private function implementsInterface(string $class, string $interface): bool
+    {
+        $current = $class;
+        $seen = [];
+
+        while ($current !== null && isset($this->classes[$current]) && !isset($seen[$current])) {
+            $info = $this->classes[$current];
+
+            if (in_array($interface, $info->interfaces, true)) {
+                return true;
+            }
+
+            $seen[$current] = true;
+            $current = $info->parentName;
+        }
+
+        return false;
+    }
+
+    private function isAssignable(string $actual, string $expected): bool
+    {
+        if ($actual === $expected || ($expected === 'float' && $actual === 'int')) {
+            return true;
+        }
+
+        if ($expected === 'callable' && $this->isCallableType($actual)) {
+            return true;
+        }
+
+        if ($this->isArrayType($actual) && $this->isArrayType($expected)) {
+            if ($actual === $expected || $expected === 'array') {
+                return true;
+            }
+
+            return $actual === 'array' && $this->isListType($expected);
+        }
+
+        if (!isset($this->classes[$actual]) || !isset($this->classes[$expected])) {
+            return false;
+        }
+
+        if ($this->classes[$expected]->isInterface) {
+            return $this->implementsInterface($actual, $expected);
+        }
+
+        return $this->isSubclassOf($actual, $expected);
     }
 
     private function isCallableType(string $type): bool
@@ -2229,6 +3349,29 @@ final class SemanticAnalyzer
         if ($expression instanceof PropertyAssignExpr) {
             $this->collectFreeVariables($expression->object, $params, $free);
             $this->collectFreeVariables($expression->value, $params, $free);
+            return;
+        }
+
+        if ($expression instanceof StaticPropertyExpr) {
+            return;
+        }
+
+        if ($expression instanceof StaticPropertyAssignExpr) {
+            $this->collectFreeVariables($expression->value, $params, $free);
+            return;
+        }
+
+        if ($expression instanceof StaticCallExpr) {
+            foreach ($expression->arguments as $argument) {
+                $this->collectFreeVariables($argument, $params, $free);
+            }
+            return;
+        }
+
+        if ($expression instanceof ParentCallExpr) {
+            foreach ($expression->arguments as $argument) {
+                $this->collectFreeVariables($argument, $params, $free);
+            }
             return;
         }
 

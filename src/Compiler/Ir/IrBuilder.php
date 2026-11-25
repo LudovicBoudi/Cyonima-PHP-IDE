@@ -25,9 +25,13 @@ use Cyonima\Compiler\Ast\Literal;
 use Cyonima\Compiler\Ast\MatchExpr;
 use Cyonima\Compiler\Ast\MethodCallExpr;
 use Cyonima\Compiler\Ast\NewExpr;
+use Cyonima\Compiler\Ast\ParentCallExpr;
 use Cyonima\Compiler\Ast\Program;
 use Cyonima\Compiler\Ast\PropertyAccessExpr;
 use Cyonima\Compiler\Ast\PropertyAssignExpr;
+use Cyonima\Compiler\Ast\StaticCallExpr;
+use Cyonima\Compiler\Ast\StaticPropertyAssignExpr;
+use Cyonima\Compiler\Ast\StaticPropertyExpr;
 use Cyonima\Compiler\Ast\ReturnStmt;
 use Cyonima\Compiler\Ast\Stmt;
 use Cyonima\Compiler\Ast\SwitchStmt;
@@ -60,6 +64,8 @@ final class IrBuilder
     private array $closures = [];
 
     private int $closureCounter = 0;
+
+    private ?string $currentClass = null;
 
     public function __construct(private readonly Analysis $analysis)
     {
@@ -115,12 +121,18 @@ final class IrBuilder
                 );
 
             foreach ($classDeclaration->methods as $method) {
+                if ($method->isAbstract || $method->body === null) {
+                    continue;
+                }
+
                 $info = $classInfo->methods[$method->name]
                     ?? throw new CompilerException(
                         "méthode absente de l’analyse : {$classDeclaration->name}::{$method->name}",
                     );
-                $params = [new IrParam('this', $classDeclaration->name)];
-                $paramNames = ['this' => true];
+                $params = $method->isStatic
+                    ? []
+                    : [new IrParam('this', $classDeclaration->name)];
+                $paramNames = $method->isStatic ? [] : ['this' => true];
 
                 foreach ($method->params as $param) {
                     $params[] = new IrParam($param->name, $param->type);
@@ -138,7 +150,9 @@ final class IrBuilder
                 $normalEnd = $this->newLabel();
                 $this->breakLabels = [];
                 $this->exceptionLabels = [$exceptionLabel];
+                $this->currentClass = $classDeclaration->name;
                 $this->lowerStatements($method->body->statements, $ir);
+                $this->currentClass = null;
                 $this->exceptionLabels = [];
                 $ir->instructions[] = new JumpInstruction($normalEnd);
                 $ir->instructions[] = new LabelInstruction($exceptionLabel);
@@ -589,6 +603,52 @@ final class IrBuilder
             return $result;
         }
 
+        if ($expression instanceof ParentCallExpr) {
+            $target = $expression->targetClass
+                ?? throw new CompilerException(
+                    "ligne {$expression->line} : cible parent:: inconnue",
+                );
+            $methodInfo = $this->analysis->classes[$target]->methods[$expression->method]
+                ?? throw new CompilerException(
+                    "méthode parente absente : {$target}::{$expression->method}",
+                );
+            $object = new VariableOperand('this', $this->currentClass ?? $target);
+            $arguments = array_map(
+                fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
+                $expression->arguments,
+            );
+            $parameterTypes = array_values($methodInfo->params);
+
+            if ($methodInfo->returnType === 'void') {
+                $function->instructions[] = new ParentCallInstruction(
+                    $target,
+                    $expression->method,
+                    $object,
+                    $arguments,
+                    $parameterTypes,
+                    'void',
+                    null,
+                );
+                $this->appendExceptionCheck($function);
+
+                return new ConstantOperand('void', null);
+            }
+
+            $result = $this->newTemporary($methodInfo->returnType, $function);
+            $function->instructions[] = new ParentCallInstruction(
+                $target,
+                $expression->method,
+                $object,
+                $arguments,
+                $parameterTypes,
+                $methodInfo->returnType,
+                $result,
+            );
+            $this->appendExceptionCheck($function);
+
+            return $result;
+        }
+
         if ($expression instanceof NewExpr) {
             $arguments = array_map(
                 fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
@@ -627,6 +687,97 @@ final class IrBuilder
             );
 
             return $value;
+        }
+
+        if ($expression instanceof StaticPropertyExpr) {
+            $owner = $expression->ownerClass
+                ?? throw new CompilerException(
+                    "ligne {$expression->line} : propriétaire statique inconnu",
+                );
+            $class = $this->analysis->classes[$owner]
+                ?? throw new CompilerException(
+                    "classe absente de l’analyse : {$owner}",
+                );
+            $propertyType = $class->staticProperties[$expression->property]
+                ?? throw new CompilerException(
+                    "propriété statique absente : {$owner}::\${$expression->property}",
+                );
+            $result = $this->newTemporary($propertyType, $function);
+            $function->instructions[] = new StaticPropertyGetInstruction(
+                $owner,
+                $expression->property,
+                $propertyType,
+                $result,
+            );
+
+            return $result;
+        }
+
+        if ($expression instanceof StaticPropertyAssignExpr) {
+            $owner = $expression->ownerClass
+                ?? throw new CompilerException(
+                    "ligne {$expression->line} : propriétaire statique inconnu",
+                );
+            $class = $this->analysis->classes[$owner]
+                ?? throw new CompilerException(
+                    "classe absente de l’analyse : {$owner}",
+                );
+            $propertyType = $class->staticProperties[$expression->property]
+                ?? throw new CompilerException(
+                    "propriété statique absente : {$owner}::\${$expression->property}",
+                );
+            $value = $this->lowerExpr($expression->value, $function);
+            $function->instructions[] = new StaticPropertySetInstruction(
+                $owner,
+                $expression->property,
+                $propertyType,
+                $value,
+            );
+
+            return $value;
+        }
+
+        if ($expression instanceof StaticCallExpr) {
+            $owner = $expression->resolvedClass
+                ?? throw new CompilerException(
+                    "ligne {$expression->line} : cible statique inconnue",
+                );
+            $methodInfo = $this->analysis->classes[$owner]->methods[$expression->method]
+                ?? throw new CompilerException(
+                    "méthode statique absente : {$owner}::{$expression->method}",
+                );
+            $arguments = array_map(
+                fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
+                $expression->arguments,
+            );
+            $parameterTypes = array_values($methodInfo->params);
+
+            if ($methodInfo->returnType === 'void') {
+                $function->instructions[] = new StaticCallInstruction(
+                    $owner,
+                    $expression->method,
+                    $arguments,
+                    $parameterTypes,
+                    'void',
+                    null,
+                );
+                $this->appendExceptionCheck($function);
+
+                return new ConstantOperand('void', null);
+            }
+
+            $result = $this->newTemporary($methodInfo->returnType, $function);
+            $function->instructions[] = new StaticCallInstruction(
+                $owner,
+                $expression->method,
+                $arguments,
+                $parameterTypes,
+                $methodInfo->returnType,
+                $result,
+            );
+            $this->appendExceptionCheck($function);
+
+            return $result;
         }
 
         if ($expression instanceof MethodCallExpr) {
@@ -898,12 +1049,16 @@ final class IrBuilder
                 fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
                 $expression->arguments,
             );
+            $parameterTypes = isset($this->analysis->functions[$expression->name])
+                ? array_values($this->analysis->functions[$expression->name]->params)
+                : null;
 
             if ($expression->type === 'void') {
                 $function->instructions[] = new CallInstruction(
                     $expression->name,
                     $arguments,
                     null,
+                    $parameterTypes,
                 );
                 $this->appendExceptionCheck($function);
 
@@ -915,6 +1070,7 @@ final class IrBuilder
                 $expression->name,
                 $arguments,
                 $result,
+                $parameterTypes,
             );
             $this->appendExceptionCheck($function);
 
@@ -961,6 +1117,10 @@ final class IrBuilder
             return new ConstantOperand($type, null);
         }
 
+        if ($this->isListType($type) || $this->isMapType($type)) {
+            return new ConstantOperand($type, null);
+        }
+
         return match ($type) {
             'void' => null,
             'int' => new ConstantOperand('int', 0),
@@ -988,6 +1148,12 @@ final class IrBuilder
         }
 
         return null;
+    }
+
+    private function isListType(string $type): bool
+    {
+        return $type === 'array'
+            || preg_match('/^array<(int|float|bool|string)>$/', $type) === 1;
     }
 
     private function isMapType(string $type): bool

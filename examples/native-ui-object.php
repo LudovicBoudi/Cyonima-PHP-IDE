@@ -18,9 +18,9 @@ $box = new Box(true, 12);
 $label = new Label('Bonjour');
 $button = new Button('Cliquer');
 
-$box->append($label->handle);
-$box->append($button->handle);
-$window->setChild($box->handle);
+$box->append($label);
+$box->append($button);
+$window->setChild($box);
 
 $button->onClicked(function () use ($label): void {
     $label->setText('Cliqué !');

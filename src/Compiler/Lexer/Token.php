@@ -11,6 +11,7 @@ final class Token
         public readonly string $lexeme,
         public readonly mixed $literal,
         public readonly int $line,
+        public readonly ?string $docComment = null,
     ) {
     }
 
