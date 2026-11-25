@@ -1599,9 +1599,10 @@ C);
 
 $arrayErrors = [
     ['tableau hétérogène', '<?php $a = [1, "x"];', 'tableau hétérogène'],
-    ['tableau associatif', '<?php $a = ["x" => 1];', 'tableaux associatifs non supportés'],
+    ['tableau mixte', '<?php $a = [1, "x" => 2];', 'tableau mélangeant index et clés associatives'],
+    ['clé associative entière', '<?php $a = [1 => 2];', 'clé associative attend string'],
     ['foreach non-tableau', '<?php $x = 1; foreach ($x as $v) {}', 'foreach attend un tableau'],
-    ['foreach sans type', '<?php $a = []; foreach ($a as $v) {}', 'type d’élément inconnu'],
+    ['foreach sans type', '<?php $a = []; foreach ($a as $v) {}', 'type de tableau inconnu'],
     ['echo de tableau', '<?php $a = [1]; echo $a;', 'echo ne peut pas afficher'],
     ['count non-tableau', '<?php $x = 1; echo count($x);', 'count attend un tableau'],
     ['index manquant', '<?php $a = [1]; echo $a[];', 'index manquant en lecture'],
@@ -1791,6 +1792,1084 @@ foreach ($uiErrors as $index => [$label, $source, $needle]) {
         T::ok(
             str_contains($exception->getMessage(), $needle),
             'UI native : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('19. Compilateur PHP — tableaux associatifs');
+
+$mapSource = <<<'PHP'
+<?php
+$ages = ['alice' => 30, 'bob' => 25];
+$ages['carol'] = 40;
+$total = 0;
+foreach ($ages as $name => $age) {
+    echo $name, "=", $age, " ";
+    $total = $total + $age;
+}
+echo "\n", count($ages), " ", $total, "\n";
+echo $ages['bob'], "\n";
+PHP;
+
+$mapC = $compilePhp('map', $mapSource, 'c');
+$mapCSource = (string) file_get_contents($mapC['cPath']);
+T::ok(str_contains($mapCSource, 'cy_map_set_string_int'), 'backend PHP : écriture associative');
+T::ok(str_contains($mapCSource, 'cy_map_get_string_int'), 'backend PHP : lecture associative');
+T::ok(str_contains($mapCSource, 'cy_map_key_string'), 'backend PHP : clé foreach');
+T::ok(str_contains($mapCSource, 'cy_map_value_int'), 'backend PHP : valeur foreach');
+T::ok(str_contains($mapCSource, 'cy_map_count'), 'backend PHP : count associatif');
+T::ok(str_contains($mapCSource, 'CY_ROOT_MAP'), 'runtime natif : racine de table associative');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des tableaux associatifs non testée');
+} else {
+    $mapElf = $compilePhp('map', $mapSource, 'elf');
+    T::same(
+        "alice=30 bob=25 carol=40 \n3 95\n25\n",
+        shell_exec(escapeshellarg((string) $mapElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : table associative, foreach et count',
+    );
+
+    $mapCopyElf = $compilePhp('map-copy', <<<'PHP'
+<?php
+$a = ['x' => 1];
+$b = $a;
+$b['x'] = 9;
+$b['y'] = 2;
+echo $a['x'], " ", count($a), " ", count($b), "\n";
+PHP, 'elf');
+    T::same(
+        "1 1 2\n",
+        shell_exec(escapeshellarg((string) $mapCopyElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : copie de table associative',
+    );
+
+    $mapEmptyElf = $compilePhp('map-empty', <<<'PHP'
+<?php
+$data = [];
+$data['x'] = 1;
+$data['y'] = 2;
+echo count($data), " ", $data['y'], "\n";
+PHP, 'elf');
+    T::same(
+        "2 2\n",
+        shell_exec(escapeshellarg((string) $mapEmptyElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : tableau vide raffiné en table associative',
+    );
+
+    $mapStringsElf = $compilePhp('map-strings', <<<'PHP'
+<?php
+$names = [];
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $names["k" . $i] = "v" . $i;
+}
+$length = 0;
+foreach ($names as $key => $value) {
+    $length = $length + strlen($key) + strlen($value);
+}
+echo count($names), " ", $length, "\n";
+PHP, 'elf');
+    T::same(
+        "300 2180\n",
+        shell_exec(escapeshellarg((string) $mapStringsElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : table associative de chaînes pendant la GC',
+    );
+
+    $floatMapElf = $compilePhp('map-float', <<<'PHP'
+<?php
+$key = "pi";
+$values = [$key => 3.5, "e" => 2.5];
+echo $values[$key], " ", count($values), "\n";
+foreach ($values as $value) {
+    echo $value, " ";
+}
+echo "\n";
+PHP, 'elf');
+    T::same(
+        "3.5 2\n3.5 2.5 \n",
+        shell_exec(escapeshellarg((string) $floatMapElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : table associative de flottants',
+    );
+
+    $boolMapElf = $compilePhp('map-bool', <<<'PHP'
+<?php
+$flags = ['a' => true, 'b' => false];
+foreach ($flags as $key => $value) {
+    echo $key, "=", $value, " ";
+}
+echo "\n";
+PHP, 'elf');
+    T::same(
+        "a=1 b= \n",
+        shell_exec(escapeshellarg((string) $boolMapElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : table associative de booléens',
+    );
+
+    $exampleMapElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-maps.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "alice : 30\nbob : 25\ncarol : 40\nTotal : 95\n",
+        shell_exec(escapeshellarg((string) $exampleMapElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exemple tableaux associatifs',
+    );
+
+    $missingMapElf = $compilePhp('map-missing', <<<'PHP'
+<?php
+$a = ["x" => 1];
+echo $a["y"];
+PHP, 'elf');
+    $missingOut = [];
+    $missingStatus = 0;
+    exec(
+        escapeshellarg((string) $missingMapElf['binaryPath']) . ' 2>&1',
+        $missingOut,
+        $missingStatus,
+    );
+    T::same(1, $missingStatus, 'compilateur PHP : clé absente refusée');
+    T::ok(
+        str_contains(implode("\n", $missingOut), 'clé absente'),
+        'compilateur PHP : message de clé absente',
+    );
+}
+
+$mapErrors = [
+    ['tableau mixte', '<?php $a = [1, "x" => 2];', 'tableau mélangeant index et clés associatives'],
+    ['clé entière', '<?php $a = [1 => 2];', 'clé associative attend string'],
+    ['append associatif', '<?php $a = ["x" => 1]; $a[] = 2;', 'ajout [] interdit sur un tableau associatif'],
+    ['clé sur liste', '<?php $a = [1, 2]; echo $a["x"];', 'index de tableau attend int'],
+    ['index entier sur map', '<?php $a = ["x" => 1]; echo $a[0];', 'clé associative attend string'],
+    ['valeur incompatible', '<?php $a = ["x" => 1]; $a["x"] = "y";', 'affectation de tableau attend int'],
+    ['clé foreach incompatible', '<?php $a = ["x" => 1]; $k = 0; foreach ($a as $k => $v) {}', 'clé string attendue'],
+];
+
+foreach ($mapErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('map-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('20. Compilateur PHP — switch, match et isset');
+
+$switchSource = <<<'PHP'
+<?php
+$value = 2;
+switch ($value) {
+    case 1:
+        echo "un\n";
+        break;
+    case 2:
+    case 3:
+        echo "deux ou trois\n";
+        break;
+    default:
+        echo "autre\n";
+}
+PHP;
+
+$switchC = $compilePhp('switch', $switchSource, 'c');
+$switchCSource = (string) file_get_contents($switchC['cPath']);
+T::ok(str_contains($switchCSource, 'goto L'), 'backend PHP : switch abaissé en sauts');
+
+$issetSource = <<<'PHP'
+<?php
+$a = [1, 2];
+$m = ['x' => 1];
+echo isset($a[0]), " ", isset($a[5]), " ", isset($m['x']), " ", isset($m['y']), "\n";
+PHP;
+
+$issetC = $compilePhp('isset', $issetSource, 'c');
+$issetCSource = (string) file_get_contents($issetC['cPath']);
+T::ok(str_contains($issetCSource, 'cy_array_has_int'), 'backend PHP : isset indexé');
+T::ok(str_contains($issetCSource, 'cy_map_has_string'), 'backend PHP : isset associatif');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution de switch/match/isset non testée');
+} else {
+    $switchElf = $compilePhp('switch', $switchSource, 'elf');
+    T::same(
+        "deux ou trois\n",
+        shell_exec(escapeshellarg((string) $switchElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : switch et fall-through',
+    );
+
+    $fallElf = $compilePhp('switch-fall', <<<'PHP'
+<?php
+switch (1) {
+    case 1:
+        echo "a";
+    case 2:
+        echo "b";
+        break;
+    default:
+        echo "c";
+}
+echo "\n";
+PHP, 'elf');
+    T::same(
+        "ab\n",
+        shell_exec(escapeshellarg((string) $fallElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : fall-through switch',
+    );
+
+    $defaultMiddleElf = $compilePhp('switch-default-middle', <<<'PHP'
+<?php
+switch (5) {
+    case 1:
+        echo "1";
+        break;
+    default:
+        echo "d";
+    case 2:
+        echo "2";
+        break;
+}
+echo "\n";
+PHP, 'elf');
+    T::same(
+        "d2\n",
+        shell_exec(escapeshellarg((string) $defaultMiddleElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : default au milieu du switch',
+    );
+
+    $returnSwitchElf = $compilePhp('switch-return', <<<'PHP'
+<?php
+function label(int $x): int {
+    switch ($x) {
+        case 1:
+            return 10;
+        default:
+            return 20;
+    }
+}
+echo label(1), " ", label(5), "\n";
+PHP, 'elf');
+    T::same(
+        "10 20\n",
+        shell_exec(escapeshellarg((string) $returnSwitchElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retours exhaustifs via switch',
+    );
+
+    $matchElf = $compilePhp('match', <<<'PHP'
+<?php
+$x = 2;
+$label = match ($x) {
+    1, 2 => "petit",
+    3 => "trois",
+    default => "autre",
+};
+echo $label, "\n";
+$name = "b";
+$result = match ($name) {
+    "a" => 1,
+    "b" => 2,
+    default => 0,
+};
+echo $result, "\n";
+PHP, 'elf');
+    T::same(
+        "petit\n2\n",
+        shell_exec(escapeshellarg((string) $matchElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : match entier et chaîne',
+    );
+
+    $issetElf = $compilePhp('isset', $issetSource, 'elf');
+    T::same(
+        "1  1 \n",
+        shell_exec(escapeshellarg((string) $issetElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : isset indexé et associatif',
+    );
+}
+
+$flowErrors = [
+    ['break hors switch', '<?php break;', 'break autorisé uniquement dans un switch'],
+    ['default switch dupliqué', '<?php switch (1) { default: break; default: break; }', 'plusieurs blocs default'],
+    ['case incompatible', '<?php switch (1) { case "x": break; }', 'case de type string incompatible'],
+    ['switch tableau', '<?php switch ([1]) { case 1: break; }', 'switch attend une valeur scalaire'],
+    ['match sans default', '<?php $x = 1; echo match ($x) { 1 => "a" };', 'match doit avoir une branche default'],
+    ['match default dupliqué', '<?php $x = 1; echo match ($x) { default => "a", default => "b" };', 'plusieurs branches default'],
+    ['match condition incompatible', '<?php $x = 1; echo match ($x) { "1" => "a", default => "b" };', 'condition match de type string'],
+    ['match branches incompatibles', '<?php $x = 1; echo match ($x) { 1 => 2, default => "b" };', 'types de branches match incompatibles'],
+    ['isset sans index', '<?php $a = [1]; echo isset($a);', 'isset attend une expression'],
+    ['isset mauvaise clé', '<?php $a = [1]; echo isset($a["x"]);', 'isset (index de tableau) attend int'],
+    ['switch retour partiel', '<?php function f(int $x): int { switch ($x) { case 1: break; default: return 2; } }', 'ne retourne pas sur tous les chemins'],
+];
+
+foreach ($flowErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('control-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('21. Compilateur PHP — exceptions try/throw/catch');
+
+$exceptionSource = <<<'PHP'
+<?php
+try {
+    throw "boom";
+    echo "jamais";
+} catch (string $e) {
+    echo "capturé: ", $e, "\n";
+}
+PHP;
+
+$exceptionC = $compilePhp('exception', $exceptionSource, 'c');
+$exceptionCSource = (string) file_get_contents($exceptionC['cPath']);
+T::ok(str_contains($exceptionCSource, 'cy_throw_exception'), 'backend PHP : throw');
+T::ok(str_contains($exceptionCSource, 'cy_exception_capture'), 'backend PHP : capture catch');
+
+$propagateSource = <<<'PHP'
+<?php
+function fail(): void {
+    throw "échec interne";
+}
+
+try {
+    fail();
+    echo "jamais";
+} catch (string $e) {
+    echo "capturé: ", $e, "\n";
+}
+PHP;
+$propagateC = $compilePhp('exception-propagate', $propagateSource, 'c');
+T::ok(
+    str_contains((string) file_get_contents($propagateC['cPath']), 'cy_exception_pending'),
+    'backend PHP : propagation exception',
+);
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des exceptions non testée');
+} else {
+    $exceptionElf = $compilePhp('exception', $exceptionSource, 'elf');
+    T::same(
+        "capturé: boom\n",
+        shell_exec(escapeshellarg((string) $exceptionElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : throw et catch',
+    );
+
+    $propagateElf = $compilePhp('exception-propagate', $propagateSource, 'elf');
+    T::same(
+        "capturé: échec interne\n",
+        shell_exec(escapeshellarg((string) $propagateElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propagation entre fonctions',
+    );
+
+    $normalElf = $compilePhp('exception-normal', <<<'PHP'
+<?php
+try {
+    echo "ok";
+} catch (string $e) {
+    echo "bad";
+}
+echo "!\n";
+PHP, 'elf');
+    T::same(
+        "ok!\n",
+        shell_exec(escapeshellarg((string) $normalElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : catch non exécuté sans exception',
+    );
+
+    $nestedElf = $compilePhp('exception-nested', <<<'PHP'
+<?php
+try {
+    try {
+        throw "interne";
+    } catch (string $e) {
+        echo "interne: ", $e, "\n";
+        throw "externe";
+    }
+} catch (string $e) {
+    echo "externe: ", $e, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "interne: interne\nexterne: externe\n",
+        shell_exec(escapeshellarg((string) $nestedElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : try/catch imbriqués',
+    );
+
+    $loopElf = $compilePhp('exception-loop', <<<'PHP'
+<?php
+$i = 0;
+try {
+    while ($i < 5) {
+        if ($i == 2) {
+            throw "stop";
+        }
+        $i = $i + 1;
+    }
+} catch (string $e) {
+    echo $i, " ", $e, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "2 stop\n",
+        shell_exec(escapeshellarg((string) $loopElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception sortant d’une boucle',
+    );
+
+    $gcExceptionElf = $compilePhp('exception-gc', <<<'PHP'
+<?php
+try {
+    $message = "";
+    for ($i = 0; $i < 300; $i = $i + 1) {
+        $message = $message . "x";
+    }
+    throw $message;
+} catch (string $e) {
+    echo strlen($e), "\n";
+}
+PHP, 'elf');
+    T::same(
+        "300\n",
+        shell_exec(escapeshellarg((string) $gcExceptionElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : message d’exception survit à la GC',
+    );
+
+    $exampleExceptionElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-exceptions.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "6\nErreur : valeur négative\n",
+        shell_exec(escapeshellarg((string) $exampleExceptionElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exemple exceptions',
+    );
+
+    $returnElf = $compilePhp('exception-return', <<<'PHP'
+<?php
+function f(int $x): int {
+    try {
+        if ($x > 0) {
+            return 1;
+        }
+        throw "negatif";
+    } catch (string $e) {
+        return 2;
+    }
+}
+echo f(1), " ", f(-1), "\n";
+PHP, 'elf');
+    T::same(
+        "1 2\n",
+        shell_exec(escapeshellarg((string) $returnElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retours via try/catch',
+    );
+
+    $uncaughtElf = $compilePhp('exception-uncaught', <<<'PHP'
+<?php
+throw "fatal";
+PHP, 'elf');
+    $uncaughtOut = [];
+    $uncaughtStatus = 0;
+    exec(
+        escapeshellarg((string) $uncaughtElf['binaryPath']) . ' 2>&1',
+        $uncaughtOut,
+        $uncaughtStatus,
+    );
+    T::same(1, $uncaughtStatus, 'compilateur PHP : exception non capturée');
+    T::ok(
+        str_contains(implode("\n", $uncaughtOut), 'exception non capturée')
+        && str_contains(implode("\n", $uncaughtOut), 'fatal'),
+        'compilateur PHP : message d’exception non capturée',
+    );
+}
+
+$exceptionErrors = [
+    ['throw non-string', '<?php throw 1;', 'throw attend string'],
+    ['catch non-string', '<?php try { echo "x"; } catch (int $e) { echo $e; }', 'catch attend le type string'],
+    ['try sans catch', '<?php try { echo "x"; }', 'attendu : catch après try'],
+    ['finally refusé', '<?php try { echo "x"; } catch (string $e) { echo $e; } finally { echo "f"; }', 'finally non supporté'],
+    ['catch après try', '<?php try { echo "x"; } catch (string $e) { echo "c"; } echo $e;', 'peut ne pas être affectée'],
+    ['retour partiel', '<?php function f(): int { try { throw "x"; } catch (string $e) { echo $e; } }', 'ne retourne pas sur tous les chemins'],
+    ['multi-catch', '<?php try { echo "x"; } catch (string $e) { echo $e; } catch (string $e2) { echo $e2; }', 'un seul catch est supporté'],
+];
+
+foreach ($exceptionErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('exception-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('22. Compilateur PHP — classes, objets et méthodes');
+
+$pointSource = <<<'PHP'
+<?php
+class Point {
+    public int $x;
+    public int $y;
+
+    public function __construct(int $x, int $y): void {
+        $this->x = $x;
+        $this->y = $y;
+    }
+
+    public function sum(): int {
+        return $this->x + $this->y;
+    }
+
+    public function move(int $dx, int $dy): void {
+        $this->x = $this->x + $dx;
+        $this->y = $this->y + $dy;
+    }
+}
+
+$p = new Point(1, 2);
+echo $p->sum(), "\n";
+$p->move(3, 4);
+echo $p->x, " ", $p->y, " ", $p->sum(), "\n";
+$q = $p;
+$q->x = 100;
+echo $p->x, "\n";
+PHP;
+
+$pointC = $compilePhp('class-point', $pointSource, 'c');
+$pointCSource = (string) file_get_contents($pointC['cPath']);
+T::ok(str_contains($pointCSource, 'CyObj_Point'), 'backend PHP : struct de classe');
+T::ok(str_contains($pointCSource, 'cy_object_new'), 'backend PHP : allocation objet');
+T::ok(str_contains($pointCSource, 'p_x'), 'backend PHP : propriété C');
+T::ok(str_contains($pointCSource, 'fn_Point__sum'), 'backend PHP : méthode C');
+T::ok(str_contains($pointCSource, 'CY_ROOT_OBJECT'), 'runtime natif : racine objet');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des classes non testée');
+} else {
+    $pointElf = $compilePhp('class-point', $pointSource, 'elf');
+    T::same(
+        "3\n4 6 10\n100\n",
+        shell_exec(escapeshellarg((string) $pointElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : constructeur, méthodes et propriétés',
+    );
+
+    $personElf = $compilePhp('class-person', <<<'PHP'
+<?php
+class Person {
+    public string $name;
+
+    public function __construct(string $name): void {
+        $this->name = $name;
+    }
+
+    public function greet(): string {
+        return "Bonjour " . $this->name;
+    }
+}
+
+$p = new Person("Cyonima");
+echo $p->greet(), "\n";
+$p->name = "IDE";
+echo $p->greet(), "\n";
+PHP, 'elf');
+    T::same(
+        "Bonjour Cyonima\nBonjour IDE\n",
+        shell_exec(escapeshellarg((string) $personElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : propriété chaîne',
+    );
+
+    $methodsElf = $compilePhp('class-methods', <<<'PHP'
+<?php
+class Counter {
+    public int $value;
+
+    public function __construct(int $start): void {
+        $this->value = $start;
+    }
+
+    public function add(int $amount): void {
+        $this->value = $this->value + $amount;
+    }
+
+    public function twice(): int {
+        return $this->value * 2;
+    }
+
+    public function bump(): void {
+        $this->add(1);
+    }
+}
+
+$c = new Counter(5);
+$c->bump();
+$c->add(4);
+echo $c->value, " ", $c->twice(), "\n";
+PHP, 'elf');
+    T::same(
+        "10 20\n",
+        shell_exec(escapeshellarg((string) $methodsElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : méthode appelant une méthode',
+    );
+
+    $methodThrowElf = $compilePhp('class-throw', <<<'PHP'
+<?php
+class Failure {
+    public function fail(): void {
+        throw "méthode en échec";
+    }
+}
+
+$f = new Failure();
+try {
+    $f->fail();
+    echo "jamais";
+} catch (string $e) {
+    echo $e, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "méthode en échec\n",
+        shell_exec(escapeshellarg((string) $methodThrowElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception depuis une méthode',
+    );
+
+    $constructorThrowElf = $compilePhp('class-ctor-throw', <<<'PHP'
+<?php
+class Broken {
+    public function __construct(): void {
+        throw "constructeur";
+    }
+}
+
+try {
+    $b = new Broken();
+} catch (string $e) {
+    echo $e, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "constructeur\n",
+        shell_exec(escapeshellarg((string) $constructorThrowElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception depuis un constructeur',
+    );
+
+    $objectGcElf = $compilePhp('class-gc', <<<'PHP'
+<?php
+class Item {
+    public string $name;
+
+    public function __construct(string $name): void {
+        $this->name = $name;
+    }
+
+    public function length(): int {
+        return strlen($this->name);
+    }
+}
+
+$total = 0;
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $item = new Item("x" . $i);
+    $total = $total + $item->length();
+}
+echo $total, "\n";
+PHP, 'elf');
+    T::same(
+        "1090\n",
+        shell_exec(escapeshellarg((string) $objectGcElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : objets et propriétés chaîne pendant la GC',
+    );
+
+    $nestedElf = $compilePhp('class-nested', <<<'PHP'
+<?php
+class Point {
+    public int $x;
+    public int $y;
+
+    public function __construct(int $x, int $y): void {
+        $this->x = $x;
+        $this->y = $y;
+    }
+
+    public function sum(): int {
+        return $this->x + $this->y;
+    }
+}
+
+class Factory {
+    public function make(int $x, int $y): int {
+        $p = new Point($x, $y);
+        return $p->sum();
+    }
+}
+
+function build(int $x, int $y): int {
+    $p = new Point($x, $y);
+    return $p->sum();
+}
+
+$f = new Factory();
+echo $f->make(3, 4), " ", build(5, 6), "\n";
+PHP, 'elf');
+    T::same(
+        "7 11\n",
+        shell_exec(escapeshellarg((string) $nestedElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : objets locaux dans fonctions et méthodes',
+    );
+
+    $exampleClassElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-classes.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "8\n",
+        shell_exec(escapeshellarg((string) $exampleClassElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exemple classes',
+    );
+}
+
+$classErrors = [
+    ['classe inconnue', '<?php $x = new Missing();', 'classe inconnue'],
+    ['propriété inconnue', '<?php class A { public int $x; } $a = new A(); echo $a->y;', 'propriété inconnue'],
+    ['méthode inconnue', '<?php class A { public int $x; } $a = new A(); $a->missing();', 'méthode inconnue'],
+    ['constructeur manquant', '<?php class A { public int $x; } $a = new A(1);', 'n’a pas de constructeur'],
+    ['constructeur arguments', '<?php class A { public function __construct(int $x): void {} } $a = new A();', 'attend 1 argument'],
+    ['constructeur type', '<?php class A { public function __construct(int $x): void {} } $a = new A("x");', 'attend int, reçu string'],
+    ['this hors méthode', '<?php echo $this->x;', 'variable non définie'],
+    ['this affecté', '<?php class A { public int $x; function f(): void { $this = 1; } }', 'affectation à $this interdite'],
+    ['echo objet', '<?php class A { public int $x; } $a = new A(); echo $a;', 'echo ne peut pas afficher'],
+    ['opérateur objet', '<?php class A { public int $x; } $a = new A(); $b = new A(); echo $a == $b;', 'non supporté sur un objet'],
+    ['propriété par défaut', '<?php class A { public int $x = 1; }', 'valeur par défaut de propriété non supportée'],
+    ['classe réservée', '<?php class array { public int $x; }', 'nom de classe réservé'],
+    ['propriété dupliquée', '<?php class A { public int $x; public int $x; }', 'propriété dupliquée'],
+    ['méthode retour partiel', '<?php class A { public int $x; function f(int $v): int { if ($v > 0) { return 1; } } }', 'ne retourne pas sur tous les chemins'],
+];
+
+foreach ($classErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('class-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('23. Compilateur PHP — closures et callbacks');
+
+$closureSource = <<<'PHP'
+<?php
+$factor = 3;
+$fn = function (int $x) use ($factor): int {
+    return $x * $factor;
+};
+echo $fn(4), "\n";
+PHP;
+
+$closureC = $compilePhp('closure-use', $closureSource, 'c');
+$closureCSource = (string) file_get_contents($closureC['cPath']);
+T::ok(str_contains($closureCSource, 'CyClosureData_'), 'backend PHP : structure de closure');
+T::ok(str_contains($closureCSource, 'cy_closure_mark_'), 'backend PHP : marquage de closure');
+T::ok(str_contains($closureCSource, '->invoke'), 'backend PHP : fonction invoke');
+T::ok(str_contains($closureCSource, 'cap_factor'), 'backend PHP : capture de variable');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des closures non testée');
+} else {
+    $closureElf = $compilePhp('closure-use', $closureSource, 'elf');
+    T::same(
+        "12\n",
+        shell_exec(escapeshellarg((string) $closureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : closure avec use',
+    );
+
+    $arrowElf = $compilePhp('closure-arrow', <<<'PHP'
+<?php
+$factor = 3;
+$fn = fn (int $x): int => $x * $factor;
+echo $fn(4), "\n";
+PHP, 'elf');
+    T::same(
+        "12\n",
+        shell_exec(escapeshellarg((string) $arrowElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : arrow function',
+    );
+
+    $inferElf = $compilePhp('closure-infer', <<<'PHP'
+<?php
+$base = 10;
+$add = fn (int $x) => $x + $base;
+echo $add(5), "\n";
+PHP, 'elf');
+    T::same(
+        "15\n",
+        shell_exec(escapeshellarg((string) $inferElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retour de arrow function inféré',
+    );
+
+    $arrayClosureElf = $compilePhp('closure-array', <<<'PHP'
+<?php
+$values = [1, 2, 3];
+$sum = function () use ($values): int {
+    $total = 0;
+    foreach ($values as $value) {
+        $total = $total + $value;
+    }
+    return $total;
+};
+echo $sum(), "\n";
+PHP, 'elf');
+    T::same(
+        "6\n",
+        shell_exec(escapeshellarg((string) $arrayClosureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : closure capturant un tableau',
+    );
+
+    $stringClosureElf = $compilePhp('closure-string', <<<'PHP'
+<?php
+$name = "Cyonima";
+$greet = fn () => "Bonjour " . $name;
+echo $greet(), "\n";
+PHP, 'elf');
+    T::same(
+        "Bonjour Cyonima\n",
+        shell_exec(escapeshellarg((string) $stringClosureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : closure capturant une chaîne',
+    );
+
+    $nestedClosureElf = $compilePhp('closure-nested', <<<'PHP'
+<?php
+$add = fn (int $x): int => $x + 1;
+$twice = fn (int $x): int => $add($add($x));
+echo $twice(3), "\n";
+PHP, 'elf');
+    T::same(
+        "5\n",
+        shell_exec(escapeshellarg((string) $nestedClosureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : closure capturant une closure',
+    );
+
+    $closureThrowElf = $compilePhp('closure-throw', <<<'PHP'
+<?php
+$fail = function (): void {
+    throw "boom";
+};
+try {
+    $fail();
+} catch (string $e) {
+    echo $e, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "boom\n",
+        shell_exec(escapeshellarg((string) $closureThrowElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception depuis une closure',
+    );
+
+    $closureCopyElf = $compilePhp('closure-copy', <<<'PHP'
+<?php
+$values = [1];
+$fn = function () use ($values): int {
+    $values[] = 2;
+    return count($values);
+};
+echo $fn(), " ", count($values), "\n";
+PHP, 'elf');
+    T::same(
+        "2 1\n",
+        shell_exec(escapeshellarg((string) $closureCopyElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : capture de tableau par valeur',
+    );
+
+    $closureStateElf = $compilePhp('closure-state', <<<'PHP'
+<?php
+$count = 0;
+$next = function () use ($count): int {
+    $count = $count + 1;
+    return $count;
+};
+echo $next(), $next(), $next(), "\n";
+PHP, 'elf');
+    T::same(
+        "123\n",
+        shell_exec(escapeshellarg((string) $closureStateElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : état capturé persistant',
+    );
+
+    $closureGcElf = $compilePhp('closure-gc', <<<'PHP'
+<?php
+$total = 0;
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $prefix = "x" . $i;
+    $fn = function (string $suffix) use ($prefix): string {
+        return $prefix . $suffix;
+    };
+    $result = $fn("!");
+    $total = $total + strlen($result);
+}
+echo $total, "\n";
+PHP, 'elf');
+    T::same(
+        "1390\n",
+        shell_exec(escapeshellarg((string) $closureGcElf['binaryPath']) . ' 2>&1'),
+        'runtime natif : closures et captures pendant la GC',
+    );
+
+    $exampleClosureElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-closures.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "12 7\n",
+        shell_exec(escapeshellarg((string) $exampleClosureElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exemple closures',
+    );
+}
+
+$closureErrors = [
+    ['retour requis', '<?php $f = function () { return 1; };', 'type de retour requis'],
+    ['capture inconnue', '<?php $f = function () use ($missing): int { return 1; };', 'variable capturée non définie'],
+    ['capture arrow inconnue', '<?php $f = fn () => $missing;', 'variable capturée non définie'],
+    ['appel non-callable', '<?php $x = 1; echo $x();', 'closure attendue'],
+    ['arguments manquants', '<?php $f = fn (int $x): int => $x; echo $f();', 'closure attend 1 argument'],
+    ['argument invalide', '<?php $f = fn (int $x): int => $x; echo $f("x");', 'appel de closure attend int'],
+    ['retour partiel', '<?php $f = function (int $x): int { if ($x > 0) { return 1; } };', 'ne retourne pas sur tous les chemins'],
+    ['arrow non scalaire', '<?php $f = fn () => [1, 2];', 'retour de arrow function non scalaire'],
+    ['echo closure', '<?php $f = fn (): int => 1; echo $f;', 'echo ne peut pas afficher'],
+    ['opérateur closure', '<?php $f = fn (): int => 1; $g = fn (): int => 2; echo $f == $g;', 'non supporté sur une closure'],
+    ['closure dans tableau', '<?php $f = fn (): int => 1; $a = [$f];', 'élément de tableau non scalaire'],
+];
+
+foreach ($closureErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('closure-error-' . $index, $source, 'c');
+        T::ok(false, 'compilateur PHP : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'compilateur PHP : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('24. Façade objet UI — Application/Window/Button');
+
+$facadeSource = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.facade.test');
+$window = new Window('Cyonima facade', 400, 200);
+$box = new Box(true, 8);
+$label = new Label('Bonjour');
+$button = new Button('Cliquer');
+$box->append($label->handle);
+$box->append($button->handle);
+$window->setChild($box->handle);
+$button->onClicked(function () use ($label): void {
+    $label->setText('Cliqué !');
+    echo "clicked\n";
+});
+$window->present();
+$app->after(100, fn () => ui_click($button->handle));
+$app->after(300, fn () => $app->quit());
+$app->run();
+PHP;
+
+$facadeC = $compilePhp('ui-facade', $facadeSource, 'c');
+$facadeCSource = (string) file_get_contents($facadeC['cPath']);
+T::ok(str_contains($facadeCSource, 'CyObj_Application'), 'façade UI : classe Application');
+T::ok(str_contains($facadeCSource, 'CyObj_Window'), 'façade UI : classe Window');
+T::ok(str_contains($facadeCSource, 'CyObj_Button'), 'façade UI : classe Button');
+T::ok(str_contains($facadeCSource, 'cy_ui_on_click_closure'), 'façade UI : callback de clic');
+T::ok(str_contains($facadeCSource, 'CyClosureData_'), 'façade UI : closure de callback');
+T::ok(str_contains($facadeCSource, 'cap_label'), 'façade UI : capture du widget');
+
+$exampleFacadeC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-ui-object.php',
+    null,
+    'c',
+);
+T::ok(
+    str_contains(
+        (string) file_get_contents($exampleFacadeC['cPath']),
+        'cy_ui_on_click_closure',
+    ),
+    'façade UI : exemple du dépôt',
+);
+
+$gtkPkg = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$hasDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$gtkPkg) {
+    T::skip('GTK4 dev absent : exécution de la façade UI non testée');
+} elseif (!$hasDisplay) {
+    T::skip('DISPLAY absent : exécution de la façade UI non testée');
+} else {
+    $facadeElf = $compilePhp('ui-facade', $facadeSource, 'elf');
+    $runner = 'env GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 GDK_BACKEND=x11 timeout 8 '
+        . escapeshellarg((string) $facadeElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $runner = 'dbus-run-session -- ' . $runner;
+    }
+
+    $facadeOut = [];
+    $facadeStatus = 0;
+    exec($runner . ' 2>&1', $facadeOut, $facadeStatus);
+    $facadeOutput = implode("\n", $facadeOut);
+    T::ok(
+        $facadeStatus === 0 && str_contains($facadeOutput, 'clicked'),
+        'façade UI : clic natif et callback closure',
+        $facadeOutput,
+    );
+}
+
+$facadeErrors = [
+    [
+        'callback incompatible',
+        '<?php $app = new Application("x"); $b = new Button("x"); $b->onClicked(fn (int $x): int => $x);',
+        'callable():void',
+    ],
+    [
+        'classe UI inconnue sans prelude',
+        '<?php $x = new MissingWidget("x");',
+        'classe inconnue',
+    ],
+];
+
+foreach ($facadeErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('facade-error-' . $index, $source, 'c');
+        T::ok(false, 'façade UI : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'façade UI : erreur ' . $label,
             $exception->getMessage(),
         );
     }

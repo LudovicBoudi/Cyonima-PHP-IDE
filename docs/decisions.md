@@ -398,6 +398,71 @@ Trois écarts assumés par rapport au miroir strict du C :
     objet `Cyonima\UI` sera construite au-dessus. La compilation ELF d’une
     application UI exige GTK4 de développement.
 
+41. **Tables associatives** : le sous-ensemble ajoute `['clé' => valeur]`,
+    l’accès et l’affectation par clé, `foreach` clé/valeur et `count`. Les
+    tables sont typées `array<string, T>` avec des valeurs homogènes ; les
+    clés sont des chaînes, les clés entières associatives restent hors
+    périmètre. Le runtime ajoute `CyMap` (vecteur d’entrées, ordre
+    d’insertion, recherche linéaire dans cette version), la copie à
+    l’affectation, les racines `CY_ROOT_MAP` et le marquage GC des clés et
+    valeurs. Une clé absente ou un `[]` sur une table associative échoue
+    explicitement.
+
+42. **switch, match et isset** : `switch` est abaissé en comparaisons et
+    sauts, avec fall-through, `default` à n’importe quelle position et
+    `break` limité au `switch`. `match` est une expression à comparaison
+    stricte, `default` obligatoire et branches de types compatibles. `isset`
+    accepte un seul accès `$tableau[$clé]` sur un tableau indexé ou une table
+    associative, sans lever d’erreur si la clé manque. L’analyse de flux
+    reconnaît les retours exhaustifs via `switch` lorsque `default` est
+    présent et que tous les chemins retournent.
+
+43. **Exceptions** : `throw` transporte une chaîne, `try`/`catch (string $e)`
+    capture une exception, une seule clause `catch` et pas de `finally`. La
+    propagation utilise un drapeau global contrôlé après chaque appel, sans
+    `setjmp`/`longjmp` : les fonctions reviennent normalement, les frames de
+    racines et les cleanups C s’exécutent, puis l’appelant saute vers son
+    `catch` ou son chemin d’exception. Une fonction non `void` retourne une
+    valeur par défaut sur son chemin d’exception ; `main` affiche l’exception
+    non capturée et retourne `1`. Le message est une racine GC globale entre
+    `throw` et `catch`. Les erreurs fatales du runtime (bornes, clé absente)
+    restent fatales dans cette version.
+
+44. **Classes et objets** : classes top-level avec propriétés typées
+    (`int`, `float`, `bool`, `string`), méthodes, `__construct`, `new`,
+    `$this`, accès/affectation de propriétés et appels de méthodes. Les
+    propriétés sont initialisées à zéro/`false`/`""` ; les objets sont alloués
+    via `cy_object_new` avec une fonction de marquage GC par classe pour les
+    propriétés chaîne. L’affectation d’objet partage la référence. Les
+    méthodes sont compilées en fonctions C `fn_Classe__méthode` avec `$this`
+    comme premier paramètre. La visibilité est acceptée mais ignorée. Pas
+    encore d’héritage, interfaces, `static`, objets en paramètres/retours ou
+    propriétés, valeurs par défaut de propriétés, `clone` ou `instanceof`.
+
+45. **Closures et callbacks** : `function (...) use (...)` et
+    `fn (...) => ...` produisent un type `callable(params):retour`. Les
+    captures sont par valeur, copiées pour les tableaux/tables ; les arrow
+    functions capturent automatiquement leurs variables libres. Le backend
+    génère une structure `CyClosureData_N` (champ `invoke` + captures), une
+    fonction `cy_closure_N` et une fonction de marquage GC des captures. Les
+    appels `$fn(...)` utilisent un cast de pointeur de fonction adapté à la
+    signature. Une closure anonyme doit déclarer son type de retour ; une
+    arrow function peut l’inférer. Pas encore de capture par référence, de
+    `$this` capturé, de closure `static`, ni de callables en paramètres,
+    retours, propriétés ou tableaux.
+
+46. **Façade objet UI** : un prélude `UiPrelude` est analysé uniquement
+    lorsqu’un programme fait `new Application`, `Window`, `Box`, `Label`,
+    `Button` ou `Entry`. Les classes encapsulent un handle `int` et délèguent
+    aux fonctions `ui_*`. Les callbacks sont des closures `callable():void`
+    enregistrées via `ui_on_click_closure`, `ui_on_activate_closure` et
+    `ui_after_closure` ; les closures sont retenues par des racines GC
+    supplémentaires. Le runtime utilise `gtk_init`, `GtkWindow` et une
+    `GMainLoop` plutôt qu’une `GtkApplication`, ce qui évite la dépendance
+    D-Bus/portail et rend le lancement déterministe. La composition passe
+    encore par `$widget->handle` ; l’héritage et les objets en paramètres
+    viendront ensuite.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

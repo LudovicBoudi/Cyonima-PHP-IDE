@@ -362,20 +362,32 @@ bin/cyonima-compile --project=./mon-projet --php=examples/native-ui.php --emit=e
 ```
 
 Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
-typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, les tableaux indexés
-homogènes, l’interpolation de chaînes, `echo`, les opérateurs usuels et les
-natives `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`.
+typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, `switch`, `match`,
+`isset`, les exceptions `throw`/`try`/`catch`, les classes et objets
+(`class`, propriétés, `new`, `$this`, méthodes), les closures et arrow
+functions, les tableaux indexés homogènes, les tables associatives
+`string => valeur`, l’interpolation de chaînes, `echo`, les opérateurs usuels
+et les natives `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`.
 
 L’analyse vérifie les types, l’affectation définie sur tous les chemins et les
-retours exhaustifs. Les tableaux associatifs, objets, classes, closures,
-`switch`/`match` et exceptions restent refusés explicitement avec un numéro de
+retours exhaustifs. Les clés associatives entières, l’héritage, les captures
+par référence et `finally` restent refusés explicitement avec un numéro de
 ligne.
 
-Une première couche UI native expose `ui_init`, `ui_window`, `ui_box`,
+Une couche UI native expose `ui_init`, `ui_window`, `ui_box`,
 `ui_label`, `ui_button`, `ui_entry`, `ui_append`, `ui_on_click`, `ui_after`,
-`ui_run`, etc. Les gestionnaires sont des fonctions compilées, reliées aux
-signaux GTK avec un handle de données optionnel. La façade objet
-`Cyonima\UI` viendra au-dessus.
+`ui_run`, etc. Les callbacks acceptent des noms de fonctions ou des closures.
+
+La façade objet `Application` / `Window` / `Box` / `Label` / `Button` /
+`Entry` est injectée automatiquement dès qu’un programme instancie l’une de
+ces classes :
+
+```php
+$button->onClicked(fn () => $label->setText('Cliqué !'));
+```
+
+La composition utilise encore `$widget->handle` dans cette première version.
+Voir `examples/native-ui-object.php`.
 
 Le concepteur d’interface expose aussi **Compiler en natif**. En l’absence de
 GTK4 de développement, l’IDE génère le C et affiche le chemin produit.

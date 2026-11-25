@@ -6,10 +6,16 @@ namespace Cyonima\Compiler\Parser;
 
 use Cyonima\Compiler\Ast\AppendExpr;
 use Cyonima\Compiler\Ast\ArrayExpr;
+use Cyonima\Compiler\Ast\ArrayItem;
 use Cyonima\Compiler\Ast\AssignExpr;
 use Cyonima\Compiler\Ast\BinaryExpr;
 use Cyonima\Compiler\Ast\Block;
+use Cyonima\Compiler\Ast\BreakStmt;
+use Cyonima\Compiler\Ast\CallableCallExpr;
 use Cyonima\Compiler\Ast\CallExpr;
+use Cyonima\Compiler\Ast\CatchClause;
+use Cyonima\Compiler\Ast\ClassDecl;
+use Cyonima\Compiler\Ast\ClosureExpr;
 use Cyonima\Compiler\Ast\EchoStmt;
 use Cyonima\Compiler\Ast\Expr;
 use Cyonima\Compiler\Ast\ExpressionStmt;
@@ -20,10 +26,22 @@ use Cyonima\Compiler\Ast\IfStmt;
 use Cyonima\Compiler\Ast\IndexAssignExpr;
 use Cyonima\Compiler\Ast\IndexExpr;
 use Cyonima\Compiler\Ast\Literal;
+use Cyonima\Compiler\Ast\MatchArm;
+use Cyonima\Compiler\Ast\MatchExpr;
+use Cyonima\Compiler\Ast\MethodCallExpr;
+use Cyonima\Compiler\Ast\MethodDecl;
+use Cyonima\Compiler\Ast\NewExpr;
 use Cyonima\Compiler\Ast\Param;
 use Cyonima\Compiler\Ast\Program;
+use Cyonima\Compiler\Ast\PropertyAccessExpr;
+use Cyonima\Compiler\Ast\PropertyAssignExpr;
+use Cyonima\Compiler\Ast\PropertyDecl;
 use Cyonima\Compiler\Ast\ReturnStmt;
 use Cyonima\Compiler\Ast\Stmt;
+use Cyonima\Compiler\Ast\SwitchCase;
+use Cyonima\Compiler\Ast\SwitchStmt;
+use Cyonima\Compiler\Ast\ThrowStmt;
+use Cyonima\Compiler\Ast\TryStmt;
 use Cyonima\Compiler\Ast\UnaryExpr;
 use Cyonima\Compiler\Ast\VariableExpr;
 use Cyonima\Compiler\Ast\WhileStmt;
@@ -49,6 +67,7 @@ final class Parser
     public function parse(): Program
     {
         $functions = [];
+        $classes = [];
         $statements = [];
 
         while (!$this->check(TokenType::Eof)) {
@@ -62,10 +81,15 @@ final class Parser
                 continue;
             }
 
+            if ($this->match(TokenType::ClassKeyword)) {
+                $classes[] = $this->parseClassAfterKeyword($this->previous());
+                continue;
+            }
+
             $statements[] = $this->parseStatement();
         }
 
-        return new Program($functions, $statements);
+        return new Program($functions, $classes, $statements);
     }
 
     private function parseDeclareRemainder(): void
@@ -118,6 +142,64 @@ final class Parser
         );
     }
 
+    private function parseClassAfterKeyword(Token $keyword): ClassDecl
+    {
+        $name = $this->consume(TokenType::Identifier, 'attendu : nom de classe après class');
+        $this->consume(TokenType::LeftBrace, 'attendu : { après le nom de classe');
+        $properties = [];
+        $methods = [];
+
+        while (!$this->check(TokenType::RightBrace) && !$this->check(TokenType::Eof)) {
+            $line = $this->peek()->line;
+            $this->match(TokenType::PublicKeyword, TokenType::PrivateKeyword, TokenType::ProtectedKeyword);
+
+            if ($this->match(TokenType::Function)) {
+                $function = $this->parseFunctionAfterKeyword($this->previous());
+                $methods[] = new MethodDecl(
+                    $function->name,
+                    $function->params,
+                    $function->returnType,
+                    $function->body,
+                    $function->line,
+                );
+                continue;
+            }
+
+            $type = $this->parseType();
+
+            if ($type === 'void') {
+                throw new CompilerException(
+                    "ligne {$line} : une propriété ne peut pas être de type void",
+                );
+            }
+
+            $variable = $this->consume(TokenType::Variable, 'attendu : nom de propriété $nom');
+            $this->match(TokenType::Assign);
+
+            if ($this->previous()->type === TokenType::Assign) {
+                throw new CompilerException(
+                    "ligne {$line} : valeur par défaut de propriété non supportée",
+                );
+            }
+
+            $this->consume(TokenType::Semicolon, 'attendu : ; après la propriété');
+            $properties[] = new PropertyDecl(
+                $type,
+                (string) $variable->literal,
+                $line,
+            );
+        }
+
+        $this->consume(TokenType::RightBrace, 'attendu : } après la classe');
+
+        return new ClassDecl(
+            (string) $name->literal,
+            $properties,
+            $methods,
+            $keyword->line,
+        );
+    }
+
     private function parseStatement(): Stmt
     {
         $token = $this->peek();
@@ -140,6 +222,39 @@ final class Parser
 
         if ($this->match(TokenType::ForEach)) {
             return $this->parseForeachAfterKeyword($token);
+        }
+
+        if ($this->match(TokenType::Switch)) {
+            return $this->parseSwitchAfterKeyword($token);
+        }
+
+        if ($this->match(TokenType::Break)) {
+            $this->consume(TokenType::Semicolon, 'attendu : ; après break');
+
+            return new BreakStmt($token->line);
+        }
+
+        if ($this->match(TokenType::Try)) {
+            return $this->parseTryAfterKeyword($token);
+        }
+
+        if ($this->match(TokenType::Throw)) {
+            $value = $this->parseExpression();
+            $this->consume(TokenType::Semicolon, 'attendu : ; après throw');
+
+            return new ThrowStmt($value, $token->line);
+        }
+
+        if ($this->match(TokenType::Finally)) {
+            throw new CompilerException(
+                "ligne {$token->line} : finally non supporté",
+            );
+        }
+
+        if ($this->match(TokenType::Case, TokenType::Default)) {
+            throw new CompilerException(
+                "ligne {$token->line} : {$this->previous()->lexeme} hors switch",
+            );
         }
 
         if ($this->match(TokenType::Return)) {
@@ -247,6 +362,99 @@ final class Parser
         );
     }
 
+    private function parseSwitchAfterKeyword(Token $keyword): SwitchStmt
+    {
+        $this->consume(TokenType::LeftParen, 'attendu : ( après switch');
+        $subject = $this->parseExpression();
+        $this->consume(TokenType::RightParen, 'attendu : ) après switch');
+        $this->consume(TokenType::LeftBrace, 'attendu : { après switch');
+        $cases = [];
+
+        while (!$this->check(TokenType::RightBrace) && !$this->check(TokenType::Eof)) {
+            $line = $this->peek()->line;
+
+            if ($this->match(TokenType::Case)) {
+                $condition = $this->parseExpression();
+                $this->consume(TokenType::Colon, 'attendu : : après case');
+                $cases[] = new SwitchCase(
+                    $condition,
+                    $this->parseCaseStatements(),
+                    $line,
+                );
+                continue;
+            }
+
+            if ($this->match(TokenType::Default)) {
+                $this->consume(TokenType::Colon, 'attendu : : après default');
+                $cases[] = new SwitchCase(
+                    null,
+                    $this->parseCaseStatements(),
+                    $line,
+                );
+                continue;
+            }
+
+            throw new CompilerException(
+                "ligne {$line} : case ou default attendu dans switch",
+            );
+        }
+
+        $this->consume(TokenType::RightBrace, 'attendu : } après switch');
+
+        return new SwitchStmt($subject, $cases, $keyword->line);
+    }
+
+    /** @return list<Stmt> */
+    private function parseCaseStatements(): array
+    {
+        $statements = [];
+
+        while (!$this->check(TokenType::Case)
+            && !$this->check(TokenType::Default)
+            && !$this->check(TokenType::RightBrace)
+            && !$this->check(TokenType::Eof)) {
+            $statements[] = $this->parseStatement();
+        }
+
+        return $statements;
+    }
+
+    private function parseTryAfterKeyword(Token $keyword): TryStmt
+    {
+        $this->consume(TokenType::LeftBrace, 'attendu : { après try');
+        $body = $this->parseBlockAfterBrace($keyword->line);
+        $this->consume(TokenType::Catch, 'attendu : catch après try');
+        $this->consume(TokenType::LeftParen, 'attendu : ( après catch');
+        $type = $this->parseType();
+        $variable = $this->consume(TokenType::Variable, 'attendu : variable après le type de catch');
+        $this->consume(TokenType::RightParen, 'attendu : ) après catch');
+        $this->consume(TokenType::LeftBrace, 'attendu : { après catch');
+        $catchBody = $this->parseBlockAfterBrace($keyword->line);
+
+        if ($this->check(TokenType::Catch)) {
+            throw new CompilerException(
+                "ligne {$this->peek()->line} : un seul catch est supporté",
+            );
+        }
+
+        if ($this->check(TokenType::Finally)) {
+            throw new CompilerException(
+                "ligne {$this->peek()->line} : finally non supporté",
+            );
+        }
+
+        return new TryStmt(
+            $body,
+            new CatchClause(
+                $type,
+                (string) $variable->literal,
+                $catchBody,
+                $keyword->line,
+            ),
+            $keyword->line,
+        );
+    }
+
     private function parseReturnAfterKeyword(Token $keyword): ReturnStmt
     {
         if ($this->match(TokenType::Semicolon)) {
@@ -305,6 +513,15 @@ final class Parser
 
             if ($expression instanceof VariableExpr) {
                 return new AssignExpr($expression->name, $value, $operator->line);
+            }
+
+            if ($expression instanceof PropertyAccessExpr) {
+                return new PropertyAssignExpr(
+                    $expression->object,
+                    $expression->property,
+                    $value,
+                    $operator->line,
+                );
             }
 
             if ($expression instanceof IndexExpr) {
@@ -445,23 +662,88 @@ final class Parser
     {
         $expression = $this->parsePrimary();
 
-        while ($this->match(TokenType::LeftBracket)) {
-            $line = $this->previous()->line;
+        while (true) {
+            if ($this->match(TokenType::LeftBracket)) {
+                $line = $this->previous()->line;
 
-            if (!$expression instanceof VariableExpr) {
-                throw new CompilerException(
-                    "ligne {$line} : index imbriqué ou appel indexé non supporté",
+                if (!$expression instanceof VariableExpr) {
+                    throw new CompilerException(
+                        "ligne {$line} : index imbriqué ou appel indexé non supporté",
+                    );
+                }
+
+                $index = null;
+
+                if (!$this->check(TokenType::RightBracket)) {
+                    $index = $this->parseExpression();
+                }
+
+                $this->consume(TokenType::RightBracket, 'attendu : ] après l’index');
+                $expression = new IndexExpr($expression, $index, $line);
+                continue;
+            }
+
+            if ($this->match(TokenType::ObjectArrow)) {
+                $line = $this->previous()->line;
+                $name = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : nom de propriété ou méthode après ->',
                 );
+
+                if ($this->match(TokenType::LeftParen)) {
+                    $arguments = [];
+
+                    if (!$this->check(TokenType::RightParen)) {
+                        do {
+                            $arguments[] = $this->parseExpression();
+                        } while ($this->match(TokenType::Comma));
+                    }
+
+                    $this->consume(TokenType::RightParen, 'attendu : ) après les arguments');
+                    $expression = new MethodCallExpr(
+                        $expression,
+                        (string) $name->literal,
+                        $arguments,
+                        $line,
+                    );
+                    continue;
+                }
+
+                $expression = new PropertyAccessExpr(
+                    $expression,
+                    (string) $name->literal,
+                    $line,
+                );
+                continue;
             }
 
-            $index = null;
+            if ($this->match(TokenType::LeftParen)) {
+                $line = $this->previous()->line;
 
-            if (!$this->check(TokenType::RightBracket)) {
-                $index = $this->parseExpression();
+                if (!$expression instanceof VariableExpr) {
+                    throw new CompilerException(
+                        "ligne {$line} : seul un appel de closure via variable est supporté",
+                    );
+                }
+
+                $arguments = [];
+
+                if (!$this->check(TokenType::RightParen)) {
+                    do {
+                        $arguments[] = $this->parseExpression();
+                    } while ($this->match(TokenType::Comma));
+                }
+
+                $this->consume(TokenType::RightParen, 'attendu : ) après les arguments');
+                $expression = new CallableCallExpr(
+                    $expression,
+                    $arguments,
+                    $line,
+                );
+                continue;
             }
 
-            $this->consume(TokenType::RightBracket, 'attendu : ] après l’index');
-            $expression = new IndexExpr($expression, $index, $line);
+            break;
         }
 
         return $expression;
@@ -469,6 +751,14 @@ final class Parser
 
     private function parsePrimary(): Expr
     {
+        if ($this->match(TokenType::Function)) {
+            return $this->parseAnonymousFunctionAfterKeyword($this->previous());
+        }
+
+        if ($this->match(TokenType::FnKeyword)) {
+            return $this->parseArrowFunctionAfterKeyword($this->previous());
+        }
+
         if ($this->match(TokenType::Integer, TokenType::Float, TokenType::String)) {
             $token = $this->previous();
             $type = match ($token->type) {
@@ -508,6 +798,27 @@ final class Parser
             $line = $this->previous()->line;
 
             return new ArrayExpr($this->parseArrayElements(TokenType::RightBracket), $line);
+        }
+
+        if ($this->match(TokenType::Match)) {
+            return $this->parseMatchAfterKeyword($this->previous());
+        }
+
+        if ($this->match(TokenType::NewKeyword)) {
+            $token = $this->previous();
+            $className = $this->consume(TokenType::Identifier, 'attendu : nom de classe après new');
+            $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de classe');
+            $arguments = [];
+
+            if (!$this->check(TokenType::RightParen)) {
+                do {
+                    $arguments[] = $this->parseExpression();
+                } while ($this->match(TokenType::Comma));
+            }
+
+            $this->consume(TokenType::RightParen, 'attendu : ) après les arguments de new');
+
+            return new NewExpr((string) $className->literal, $arguments, $token->line);
         }
 
         if ($this->match(TokenType::True, TokenType::False)) {
@@ -571,16 +882,20 @@ final class Parser
     {
         $elements = [];
 
-        if (!$this->check($closing)) {
-            do {
-                $elements[] = $this->parseExpression();
+        while (!$this->check($closing)) {
+            $line = $this->peek()->line;
+            $first = $this->parseExpression();
 
-                if ($this->check(TokenType::Arrow)) {
-                    throw new CompilerException(
-                        "ligne {$this->peek()->line} : tableaux associatifs non supportés (index entiers seulement)",
-                    );
-                }
-            } while ($this->match(TokenType::Comma));
+            if ($this->match(TokenType::Arrow)) {
+                $value = $this->parseExpression();
+                $elements[] = new ArrayItem($first, $value, $line);
+            } else {
+                $elements[] = new ArrayItem(null, $first, $line);
+            }
+
+            if (!$this->match(TokenType::Comma)) {
+                break;
+            }
         }
 
         $this->consume(
@@ -591,9 +906,174 @@ final class Parser
         return $elements;
     }
 
+    /** @return list<Param> */
+    private function parseParameters(): array
+    {
+        $params = [];
+
+        if (!$this->check(TokenType::RightParen)) {
+            do {
+                $type = $this->parseType();
+                $variable = $this->consume(
+                    TokenType::Variable,
+                    'attendu : paramètre $nom après son type',
+                );
+                $params[] = new Param((string) $variable->literal, $type, $variable->line);
+            } while ($this->match(TokenType::Comma));
+        }
+
+        return $params;
+    }
+
+    private function parseAnonymousFunctionAfterKeyword(Token $keyword): ClosureExpr
+    {
+        $this->consume(TokenType::LeftParen, 'attendu : ( après function anonyme');
+        $params = $this->parseParameters();
+        $this->consume(TokenType::RightParen, 'attendu : ) après les paramètres');
+        $use = [];
+
+        if ($this->match(TokenType::UseKeyword)) {
+            $this->consume(TokenType::LeftParen, 'attendu : ( après use');
+
+            if (!$this->check(TokenType::RightParen)) {
+                do {
+                    $variable = $this->consume(
+                        TokenType::Variable,
+                        'attendu : variable capturée par use',
+                    );
+                    $use[] = (string) $variable->literal;
+                } while ($this->match(TokenType::Comma));
+            }
+
+            $this->consume(TokenType::RightParen, 'attendu : ) après use');
+        }
+
+        $returnType = null;
+
+        if ($this->match(TokenType::Colon)) {
+            $returnType = $this->parseType();
+        }
+
+        $this->consume(TokenType::LeftBrace, 'attendu : { pour la closure');
+        $body = $this->parseBlockAfterBrace($keyword->line);
+
+        return new ClosureExpr(
+            false,
+            $params,
+            $returnType,
+            $body,
+            null,
+            $use,
+            $keyword->line,
+        );
+    }
+
+    private function parseArrowFunctionAfterKeyword(Token $keyword): ClosureExpr
+    {
+        $this->consume(TokenType::LeftParen, 'attendu : ( après fn');
+        $params = $this->parseParameters();
+        $this->consume(TokenType::RightParen, 'attendu : ) après les paramètres');
+        $returnType = null;
+
+        if ($this->match(TokenType::Colon)) {
+            $returnType = $this->parseType();
+        }
+
+        $this->consume(TokenType::Arrow, 'attendu : => après fn');
+        $expression = $this->parseExpression();
+
+        return new ClosureExpr(
+            true,
+            $params,
+            $returnType,
+            null,
+            $expression,
+            [],
+            $keyword->line,
+        );
+    }
+
+    private function parseMatchAfterKeyword(Token $keyword): MatchExpr
+    {
+        $this->consume(TokenType::LeftParen, 'attendu : ( après match');
+        $subject = $this->parseExpression();
+        $this->consume(TokenType::RightParen, 'attendu : ) après match');
+        $this->consume(TokenType::LeftBrace, 'attendu : { après match');
+        $arms = [];
+
+        while (!$this->check(TokenType::RightBrace) && !$this->check(TokenType::Eof)) {
+            $line = $this->peek()->line;
+            $conditions = [];
+
+            if ($this->match(TokenType::Default)) {
+                // Arm par défaut.
+            } else {
+                $conditions[] = $this->parseExpression();
+
+                while ($this->match(TokenType::Comma)) {
+                    if ($this->check(TokenType::Arrow)) {
+                        break;
+                    }
+
+                    $conditions[] = $this->parseExpression();
+                }
+            }
+
+            $this->consume(TokenType::Arrow, 'attendu : => dans match');
+            $body = $this->parseExpression();
+            $arms[] = new MatchArm($conditions, $body, $line);
+
+            if (!$this->match(TokenType::Comma)) {
+                break;
+            }
+        }
+
+        $this->consume(TokenType::RightBrace, 'attendu : } après match');
+
+        return new MatchExpr($subject, $arms, $keyword->line);
+    }
+
     private function parseType(): string
     {
         $token = $this->peek();
+
+        if ($token->type === TokenType::Identifier
+            && strtolower((string) $token->literal) === 'callable') {
+            $this->advance();
+
+            if ($this->match(TokenType::LeftParen)) {
+                $params = [];
+
+                if (!$this->check(TokenType::RightParen)) {
+                    do {
+                        $param = $this->parseType();
+
+                        if (!in_array($param, ['int', 'float', 'bool', 'string'], true)) {
+                            throw new CompilerException(
+                                "ligne {$token->line} : paramètre callable non scalaire : {$param}",
+                            );
+                        }
+
+                        $params[] = $param;
+                    } while ($this->match(TokenType::Comma));
+                }
+
+                $this->consume(TokenType::RightParen, 'attendu : ) dans la signature callable');
+                $this->consume(TokenType::Colon, 'attendu : : dans la signature callable');
+                $return = $this->parseType();
+
+                if (!in_array($return, ['int', 'float', 'bool', 'string', 'void'], true)) {
+                    throw new CompilerException(
+                        "ligne {$token->line} : retour callable non scalaire : {$return}",
+                    );
+                }
+
+                return 'callable(' . implode(',', $params) . '):' . $return;
+            }
+
+            return 'callable';
+        }
+
         $type = match ($token->type) {
             TokenType::IntType => 'int',
             TokenType::FloatType => 'float',

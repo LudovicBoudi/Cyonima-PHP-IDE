@@ -178,6 +178,13 @@ final class Lexer
         $lexeme = substr($this->source, $start, $this->position - $start);
         $type = match (strtolower($lexeme)) {
             'function' => TokenType::Function,
+            'fn' => TokenType::FnKeyword,
+            'use' => TokenType::UseKeyword,
+            'class' => TokenType::ClassKeyword,
+            'new' => TokenType::NewKeyword,
+            'public' => TokenType::PublicKeyword,
+            'private' => TokenType::PrivateKeyword,
+            'protected' => TokenType::ProtectedKeyword,
             'return' => TokenType::Return,
             'echo' => TokenType::Echo,
             'if' => TokenType::If,
@@ -186,6 +193,15 @@ final class Lexer
             'while' => TokenType::While,
             'for' => TokenType::For,
             'foreach' => TokenType::ForEach,
+            'switch' => TokenType::Switch,
+            'case' => TokenType::Case,
+            'default' => TokenType::Default,
+            'break' => TokenType::Break,
+            'match' => TokenType::Match,
+            'try' => TokenType::Try,
+            'catch' => TokenType::Catch,
+            'throw' => TokenType::Throw,
+            'finally' => TokenType::Finally,
             'as' => TokenType::As,
             'declare' => TokenType::Declare,
             'true' => TokenType::True,
@@ -403,6 +419,7 @@ final class Lexer
             '&&' => TokenType::AndAnd,
             '||' => TokenType::OrOr,
             '=>' => TokenType::Arrow,
+            '->' => TokenType::ObjectArrow,
             default => null,
         };
 

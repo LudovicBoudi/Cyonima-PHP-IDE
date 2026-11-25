@@ -122,9 +122,14 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Variables | `$nom`, affectation simple |
 | Littéraux | entiers, flottants, chaînes, `true`, `false`, `null` |
 | Chaînes | concaténation `.`, interpolation `"Bonjour $nom"` et `"{$nom}"` |
-| Tableaux | indexés homogènes, `[...]`, `array(...)`, `$a[i]`, `$a[]`, `count` |
+| Tableaux indexés | homogènes, `[...]`, `array(...)`, `$a[i]`, `$a[]`, `count` |
+| Tableaux associatifs | `['clé' => valeur]`, `$a['clé']`, `foreach` clé/valeur, `count` |
 | Opérateurs | `+ - * / % .`, comparaisons, `===`, `!==`, `&&`, `\|\|`, `!` |
-| Contrôle | `if`, `elseif`, `else`, `while`, `for`, `foreach` |
+| Contrôle | `if`, `elseif`, `else`, `while`, `for`, `foreach`, `switch` (fall-through, `break`), `match` |
+| Vérification | `isset($a[$clé])` |
+| Exceptions | `throw`, `try` / `catch (string $e)`, propagation entre fonctions |
+| Classes | `class`, propriétés typées, `new`, `$this`, méthodes, `__construct` |
+| Closures | `function (...) use (...)` et `fn (...) => ...`, appels `$fn(...)` |
 | Fonctions | déclaration typée, paramètres, retour, appels |
 | Sortie | `echo` multi-arguments |
 | Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count` |
@@ -165,24 +170,182 @@ bin/cyonima-compile \
 Un exemple complet et exécutable est fourni dans
 [`examples/native-hello.php`](../examples/native-hello.php).
 
+Les tableaux associatifs utilisent des clés `string` et des valeurs
+homogènes :
+
+```php
+<?php
+$ages = ['alice' => 30, 'bob' => 25];
+$ages['carol'] = 40;
+
+$total = 0;
+foreach ($ages as $name => $age) {
+    echo $name, ' : ', $age, "\n";
+    $total = $total + $age;
+}
+```
+
+Un exemple complet est fourni dans
+[`examples/native-maps.php`](../examples/native-maps.php).
+
+### switch, match et isset
+
+`switch` est compilé en chaîne de comparaisons et sauts, avec fall-through et
+`break` :
+
+```php
+switch ($value) {
+    case 1:
+    case 2:
+        echo 'petit';
+        break;
+    default:
+        echo 'autre';
+}
+```
+
+`match` est une expression, avec comparaison stricte et `default` obligatoire :
+
+```php
+$label = match ($value) {
+    1, 2 => 'petit',
+    3 => 'trois',
+    default => 'autre',
+};
+```
+
+`isset` accepte exactement un accès indexé :
+
+```php
+if (isset($ages['alice'])) {
+    echo $ages['alice'];
+}
+```
+
+`switch` utilise la comparaison `==` du sous-ensemble (types identiques ou
+numériques). `match` exige des conditions du même type que le sujet. Les
+branches `match` doivent produire des types compatibles.
+
+### Exceptions
+
+```php
+try {
+    throw 'message';
+} catch (string $error) {
+    echo $error;
+}
+```
+
+- `throw` attend une chaîne ;
+- `catch` attend un type `string` et une variable ;
+- un seul `catch`, pas de `finally` ;
+- propagation automatique entre fonctions : chaque appel est suivi d’un
+  contrôle du drapeau d’exception ;
+- une exception non capturée écrit sur `stderr` et termine le programme avec
+  le code `1` ;
+- le message est enregistré comme racine GC entre le `throw` et le `catch`.
+
+Un exemple complet est fourni dans
+[`examples/native-exceptions.php`](../examples/native-exceptions.php).
+
+### Classes et objets
+
+```php
+class Point {
+    public int $x;
+    public int $y;
+
+    public function __construct(int $x, int $y)
+    {
+        $this->x = $x;
+        $this->y = $y;
+    }
+
+    public function sum(): int {
+        return $this->x + $this->y;
+    }
+}
+
+$p = new Point(1, 2);
+echo $p->sum();
+$p->x = 10;
+```
+
+- propriétés typées `int`, `float`, `bool`, `string`, initialisées à
+  `0` / `false` / `""` ;
+- constructeur `__construct` optionnel, appelé par `new Class(...)` ;
+- méthodes compilées en fonctions C avec un paramètre `$this` ;
+- accès et affectation `$objet->propriété`, appels `$objet->méthode()` ;
+- affectation d’objet = partage de référence, comme en PHP ;
+- GC : une fonction de marquage par classe protège les propriétés chaîne.
+
+Un exemple complet est fourni dans
+[`examples/native-classes.php`](../examples/native-classes.php).
+
+### Closures et callbacks
+
+```php
+$factor = 3;
+
+$multiply = function (int $x) use ($factor): int {
+    return $x * $factor;
+};
+
+$add = fn (int $x): int => $x + $factor;
+
+echo $multiply(4), ' ', $add(4);
+```
+
+- `function (...) use (...)` capture explicitement des variables par valeur ;
+- `fn (...) => ...` capture automatiquement les variables libres ;
+- type interne `callable(int):int`, `callable():void`, etc. ;
+- appels via `$fn(...)` ;
+- captures scalaires, chaînes, tableaux, tables associatives, objets et
+  closures ; les tableaux et tables sont copiés à la création ;
+- l’état capturé persiste entre les appels d’une même closure ;
+- codegen : structure `CyClosureData_N`, fonction `cy_closure_N`, champ
+  `invoke` et fonction de marquage GC des captures.
+
+Une closure anonyme doit déclarer son type de retour. Une arrow function peut
+l’omettre : il est inféré depuis l’expression.
+
+Un exemple complet est fourni dans
+[`examples/native-closures.php`](../examples/native-closures.php).
+
 ### Limites explicites
 
 Les constructions suivantes sont refusées avec un message et un numéro de
 ligne :
 
-- tableaux associatifs, tableaux imbriqués, tableaux passés en paramètre ou
-  retournés par une fonction ;
-- `switch`, `match` ;
-- objets, classes, interfaces, appels de méthodes et propriétés ;
-- closures et fonctions anonymes ;
+- clés associatives entières (les tables associatives sont `string => valeur`) ;
+- tableaux imbriqués, tableaux passés en paramètre ou retournés par une fonction ;
+- `break`/`continue` dans les boucles (seul `break` de `switch` est supporté) ;
+- `match` sans `default` et `isset` avec plusieurs arguments ;
+- héritage, interfaces, classes abstraites, membres `static`, application de la
+  visibilité (les mots-clés sont acceptés mais ignorés) ;
+- objets en paramètres, retours ou propriétés, valeurs par défaut de
+  propriétés, `clone`, `instanceof` ;
+- capture par référence `use (&$x)`, capture de `$this`, closures `static` ;
+- closures en paramètres, retours, propriétés ou éléments de tableau,
+  invocation immédiate `(function () {})()` ;
 - `eval`, réflexion, `include`/`require`, autoload ;
 - références (`&$x`), `++`/`--`, opérateurs combinés (`+=`) ;
-- exceptions, générateurs, fibres ;
-- index hors limites : le runtime s’arrête avec un message explicite.
+- hiérarchies d’exceptions, `finally`, multi-catch, exceptions typées autres
+  que `string` ;
+- exceptions provenant des erreurs fatales du runtime (index hors limites,
+  clé absente) : elles terminent encore le programme ;
+- générateurs, fibres ;
+- index ou clé absents : le runtime s’arrête avec un message explicite.
 
-Les tableaux sont **homogènes** (`int`, `float`, `bool` ou `string`) et
-indexés par entiers. Une affectation de tableau crée une copie, comme en PHP
-pour les affectations par valeur.
+Les tableaux indexés sont **homogènes** (`int`, `float`, `bool` ou `string`).
+Les tables associatives utilisent des clés `string` et des valeurs homogènes.
+Une affectation de tableau ou de table associative crée une copie, comme en
+PHP pour les affectations par valeur.
+
+Un tableau vide `[]` doit être raffiné par un premier ajout indexé (`$a[] =`)
+ou une première clé (`$a['clé'] =`) avant tout autre usage : sa nature
+(indexée ou associative) et son type de valeur doivent être connus à la
+compilation.
 
 ### Modèle mémoire
 
@@ -191,7 +354,7 @@ allocations :
 
 - `cy_alloc` / `cy_free` remplacent `malloc` et `realloc` dans le code généré ;
 - chaque fonction pousse une **frame de racines** contenant ses variables et
-  temporaires de type chaîne ou tableau ;
+  temporaires de type chaîne, tableau ou table associative ;
 - une **GC mark-sweep** est déclenchée aux retours de boucle lorsque le seuil
   d’allocations ou d’octets est atteint ;
 - `cy_runtime_shutdown` libère le reste à la sortie du programme via `atexit`.
@@ -211,15 +374,15 @@ PHP ui_*  →  IR  →  C11 + cyonima_ui.h  →  GTK4  →  ELF
 ```
 
 Le runtime `runtime/native/cyonima_ui.h` maintient une table de widgets
-référencés par des handles `int` (1..256). Il crée une `GtkApplication`, les
-fenêtres, les boîtes et les contrôles, puis relie les signaux GTK aux
-fonctions PHP compilées.
+référencés par des handles `int` (1..256). Il initialise GTK avec `gtk_init`,
+crée des `GtkWindow`, les boîtes et les contrôles, puis lance une `GMainLoop`.
+Il relie les signaux GTK aux fonctions ou closures PHP compilées.
 
 ### Fonctions UI
 
 | Fonction | Rôle |
 |---|---|
-| `ui_init(string $appId)` | crée l’application GTK |
+| `ui_init(string $appId)` | initialise GTK et la boucle |
 | `ui_window(string $title, int $w, int $h): int` | fenêtre |
 | `ui_box(bool $vertical, int $spacing): int` | boîte de disposition |
 | `ui_label(string $text): int` | libellé |
@@ -231,9 +394,13 @@ fonctions PHP compilées.
 | `ui_set_text(int $label, string $text)` | met à jour un libellé |
 | `ui_entry_text(int $entry): string` | lit la saisie |
 | `ui_set_visible(int $widget, bool $visible)` | visibilité |
-| `ui_on_click(int $button, string $handler, int $data = 0)` | clic |
+| `ui_on_click(int $button, string $handler, int $data = 0)` | clic (nom de fonction) |
 | `ui_on_activate(int $entry, string $handler, int $data = 0)` | validation d’entrée |
 | `ui_after(int $ms, string $handler, int $data = 0)` | timer unique |
+| `ui_on_click_closure(int $button, callable():void $cb)` | clic (closure) |
+| `ui_on_activate_closure(int $entry, callable():void $cb)` | validation (closure) |
+| `ui_after_closure(int $ms, callable():void $cb)` | timer (closure) |
+| `ui_click(int $button)` | émet un clic (tests/démo) |
 | `ui_quit()` | arrête la boucle GTK |
 | `ui_run(): int` | lance la boucle GTK |
 
@@ -292,15 +459,44 @@ ui_run();
 Un exemple prêt à compiler est fourni dans
 [`examples/native-ui.php`](../examples/native-ui.php).
 
+### Façade objet
+
+La façade `Application` / `Window` / `Box` / `Label` / `Button` / `Entry` est
+injectée automatiquement lorsqu’un programme utilise `new` sur l’une de ces
+classes. Elle encapsule les handles et les appels `ui_*`.
+
+```php
+$app = new Application('com.cyonima.nativeui.object');
+$window = new Window('Cyonima objet', 400, 200);
+$box = new Box(true, 12);
+$label = new Label('Bonjour');
+$button = new Button('Cliquer');
+
+$box->append($label->handle);
+$box->append($button->handle);
+$window->setChild($box->handle);
+
+$button->onClicked(fn () => $label->setText('Cliqué !'));
+
+$window->present();
+$app->run();
+```
+
+- les callbacks sont des closures `callable():void` enregistrées via
+  `ui_on_click_closure` et maintenues en vie par les racines GC ;
+- fermer la fenêtre arrête la boucle ;
+- la composition utilise encore `$widget->handle` dans cette version ;
+- un exemple complet est fourni dans
+  [`examples/native-ui-object.php`](../examples/native-ui-object.php).
+
 ### Limites de cette première couche
 
-- API procédurale : pas encore de classes, objets, méthodes ni closures.
-- Pas d’accès aux variables globales depuis un gestionnaire ; les handles sont
-  transmis explicitement via le troisième argument.
-- Widgets disponibles : fenêtre, boîte, libellé, bouton, entrée.
-- Une seule application GTK par programme, 256 widgets maximum.
-- Pas encore de CSS, de menus, de listes ni de modèles de données.
-- La compilation ELF d’une application UI exige `libgtk-4-dev`.
+- façade objet disponible, mais composition via `$widget->handle` ; pas
+  encore d’héritage ni d’objets en paramètres/retours ;
+- callbacks UI limités à `callable():void` ;
+- une seule boucle GTK par programme, 256 widgets maximum ;
+- pas encore de CSS, de menus, de listes ni de modèles de données ;
+- la compilation ELF d’une application UI exige `libgtk-4-dev`.
 
 La façade objet `Cyonima\UI` (`new Button(...)`, `onClicked(...)`) sera
 construite au-dessus de cette couche dans une étape ultérieure.
@@ -428,7 +624,12 @@ La suite couvre :
 - le lexer, le parser et les erreurs de syntaxe du sous-ensemble PHP ;
 - l’analyse sémantique (variable inconnue, type incompatible, arguments) ;
 - l’IR (labels, sauts, temporaires) ;
-- les tableaux, `for`, `foreach` et l’interpolation de chaînes ;
+- les tableaux indexés, `for`, `foreach` et l’interpolation de chaînes ;
+- les tableaux associatifs `string => valeur` et leur copie ;
+- `switch`, `match` et `isset` ;
+- les exceptions `throw` / `try` / `catch` et leur propagation ;
+- les classes, objets, propriétés, constructeurs et méthodes ;
+- les closures, captures par valeur et arrow functions ;
 - l’analyse de flux (affectation définie, retours exhaustifs) ;
 - le runtime mémoire (racines, GC mark-sweep, libération à l’arrêt) ;
 - la compilation ELF et l’exécution de programmes PHP natifs ;
@@ -448,8 +649,9 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 4 | modules natifs : `libcurl`, `libssh2`, SQLite, etc. | à venir |
 | 5 | packaging : `--package=appimage` et `--package=flatpak` | à venir |
 
-Le sous-ensemble doit encore couvrir les objets, classes, closures, `switch`,
-`match`, les exceptions et les tableaux associatifs. La façade objet
-`Cyonima\UI` sera construite au-dessus de la couche procédurale `ui_*`. Le
+Le sous-ensemble doit encore couvrir l’héritage, les objets et callables en
+paramètres/retours, les tableaux associatifs à clés entières et la capture par
+référence. La façade objet `Cyonima\UI` sera construite au-dessus de la couche
+procédurale `ui_*`. Le
 compilateur reste extensible : nouveaux types, nouveaux contrôles et nouvelles
 constructions s’ajoutent derrière l’AST et l’IR, sans réécrire le backend C.

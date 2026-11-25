@@ -18,12 +18,23 @@
 
 static GtkWidget *cy_ui_widgets[CY_UI_MAX_WIDGETS];
 static int cy_ui_widget_count = 0;
-static GtkApplication *cy_ui_application = NULL;
+static bool cy_ui_initialized = false;
+static GMainLoop *cy_ui_loop = NULL;
 
 static inline void cy_ui_error(const char *message)
 {
     fprintf(stderr, "cyonima ui: %s\n", message);
     exit(1);
+}
+
+static inline void cy_ui_window_destroyed(GtkWidget *widget, gpointer data)
+{
+    (void) widget;
+    (void) data;
+
+    if (cy_ui_loop != NULL && g_main_loop_is_running(cy_ui_loop)) {
+        g_main_loop_quit(cy_ui_loop);
+    }
 }
 
 static inline int cy_ui_register(GtkWidget *widget)
@@ -52,26 +63,31 @@ static inline GtkWidget *cy_ui_widget(cy_int handle)
 
 static inline void cy_ui_init(const char *app_id)
 {
-    if (cy_ui_application != NULL) {
+    (void) app_id;
+
+    if (cy_ui_initialized) {
         return;
     }
 
-    cy_ui_application = gtk_application_new(app_id, G_APPLICATION_DEFAULT_FLAGS);
+    gtk_init();
+    cy_ui_loop = g_main_loop_new(NULL, FALSE);
+    cy_ui_initialized = true;
 
-    if (cy_ui_application == NULL) {
-        cy_ui_error("application GTK impossible");
+    if (cy_ui_loop == NULL) {
+        cy_ui_error("boucle GTK impossible");
     }
 }
 
 static inline cy_int cy_ui_window(const char *title, cy_int width, cy_int height)
 {
-    if (cy_ui_application == NULL) {
+    if (!cy_ui_initialized) {
         cy_ui_error("appelez ui_init() avant ui_window()");
     }
 
-    GtkWidget *window = gtk_application_window_new(cy_ui_application);
+    GtkWidget *window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(window), title);
     gtk_window_set_default_size(GTK_WINDOW(window), (int) width, (int) height);
+    g_signal_connect(window, "destroy", G_CALLBACK(cy_ui_window_destroyed), NULL);
 
     return cy_ui_register(window);
 }
@@ -127,6 +143,11 @@ static inline void cy_ui_on_click(cy_int button, GCallback callback, gpointer da
     g_signal_connect(cy_ui_widget(button), "clicked", callback, data);
 }
 
+static inline void cy_ui_click(cy_int button)
+{
+    g_signal_emit_by_name(cy_ui_widget(button), "clicked");
+}
+
 static inline void cy_ui_on_activate(cy_int entry, GCallback callback, gpointer data)
 {
     g_signal_connect(cy_ui_widget(entry), "activate", callback, data);
@@ -135,6 +156,61 @@ static inline void cy_ui_on_activate(cy_int entry, GCallback callback, gpointer 
 static inline void cy_ui_after(cy_int milliseconds, GSourceFunc callback, gpointer data)
 {
     g_timeout_add((guint) milliseconds, callback, data);
+}
+
+static inline void cy_ui_call_closure(CyClosure *closure)
+{
+    ((void (*)(void *)) closure->invoke)(closure);
+
+    if (cy_exception_pending()) {
+        fprintf(
+            stderr,
+            "cyonima: exception non capturée dans un callback UI : %s\n",
+            cy_exception_message()
+        );
+        exit(1);
+    }
+}
+
+static inline void cy_ui_closure_click(GtkWidget *widget, gpointer data)
+{
+    (void) widget;
+    cy_ui_call_closure((CyClosure *) data);
+}
+
+static inline gboolean cy_ui_closure_timer(gpointer data)
+{
+    cy_ui_call_closure((CyClosure *) data);
+
+    return G_SOURCE_REMOVE;
+}
+
+static inline void cy_ui_on_click_closure(cy_int button, CyClosure *closure)
+{
+    cy_add_root(closure);
+    g_signal_connect(
+        cy_ui_widget(button),
+        "clicked",
+        G_CALLBACK(cy_ui_closure_click),
+        closure
+    );
+}
+
+static inline void cy_ui_on_activate_closure(cy_int entry, CyClosure *closure)
+{
+    cy_add_root(closure);
+    g_signal_connect(
+        cy_ui_widget(entry),
+        "activate",
+        G_CALLBACK(cy_ui_closure_click),
+        closure
+    );
+}
+
+static inline void cy_ui_after_closure(cy_int milliseconds, CyClosure *closure)
+{
+    cy_add_root(closure);
+    g_timeout_add((guint) milliseconds, cy_ui_closure_timer, closure);
 }
 
 static inline void cy_ui_set_text(cy_int label, const char *text)
@@ -156,22 +232,22 @@ static inline void cy_ui_set_visible(cy_int handle, bool visible)
 
 static inline void cy_ui_quit(void)
 {
-    if (cy_ui_application != NULL) {
-        g_application_quit(G_APPLICATION(cy_ui_application));
+    if (cy_ui_loop != NULL && g_main_loop_is_running(cy_ui_loop)) {
+        g_main_loop_quit(cy_ui_loop);
     }
 }
 
 static inline cy_int cy_ui_run(void)
 {
-    if (cy_ui_application == NULL) {
+    if (cy_ui_loop == NULL) {
         cy_ui_error("appelez ui_init() avant ui_run()");
     }
 
-    int status = g_application_run(G_APPLICATION(cy_ui_application), 0, NULL);
-    g_object_unref(cy_ui_application);
-    cy_ui_application = NULL;
+    if (!g_main_loop_is_running(cy_ui_loop)) {
+        g_main_loop_run(cy_ui_loop);
+    }
 
-    return (cy_int) status;
+    return 0;
 }
 
 #endif

@@ -26,17 +26,22 @@ static inline void cy_runtime_out_of_memory(void)
     exit(1);
 }
 
+typedef void (*CyMarkFunc)(void *);
+
 typedef struct CyAllocation {
     struct CyAllocation *next;
     size_t size;
     int kind;
     bool marked;
+    CyMarkFunc mark;
 } CyAllocation;
 
 typedef enum {
     CY_ALLOC_BLOB = 0,
     CY_ALLOC_STRING = 1,
-    CY_ALLOC_ARRAY = 2
+    CY_ALLOC_ARRAY = 2,
+    CY_ALLOC_MAP = 3,
+    CY_ALLOC_OBJECT = 4
 } CyAllocationKind;
 
 static CyAllocation *cy_allocations = NULL;
@@ -63,6 +68,7 @@ static inline void *cy_alloc(size_t size)
     allocation->size = size;
     allocation->kind = CY_ALLOC_BLOB;
     allocation->marked = false;
+    allocation->mark = NULL;
     cy_allocations = allocation;
     cy_allocations_since_gc++;
     cy_bytes_since_gc += size;
@@ -77,6 +83,16 @@ static inline void *cy_alloc_kind(size_t size, CyAllocationKind kind)
     allocation->kind = kind;
 
     return pointer;
+}
+
+static inline void *cy_object_new(size_t size, CyMarkFunc mark)
+{
+    void *object = cy_alloc_kind(size, CY_ALLOC_OBJECT);
+    memset(object, 0, size);
+    CyAllocation *allocation = ((CyAllocation *) object) - 1;
+    allocation->mark = mark;
+
+    return object;
 }
 
 static inline void cy_free(void *pointer)
@@ -122,16 +138,61 @@ static inline void cy_runtime_init(void)
     }
 }
 
+#define CY_EXTRA_ROOT_CAPACITY 256
+
+static void *cy_extra_roots[CY_EXTRA_ROOT_CAPACITY];
+static size_t cy_extra_root_count = 0;
+
+static inline void cy_add_root(void *pointer)
+{
+    if (cy_extra_root_count >= CY_EXTRA_ROOT_CAPACITY) {
+        fputs("cyonima: capacité de racines supplémentaires atteinte\n", stderr);
+        exit(1);
+    }
+
+    cy_extra_roots[cy_extra_root_count++] = pointer;
+}
+
+static const char *cy_current_exception = NULL;
+static bool cy_exception_pending_flag = false;
+
+static inline void cy_throw_exception(const char *message)
+{
+    cy_current_exception = message == NULL ? "" : message;
+    cy_exception_pending_flag = true;
+}
+
+static inline bool cy_exception_pending(void)
+{
+    return cy_exception_pending_flag;
+}
+
+static inline const char *cy_exception_message(void)
+{
+    return cy_current_exception == NULL ? "" : cy_current_exception;
+}
+
+static inline const char *cy_exception_capture(void)
+{
+    const char *message = cy_exception_message();
+    cy_current_exception = NULL;
+    cy_exception_pending_flag = false;
+
+    return message;
+}
+
 typedef enum {
     CY_VALUE_NULL,
     CY_VALUE_BOOL,
     CY_VALUE_INT,
     CY_VALUE_FLOAT,
     CY_VALUE_STRING,
-    CY_VALUE_ARRAY
+    CY_VALUE_ARRAY,
+    CY_VALUE_MAP
 } CyValueType;
 
 typedef struct CyArray CyArray;
+typedef struct CyMap CyMap;
 
 typedef struct {
     CyValueType type;
@@ -141,6 +202,7 @@ typedef struct {
         cy_float floating;
         const char *string;
         CyArray *array;
+        CyMap *map;
     } as;
 } CyValue;
 
@@ -150,9 +212,26 @@ struct CyArray {
     CyValue *items;
 };
 
+typedef struct {
+    CyValue key;
+    CyValue value;
+} CyMapEntry;
+
+struct CyMap {
+    size_t length;
+    size_t capacity;
+    CyMapEntry *entries;
+};
+
+typedef struct {
+    void *invoke;
+} CyClosure;
+
 typedef enum {
     CY_ROOT_STRING = 0,
-    CY_ROOT_ARRAY = 1
+    CY_ROOT_ARRAY = 1,
+    CY_ROOT_MAP = 2,
+    CY_ROOT_OBJECT = 3
 } CyRootType;
 
 typedef struct {
@@ -214,7 +293,30 @@ static inline void cy_mark_pointer(void *pointer)
                     cy_mark_pointer((void *) array->items[i].as.string);
                 } else if (array->items[i].type == CY_VALUE_ARRAY) {
                     cy_mark_pointer(array->items[i].as.array);
+                } else if (array->items[i].type == CY_VALUE_MAP) {
+                    cy_mark_pointer(array->items[i].as.map);
                 }
+            }
+        } else if (allocation->kind == CY_ALLOC_MAP) {
+            CyMap *map = (CyMap *) pointer;
+            cy_mark_pointer(map->entries);
+
+            for (size_t i = 0; i < map->length; i++) {
+                if (map->entries[i].key.type == CY_VALUE_STRING) {
+                    cy_mark_pointer((void *) map->entries[i].key.as.string);
+                }
+
+                if (map->entries[i].value.type == CY_VALUE_STRING) {
+                    cy_mark_pointer((void *) map->entries[i].value.as.string);
+                } else if (map->entries[i].value.type == CY_VALUE_ARRAY) {
+                    cy_mark_pointer(map->entries[i].value.as.array);
+                } else if (map->entries[i].value.type == CY_VALUE_MAP) {
+                    cy_mark_pointer(map->entries[i].value.as.map);
+                }
+            }
+        } else if (allocation->kind == CY_ALLOC_OBJECT) {
+            if (allocation->mark != NULL) {
+                allocation->mark(pointer);
             }
         }
 
@@ -224,6 +326,12 @@ static inline void cy_mark_pointer(void *pointer)
 
 static inline void cy_gc_collect(void)
 {
+    cy_mark_pointer((void *) cy_current_exception);
+
+    for (size_t i = 0; i < cy_extra_root_count; i++) {
+        cy_mark_pointer(cy_extra_roots[i]);
+    }
+
     for (CyRootFrame *frame = cy_root_frames; frame != NULL; frame = frame->previous) {
         for (size_t i = 0; i < frame->count; i++) {
             void *value = NULL;
@@ -293,6 +401,15 @@ static inline CyValue cy_value_string(const char *value)
     CyValue result;
     result.type = CY_VALUE_STRING;
     result.as.string = value;
+
+    return result;
+}
+
+static inline CyValue cy_value_map(CyMap *value)
+{
+    CyValue result;
+    result.type = CY_VALUE_MAP;
+    result.as.map = value;
 
     return result;
 }
@@ -367,6 +484,11 @@ static inline void cy_array_set_value(CyArray *array, cy_int index, CyValue valu
 static inline cy_int cy_array_count(CyArray *array)
 {
     return (cy_int) array->length;
+}
+
+static inline bool cy_array_has_int(CyArray *array, cy_int index)
+{
+    return index >= 0 && (size_t) index < array->length;
 }
 
 static inline CyArray *cy_array_copy(CyArray *array)
@@ -471,6 +593,235 @@ static inline const char *cy_array_get_string(CyArray *array, cy_int index)
 static inline void cy_array_set_string(CyArray *array, cy_int index, const char *value)
 {
     cy_array_set_value(array, index, cy_value_string(value));
+}
+
+static inline CyMap *cy_map_new(void)
+{
+    CyMap *map = (CyMap *) cy_alloc_kind(sizeof(CyMap), CY_ALLOC_MAP);
+    memset(map, 0, sizeof(CyMap));
+
+    return map;
+}
+
+static inline void cy_map_reserve(CyMap *map, size_t needed)
+{
+    if (needed <= map->capacity) {
+        return;
+    }
+
+    size_t capacity = map->capacity == 0 ? 4 : map->capacity * 2;
+
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+
+    CyMapEntry *entries = (CyMapEntry *) cy_alloc(capacity * sizeof(CyMapEntry));
+
+    if (map->length > 0) {
+        memcpy(entries, map->entries, map->length * sizeof(CyMapEntry));
+    }
+
+    cy_free(map->entries);
+    map->entries = entries;
+    map->capacity = capacity;
+}
+
+static inline size_t cy_map_find_string(CyMap *map, const char *key)
+{
+    for (size_t i = 0; i < map->length; i++) {
+        if (map->entries[i].key.type == CY_VALUE_STRING
+            && strcmp(map->entries[i].key.as.string, key) == 0) {
+            return i;
+        }
+    }
+
+    return (size_t) -1;
+}
+
+static inline void cy_map_type_error(void)
+{
+    fputs("cyonima: type de valeur associative inattendu\n", stderr);
+    exit(1);
+}
+
+static inline void cy_map_set_value_string(CyMap *map, const char *key, CyValue value)
+{
+    size_t index = cy_map_find_string(map, key);
+
+    if (index != (size_t) -1) {
+        map->entries[index].value = value;
+        return;
+    }
+
+    cy_map_reserve(map, map->length + 1);
+    map->entries[map->length].key = cy_value_string(key);
+    map->entries[map->length].value = value;
+    map->length++;
+}
+
+static inline CyValue cy_map_get_value_string(CyMap *map, const char *key)
+{
+    size_t index = cy_map_find_string(map, key);
+
+    if (index == (size_t) -1) {
+        fprintf(stderr, "cyonima: clé absente du tableau associatif : %s\n", key);
+        exit(1);
+    }
+
+    return map->entries[index].value;
+}
+
+static inline bool cy_map_has_string(CyMap *map, const char *key)
+{
+    return cy_map_find_string(map, key) != (size_t) -1;
+}
+
+static inline cy_int cy_map_count(CyMap *map)
+{
+    return (cy_int) map->length;
+}
+
+static inline CyMap *cy_map_copy(CyMap *map)
+{
+    CyMap *copy = cy_map_new();
+    cy_map_reserve(copy, map->length);
+
+    if (map->length > 0) {
+        memcpy(copy->entries, map->entries, map->length * sizeof(CyMapEntry));
+    }
+
+    copy->length = map->length;
+
+    return copy;
+}
+
+static inline CyMapEntry cy_map_entry_at(CyMap *map, cy_int index)
+{
+    if (index < 0 || (size_t) index >= map->length) {
+        fprintf(stderr, "cyonima: index associatif %lld hors limites (taille %zu)\n", index, map->length);
+        exit(1);
+    }
+
+    return map->entries[index];
+}
+
+static inline const char *cy_map_key_string(CyMap *map, cy_int index)
+{
+    CyMapEntry entry = cy_map_entry_at(map, index);
+
+    if (entry.key.type != CY_VALUE_STRING) {
+        cy_map_type_error();
+    }
+
+    return entry.key.as.string;
+}
+
+static inline void cy_map_set_string_int(CyMap *map, const char *key, cy_int value)
+{
+    cy_map_set_value_string(map, key, cy_value_int(value));
+}
+
+static inline cy_int cy_map_get_string_int(CyMap *map, const char *key)
+{
+    CyValue value = cy_map_get_value_string(map, key);
+
+    if (value.type != CY_VALUE_INT) {
+        cy_map_type_error();
+    }
+
+    return value.as.integer;
+}
+
+static inline cy_int cy_map_value_int(CyMap *map, cy_int index)
+{
+    CyValue value = cy_map_entry_at(map, index).value;
+
+    if (value.type != CY_VALUE_INT) {
+        cy_map_type_error();
+    }
+
+    return value.as.integer;
+}
+
+static inline void cy_map_set_string_float(CyMap *map, const char *key, cy_float value)
+{
+    cy_map_set_value_string(map, key, cy_value_float(value));
+}
+
+static inline cy_float cy_map_get_string_float(CyMap *map, const char *key)
+{
+    CyValue value = cy_map_get_value_string(map, key);
+
+    if (value.type != CY_VALUE_FLOAT) {
+        cy_map_type_error();
+    }
+
+    return value.as.floating;
+}
+
+static inline cy_float cy_map_value_float(CyMap *map, cy_int index)
+{
+    CyValue value = cy_map_entry_at(map, index).value;
+
+    if (value.type != CY_VALUE_FLOAT) {
+        cy_map_type_error();
+    }
+
+    return value.as.floating;
+}
+
+static inline void cy_map_set_string_bool(CyMap *map, const char *key, bool value)
+{
+    cy_map_set_value_string(map, key, cy_value_bool(value));
+}
+
+static inline bool cy_map_get_string_bool(CyMap *map, const char *key)
+{
+    CyValue value = cy_map_get_value_string(map, key);
+
+    if (value.type != CY_VALUE_BOOL) {
+        cy_map_type_error();
+    }
+
+    return value.as.boolean;
+}
+
+static inline bool cy_map_value_bool(CyMap *map, cy_int index)
+{
+    CyValue value = cy_map_entry_at(map, index).value;
+
+    if (value.type != CY_VALUE_BOOL) {
+        cy_map_type_error();
+    }
+
+    return value.as.boolean;
+}
+
+static inline void cy_map_set_string_string(CyMap *map, const char *key, const char *value)
+{
+    cy_map_set_value_string(map, key, cy_value_string(value));
+}
+
+static inline const char *cy_map_get_string_string(CyMap *map, const char *key)
+{
+    CyValue value = cy_map_get_value_string(map, key);
+
+    if (value.type != CY_VALUE_STRING) {
+        cy_map_type_error();
+    }
+
+    return value.as.string;
+}
+
+static inline const char *cy_map_value_string(CyMap *map, cy_int index)
+{
+    CyValue value = cy_map_entry_at(map, index).value;
+
+    if (value.type != CY_VALUE_STRING) {
+        cy_map_type_error();
+    }
+
+    return value.as.string;
 }
 
 static inline const char *cy_strdup(const char *value)

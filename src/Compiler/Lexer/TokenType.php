@@ -20,6 +20,13 @@ enum TokenType: string
     case Null = 'null';
 
     case Function = 'function';
+    case FnKeyword = 'fn';
+    case UseKeyword = 'use';
+    case ClassKeyword = 'class';
+    case NewKeyword = 'new';
+    case PublicKeyword = 'public';
+    case PrivateKeyword = 'private';
+    case ProtectedKeyword = 'protected';
     case Return = 'return';
     case Echo = 'echo';
     case If = 'if';
@@ -28,6 +35,15 @@ enum TokenType: string
     case While = 'while';
     case For = 'for';
     case ForEach = 'foreach';
+    case Switch = 'switch';
+    case Case = 'case';
+    case Default = 'default';
+    case Break = 'break';
+    case Match = 'match';
+    case Try = 'try';
+    case Catch = 'catch';
+    case Throw = 'throw';
+    case Finally = 'finally';
     case As = 'as';
     case Declare = 'declare';
 
@@ -69,6 +85,7 @@ enum TokenType: string
     case Semicolon = 'semicolon';
     case Colon = 'colon';
     case Arrow = 'arrow';
+    case ObjectArrow = 'object-arrow';
 
     case Eof = 'eof';
 }

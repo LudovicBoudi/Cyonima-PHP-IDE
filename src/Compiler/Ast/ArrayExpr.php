@@ -6,7 +6,7 @@ namespace Cyonima\Compiler\Ast;
 
 final class ArrayExpr extends Expr
 {
-    /** @param list<Expr> $elements */
+    /** @param list<ArrayItem> $elements */
     public function __construct(
         public readonly array $elements,
         int $line,

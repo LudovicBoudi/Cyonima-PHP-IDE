@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Cyonima\Compiler;
 
 use Cyonima\Compiler\Backend\C\PhpCGenerator;
+use Cyonima\Compiler\Ast\Program;
 use Cyonima\Compiler\Ir\IrBuilder;
 use Cyonima\Compiler\Lexer\Lexer;
+use Cyonima\Compiler\Lexer\TokenType;
 use Cyonima\Compiler\Parser\Parser;
 use Cyonima\Compiler\Semantic\SemanticAnalyzer;
 
@@ -43,11 +45,22 @@ final class PhpCompiler
 
         $tokens = (new Lexer($source))->tokenize();
         $program = (new Parser($tokens))->parse();
+
+        if ($this->usesUiClasses($tokens)) {
+            $prelude = (new Parser((new Lexer(UiPrelude::SOURCE))->tokenize()))->parse();
+            $program = new Program(
+                array_merge($prelude->functions, $program->functions),
+                array_merge($prelude->classes, $program->classes),
+                $program->statements,
+                $program->line,
+            );
+        }
+
         $analysis = (new SemanticAnalyzer())->analyze($program);
         $ir = (new IrBuilder($analysis))->build($program);
         $generator = new PhpCGenerator();
         $ui = $generator->usesUi($ir);
-        $cSource = $generator->generate($ir, $ui);
+        $cSource = $generator->generate($ir, $ui, $analysis->classes);
 
         $project = rtrim($this->projectRoot, '/');
         $nativeDir = $project . '/dist/native';
@@ -122,6 +135,23 @@ final class PhpCompiler
         if (file_put_contents($path, $content) === false) {
             throw new CompilerException('Écriture impossible : ' . $path);
         }
+    }
+
+    /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
+    private function usesUiClasses(array $tokens): bool
+    {
+        $classes = ['Application', 'Window', 'Box', 'Label', 'Button', 'Entry'];
+        $count = count($tokens);
+
+        for ($index = 0; $index < $count - 1; $index++) {
+            if ($tokens[$index]->type === TokenType::NewKeyword
+                && $tokens[$index + 1]->type === TokenType::Identifier
+                && in_array($tokens[$index + 1]->literal, $classes, true)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function ensureDirectory(string $directory): void

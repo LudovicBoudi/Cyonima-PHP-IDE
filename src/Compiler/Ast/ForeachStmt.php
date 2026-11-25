@@ -6,6 +6,7 @@ namespace Cyonima\Compiler\Ast;
 
 final class ForeachStmt extends Stmt
 {
+    public ?string $keyType = null;
     public ?string $valueType = null;
 
     public function __construct(
