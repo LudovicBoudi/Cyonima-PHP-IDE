@@ -5,7 +5,7 @@ Trois formats, trois niveaux d'autonomie.
 | Format | Autonomie | Outils requis | État |
 |---|---|---|---|
 | **Bundle portable** (`tar.gz`) | PHP + GTK4 système | `tar`, PHP | ✅ testé ici |
-| **AppImage** | **PHP + GTK embarqués** (pilotes GPU système) | `appimagetool` (auto-téléchargé) | ✅ construite et exécutée (53 Mo) |
+| **AppImage** | **PHP + GTK embarqués** (pilotes GPU système) | `appimagetool` (auto-téléchargé) | ✅ construite et exécutée (56 Mo) |
 | **Flatpak** | complète (runtime GNOME + PHP compilé) | `flatpak-builder`, `org.gnome.Sdk//49` | ✅ construit et exécuté |
 
 ## Bundle portable
@@ -107,7 +107,7 @@ Les deux modes fonctionnent : montage FUSE direct et
 `APPIMAGE_EXTRACT_AND_RUN=1` (utile sans FUSE ou sur `/tmp` `noexec`).
 
 L'AppImage embarque **PHP, GTK4, libadwaita, GtkSourceView 5, VTE** et les
-schémas/loaders nécessaires (53 Mo, outils d’export inclus). Seuls glibc et les pilotes GPU restent ceux
+schémas/loaders nécessaires (56 Mo, outils d’export inclus). Seuls glibc et les pilotes GPU restent ceux
 de l'hôte, comme pour toute AppImage graphique.
 
 Limite : `mbstring` n'est pas compilé (oniguruma absent du système de build) ;
@@ -201,7 +201,8 @@ Le lanceur expose `cyonima --version`.
 ## Extensions PHP natives
 
 Le PHP embarqué de l'AppImage et du Flatpak inclut `ssh2` (libssh2), `openssl`,
-`sockets`, `pcntl` et `posix`. Le module `ssh2` est compilé dans le Flatpak via
+`sockets`, `pcntl`, `posix`, `curl`, `intl`, `pdo_sqlite`/`sqlite3`, `zip` et
+`gd`. Le module `ssh2` est compilé dans le Flatpak via
 `libssh2` + PECL `ssh2`, et ajouté au PHP AppImage.
 
 Les applications exportées avec `build-project.sh` ou

@@ -241,7 +241,7 @@ Trois écarts assumés par rapport au miroir strict du C :
     Le runtime GNOME ne fournit ni PHP ni VTE. VTE est construit avec
     `-Dlibdir=lib` car `/app/lib64` n'est pas dans le chemin de recherche.
     Xdebug n'est pas inclus et `--filesystem=host` reste nécessaire.
-21. **AppImage autonome (53 Mo)** : PHP 8.3.14 et toute la pile GTK
+21. **AppImage autonome (56 Mo)** : PHP 8.3.14 et toute la pile GTK
     (GTK4/Adw/GtkSourceView/VTE + 107 dépendances), schémas, loaders et thèmes
     sont embarqués. glibc et les pilotes GPU restent ceux de l'hôte. Preuves :
     `ldd` sans dépendance non résolue, `LD_DEBUG` montrant GTK dans le montage,
@@ -344,7 +344,7 @@ Trois écarts assumés par rapport au miroir strict du C :
 35. **Extensions PHP natives (lot réseau/Linux)** : `ssh2` via libssh2, plus
     `openssl`, `sockets`, `pcntl` et `posix` dans les PHP embarqués AppImage et
     Flatpak. Les extensions sont copiées dans les applications exportées.
-    `curl`, `intl`, `zip`, SQLite et GD viendront dans un lot ultérieur.
+    `curl`, `intl`, SQLite/PDO, `zip` et GD sont ajoutés dans le même lot.
 
 ## Références de version (machine de développement)
 

@@ -22,10 +22,30 @@
     ],
     "modules": [
         {
+            "name": "libzip",
+            "buildsystem": "cmake",
+            "config-opts": [
+                "-DBUILD_DOC=OFF",
+                "-DBUILD_EXAMPLES=OFF",
+                "-DBUILD_REGRESS=OFF",
+                "-DENABLE_COMMONCRYPTO=OFF",
+                "-DENABLE_GNUTLS=OFF",
+                "-DENABLE_MBEDTLS=OFF",
+                "-DENABLE_OPENSSL=OFF"
+            ],
+            "sources": [
+                {
+                    "type": "archive",
+                    "url": "https://libzip.org/download/libzip-1.10.1.tar.gz",
+                    "sha256": "9669ae5dfe3ac5b3897536dc8466a874c8cf2c0e3b1fdd08d75b273884299363"
+                }
+            ]
+        },
+        {
             "name": "php",
             "buildsystem": "simple",
             "build-commands": [
-                "./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
+                "export PKG_CONFIG_PATH=\"/app/lib/pkgconfig:/app/lib64/pkgconfig:${PKG_CONFIG_PATH:-}\"; ./configure --prefix=/app --disable-all --enable-cli --enable-opcache --with-ffi --with-openssl --enable-sockets --enable-pcntl --enable-posix --with-curl --enable-intl --enable-pdo --with-pdo-sqlite --with-sqlite3 --with-zip --enable-gd --with-jpeg --with-freetype --with-webp --enable-simplexml --enable-dom --with-libxml --enable-mbstring",
                 "make -j${FLATPAK_BUILDER_N_JOBS:-4}",
                 "make install"
             ],

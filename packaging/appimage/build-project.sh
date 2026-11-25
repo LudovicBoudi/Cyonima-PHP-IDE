@@ -114,7 +114,13 @@ else
         esac
         target="$APPDIR/usr/lib/$(basename "$library")"
         [ -e "$target" ] || cp -L "$library" "$target"
-    done < <(ldd "$APPDIR/usr/bin/php" | awk '{print $3}' | grep '^/' || true)
+    done < <(
+        if [ -n "${PHP_EXT_SRC:-}" ]; then
+            LD_LIBRARY_PATH="$(dirname "$(dirname "$PHP_EXT_SRC")")/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"                 ldd "$APPDIR/usr/bin/php" | awk '{print $3}' | grep '^/' || true
+        else
+            ldd "$APPDIR/usr/bin/php" | awk '{print $3}' | grep '^/' || true
+        fi
+    )
 
     if [ "$BUNDLE_GTK" != "0" ]; then
         APPDIR="$APPDIR" bash "$ROOT/packaging/appimage/bundle-gtk.sh"

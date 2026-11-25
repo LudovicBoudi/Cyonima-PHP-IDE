@@ -30,6 +30,8 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/share/cyonima"
 # --- PHP et ses dépendances ------------------------------------------------
 install -m 0755 "$PHP_DIR/usr/bin/php" "$APPDIR/usr/bin/php"
 
+export LD_LIBRARY_PATH="$PHP_DIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 # Extensions PHP compilées ou ajoutées au runtime.
 if [ -d "$PHP_DIR/usr/lib/php" ]; then
     mkdir -p "$APPDIR/usr/lib/php"

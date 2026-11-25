@@ -21,7 +21,7 @@ Deux axes, un même socle :
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
 | M5 — IDE MVP | 🟡 design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition, terminal, LSP, Xdebug ; reste la recherche projet |
-| M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 53 Mo)** |
+| M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 56 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
 
@@ -313,6 +313,11 @@ Les runtimes embarqués intègrent un premier pack réseau/Linux :
 | `sockets` | ✅ | ✅ |
 | `pcntl` | ✅ | ✅ |
 | `posix` | ✅ | ✅ |
+| `curl` | ✅ | ✅ |
+| `intl` | ✅ | ✅ |
+| `pdo_sqlite` / `sqlite3` | ✅ | ✅ |
+| `zip` | ✅ | ✅ |
+| `gd` (PNG/JPEG/WebP) | ✅ | ✅ |
 
 Les applications exportées depuis l’IDE héritent du même pack PHP, y compris
 dans les AppImages et les Flatpaks de projet. Les extensions sont donc
@@ -325,8 +330,7 @@ $connection = ssh2_connect('serveur.example', 22);
 ssh2_auth_password($connection, 'user', 'secret');
 ```
 
-`curl`, `intl`, `zip`, `pdo_sqlite`/`sqlite3` et `gd` font partie du prochain
-lot d’extensions.
+Le pack réseau/Linux est désormais complet pour ce premier périmètre.
 
 ## Packaging
 
@@ -350,7 +354,7 @@ Voir [`packaging/README.md`](packaging/README.md) pour AppImage et Flatpak.
 | Livrable | PHP 8 requis ? | GTK/Adw/GtkSourceView/VTE | Autonomie réelle |
 |---|---|---|---|
 | **Portable** `tar.gz` | **Oui**, PHP 8.3+ avec `ext-ffi` | Oui, fournis par le système | Dépend de l’environnement PHP/GTK de l’hôte |
-| **AppImage** `53 Mo` | **Non** | **Embarqués** | PHP + pile GTK inclus ; glibc, pilotes GPU et X/Wayland restent ceux de l’hôte |
+| **AppImage** `56 Mo` | **Non** | **Embarqués** | PHP + pile GTK inclus ; glibc, pilotes GPU et X/Wayland restent ceux de l’hôte |
 | **Flatpak** `com.cyonima.Ide` | **Non** | Fournis par `org.gnome.Platform//49` | Nécessite Flatpak + le runtime GNOME ; PHP 8.3.14 est compilé dans l’application |
 
 L’AppImage a été testée avec les bibliothèques GTK système masquées : elle
