@@ -13,12 +13,14 @@ use Cyonima\Compiler\Ir\AssignInstruction;
 use Cyonima\Compiler\Ir\BinaryInstruction;
 use Cyonima\Compiler\Ir\CallInstruction;
 use Cyonima\Compiler\Ir\CaptureExceptionInstruction;
+use Cyonima\Compiler\Ir\CaptureExceptionObjectInstruction;
 use Cyonima\Compiler\Ir\CellOperand;
 use Cyonima\Compiler\Ir\ClosureCallInstruction;
 use Cyonima\Compiler\Ir\ClosureCreateInstruction;
 use Cyonima\Compiler\Ir\ConstantOperand;
 use Cyonima\Compiler\Ir\EchoInstruction;
 use Cyonima\Compiler\Ir\ExceptionCheckInstruction;
+use Cyonima\Compiler\Ir\ExceptionMatchInstruction;
 use Cyonima\Compiler\Ir\GcInstruction;
 use Cyonima\Compiler\Ir\HasIndexInstruction;
 use Cyonima\Compiler\Ir\IndexInstruction;
@@ -48,8 +50,11 @@ use Cyonima\Compiler\Ir\SetMapIndexInstruction;
 use Cyonima\Compiler\Ir\StaticCallInstruction;
 use Cyonima\Compiler\Ir\StaticPropertyGetInstruction;
 use Cyonima\Compiler\Ir\StaticPropertySetInstruction;
+use Cyonima\Compiler\Ir\SuspendExceptionInstruction;
+use Cyonima\Compiler\Ir\ResumeExceptionInstruction;
 use Cyonima\Compiler\Ir\TemporaryOperand;
 use Cyonima\Compiler\Ir\ThrowInstruction;
+use Cyonima\Compiler\Ir\ThrowObjectInstruction;
 use Cyonima\Compiler\Ir\UnaryInstruction;
 use Cyonima\Compiler\Ir\UncaughtExceptionInstruction;
 use Cyonima\Compiler\Ir\VariableOperand;
@@ -91,6 +96,9 @@ final class PhpCGenerator
 
     /** @var array<string, NativeModule> */
     private array $nativeModules = [];
+
+    /** @var array<string, int> */
+    private array $classIds = [];
 
     /** @var null|array<string, string> */
     private ?array $closureCaptures = null;
@@ -147,6 +155,14 @@ final class PhpCGenerator
     ): string {
         $this->classes = $classes;
         $this->nativeModules = $nativeModules;
+        $names = array_keys($classes);
+        sort($names, SORT_STRING);
+        $this->classIds = [];
+
+        foreach ($names as $index => $name) {
+            $this->classIds[$name] = $index;
+        }
+
         $ui ??= $this->usesUi($program);
         $sections = [];
         $sections[] = <<<'C'
@@ -180,6 +196,17 @@ final class PhpCGenerator
         }
 
         $sections[] = $this->objectHeaderCode();
+        $sections[] = $this->classIdentityCode();
+        $forward = [];
+
+        foreach ($this->classes as $class) {
+            $type = $this->classType($class->name);
+            $forward[] = 'typedef struct ' . $type . ' ' . $type . ';';
+        }
+
+        if ($forward !== []) {
+            $sections[] = implode("\n", $forward);
+        }
 
         foreach ($this->classes as $class) {
             $sections[] = $this->classCode($class);
@@ -273,14 +300,57 @@ final class PhpCGenerator
         return "typedef struct {\n"
             . "    void *cy_vtable;\n"
             . "    void *cy_ifaces[" . $slots . "];\n"
+            . "    int cy_class_id;\n"
             . "} CyObjectHeader;";
+    }
+
+    private function classIdentityCode(): string
+    {
+        $lines = ['enum {'];
+
+        foreach ($this->classIds as $name => $id) {
+            $lines[] = '    CY_CLASS_' . $this->identifier($name) . ' = ' . $id . ',';
+        }
+
+        $lines[] = '    CY_CLASS_COUNT = ' . count($this->classIds);
+        $lines[] = '};';
+        $lines[] = '';
+        $lines[] = 'static const int cy_class_parents[' . max(1, count($this->classIds)) . '] = {';
+
+        if ($this->classIds === []) {
+            $lines[] = '    -1,';
+        } else {
+            foreach ($this->classIds as $name => $id) {
+                $class = $this->classes[$name];
+                $parentId = $class->parentName !== null
+                    ? ($this->classIds[$class->parentName] ?? -1)
+                    : -1;
+                $lines[] = '    ' . $parentId . ',';
+            }
+        }
+
+        $lines[] = '};';
+        $lines[] = '';
+        $lines[] = 'static bool cy_class_is_a(int child, int target)';
+        $lines[] = '{';
+        $lines[] = '    while (child >= 0) {';
+        $lines[] = '        if (child == target) {';
+        $lines[] = '            return true;';
+        $lines[] = '        }';
+        $lines[] = '';
+        $lines[] = '        child = cy_class_parents[child];';
+        $lines[] = '    }';
+        $lines[] = '';
+        $lines[] = '    return false;';
+        $lines[] = '}';
+
+        return implode("\n", $lines);
     }
 
     private function classCode(ClassInfo $class): string
     {
         $type = $this->classType($class->name);
         $lines = [
-            'typedef struct ' . $type . ' ' . $type . ';',
             'struct ' . $type . ' {',
             '    CyObjectHeader header;',
         ];
@@ -647,7 +717,13 @@ final class PhpCGenerator
 
     private function mainCode(IrFunction $main): string
     {
-        $lines = ['int main(void)', '{', '    cy_runtime_init();'];
+        $lines = [
+            'int main(int argc, char **argv)',
+            '{',
+            '    cy_cli_argc = argc;',
+            '    cy_cli_argv = argv;',
+            '    cy_runtime_init();',
+        ];
         $staticInit = $this->staticInitCode();
 
         if ($staticInit !== '') {
@@ -1054,6 +1130,51 @@ final class PhpCGenerator
             return $indent . 'cy_throw_exception(' . $this->operand($instruction->value) . ');';
         }
 
+        if ($instruction instanceof ThrowObjectInstruction) {
+            $class = $this->unwrapNullableType($instruction->object->type);
+
+            if (!isset($this->classIds[$class])) {
+                throw new CompilerException('classe d’exception absente : ' . $class);
+            }
+
+            $object = $this->operand($instruction->object);
+
+            return $indent . 'cy_throw_object((void *) ' . $object
+                . ', ((CyObjectHeader *) ' . $object . ')->cy_class_id'
+                . ', ' . $this->operand($instruction->message) . ');';
+        }
+
+        if ($instruction instanceof ExceptionMatchInstruction) {
+            if ($instruction->classType === null) {
+                return $indent . $this->operand($instruction->result)
+                    . ' = !cy_exception_is_object();';
+            }
+
+            if (!isset($this->classIds[$instruction->classType])) {
+                throw new CompilerException(
+                    'classe de catch absente : ' . $instruction->classType,
+                );
+            }
+
+            return $indent . $this->operand($instruction->result)
+                . ' = cy_exception_is_object() && cy_exception_matches(CY_CLASS_'
+                . $this->identifier($instruction->classType) . ');';
+        }
+
+        if ($instruction instanceof CaptureExceptionObjectInstruction) {
+            return $indent . $this->operand($instruction->result)
+                . ' = (' . $this->cType($instruction->result->type)
+                . ') cy_exception_capture_object();';
+        }
+
+        if ($instruction instanceof SuspendExceptionInstruction) {
+            return $indent . 'cy_exception_suspend();';
+        }
+
+        if ($instruction instanceof ResumeExceptionInstruction) {
+            return $indent . 'cy_exception_resume();';
+        }
+
         if ($instruction instanceof ClosureCreateInstruction) {
             $closure = $instruction->closure;
             $type = $this->closureType($closure);
@@ -1158,6 +1279,8 @@ final class PhpCGenerator
                     . 'cy_obj_mark_' . $this->identifier($class->name) . ');',
                 $result . '->header.cy_vtable = (void *) &cy_vtable_'
                     . $this->identifier($class->name) . ';',
+                $result . '->header.cy_class_id = CY_CLASS_'
+                    . $this->identifier($class->name) . ';',
             ];
 
             foreach ($class->interfaceVtables as $interfaceName => $data) {
@@ -1205,7 +1328,7 @@ final class PhpCGenerator
         }
 
         if ($instruction instanceof PropertyGetInstruction) {
-            $object = $this->operand($instruction->object);
+            $object = $this->objectExpression($instruction->object);
             $access = $object . '->' . $this->property($instruction->property);
 
             if ($this->isNullableType($instruction->object->type)) {
@@ -1230,7 +1353,7 @@ final class PhpCGenerator
             $value = $propertyType !== null
                 ? $this->valueExpression($instruction->value, $propertyType)
                 : $this->operand($instruction->value);
-            $object = $this->operand($instruction->object);
+            $object = $this->objectExpression($instruction->object);
             $access = $object . '->' . $this->property($instruction->property)
                 . ' = ' . $value;
 
@@ -1304,7 +1427,7 @@ final class PhpCGenerator
                 );
             }
 
-            $object = $this->operand($instruction->object);
+            $object = $this->objectExpression($instruction->object);
 
             if ($class->isInterface) {
                 $vtable = '((CyVTable_' . $this->identifier($class->name) . ' *) '
@@ -1447,6 +1570,20 @@ final class PhpCGenerator
 
         return match ($instruction->name) {
             'strlen' => '((cy_int) strlen(' . ($arguments[0] ?? '""') . '))',
+            'str_starts_with' => 'cy_str_starts_with('
+                . ($arguments[0] ?? '""') . ', ' . ($arguments[1] ?? '""') . ')',
+            'str_contains' => 'cy_str_contains('
+                . ($arguments[0] ?? '""') . ', ' . ($arguments[1] ?? '""') . ')',
+            'trim' => 'cy_str_trim(' . ($arguments[0] ?? '""') . ')',
+            'is_numeric' => 'cy_is_numeric(' . ($arguments[0] ?? '""') . ')',
+            'is_integer' => 'cy_is_integer(' . ($arguments[0] ?? '""') . ')',
+            'substr' => 'cy_substr('
+                . ($arguments[0] ?? '""') . ', ' . ($arguments[1] ?? '0') . ')',
+            'substr_len' => 'cy_substr_len('
+                . ($arguments[0] ?? '""') . ', ' . ($arguments[1] ?? '0')
+                . ', ' . ($arguments[2] ?? '0') . ')',
+            'stderr_write' => 'cy_cli_error(' . ($arguments[0] ?? '""') . ')',
+            'cli_args' => 'cy_cli_args()',
             'intval' => $this->conversion('cy_int_from_', $instruction->arguments[0] ?? null),
             'floatval' => $this->conversion('cy_float_from_', $instruction->arguments[0] ?? null),
             'strval' => $this->conversion('cy_string_from_', $instruction->arguments[0] ?? null),
@@ -1594,6 +1731,22 @@ final class PhpCGenerator
         }
 
         return 'cy_string_from_' . $type . '(' . $this->operand($operand) . ')';
+    }
+
+    private function objectExpression(Operand $operand): string
+    {
+        $value = $this->operand($operand);
+        $type = $this->unwrapNullableType($operand->type);
+
+        if (isset($this->classes[$type])) {
+            if ($this->classes[$type]->isInterface) {
+                return '((CyObjectHeader *) ' . $value . ')';
+            }
+
+            return '((' . $this->classType($type) . ' *) ' . $value . ')';
+        }
+
+        return $value;
     }
 
     private function operand(Operand $operand): string

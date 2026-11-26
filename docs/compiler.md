@@ -129,7 +129,7 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Opérateurs | `+ - * / % .`, comparaisons, `===`, `!==`, `&&`, `\|\|`, `!` |
 | Contrôle | `if`, `elseif`, `else`, `while`, `for`, `foreach`, `switch` (fall-through, `break`), `match` |
 | Vérification | `isset($a[$clé])` |
-| Exceptions | `throw`, `try` / `catch (string $e)`, propagation entre fonctions |
+| Exceptions | hiérarchie `Exception`, `catch` multiple, `finally`, propagation |
 | Classes | `class`, propriétés typées, `new`, `$this`, méthodes, `__construct` |
 | Héritage | `class X extends Y`, propriétés/méthodes héritées, override, dispatch dynamique, retours covariants |
 | Interfaces | `interface`, `implements`, `extends` multiple, dispatch via table d’interfaces |
@@ -140,7 +140,11 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Closures | `function (...) use (...)` / `use (&$x)` et `fn (...) => ...`, appels `$fn(...)` |
 | Fonctions | déclaration typée, paramètres, retour, appels |
 | Sortie | `echo` multi-arguments |
-| Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`, JSON typé |
+| Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`, JSON typé, CLI/chaînes |
+| Console | `Cyonima\Console\Application`, `Command`, `Input`, `Output` |
+| Base de données | `Cyonima\Database\Connection`, `Repository`, `Migration`, `Migrator` |
+| Validation | `Cyonima\Validation\Validator`, règles typées |
+| Templates | `.ui` compilés en `Cyonima\Templates\<Nom>::build()` |
 | Modules natifs | SQLite, libcurl et libssh2 (`sqlite_*`, `curl_*`, `ssh2_*`) |
 | Packaging natif | `--package=appimage\|flatpak` |
 | Analyse | types, portée, affectation définie sur tous les chemins, retours exhaustifs |
@@ -239,24 +243,57 @@ branches `match` doivent produire des types compatibles.
 ### Exceptions
 
 ```php
+class AppException extends RuntimeException {
+}
+
 try {
-    throw 'message';
-} catch (string $error) {
-    echo $error;
+    throw new AppException('chargement impossible');
+} catch (AppException $error) {
+    echo 'app: ', $error->getMessage();
+} catch (RuntimeException $error) {
+    echo 'runtime: ', $error->getMessage();
+} finally {
+    echo "cleanup\n";
 }
 ```
 
-- `throw` attend une chaîne ;
-- `catch` attend un type `string` et une variable ;
-- un seul `catch`, pas de `finally` ;
-- propagation automatique entre fonctions : chaque appel est suivi d’un
-  contrôle du drapeau d’exception ;
-- une exception non capturée écrit sur `stderr` et termine le programme avec
-  le code `1` ;
-- le message est enregistré comme racine GC entre le `throw` et le `catch`.
+Hiérarchie intégrée :
+
+```text
+Exception
+├── RuntimeException
+├── LogicException
+├── InvalidArgumentException
+└── DomainException
+```
+
+- `throw` accepte une chaîne ou une instance de `Exception` ;
+- `new MonException(...)` avec `class MonException extends Exception` ;
+- `$e->getMessage()` et la propriété publique `message` sont disponibles ;
+- plusieurs `catch`, évalués dans l’ordre ;
+- un `catch` par classe parente capture les sous-classes ;
+- `catch (Exception $e)` capture toutes les exceptions objets ;
+- `finally` s’exécute après le `try`/`catch`, y compris avant un `return` ;
+- `finally` s’exécute aussi lors d’une propagation non capturée ;
+- `try { ... } finally { ... }` sans `catch` est supporté ;
+- les exceptions chaînes historiques (`throw 'message'`, `catch (string $e)`)
+  restent supportées, mais ne se mélangent pas avec les objets dans un même
+  `try` ;
+- propagation automatique entre fonctions via le drapeau global ;
+- l’objet exception et son message sont des racines GC ;
+- une exception non capturée écrit sur `stderr` et termine avec le code `1`.
+
+Limites actuelles :
+
+- pas d’interface `Throwable`, ni de `catch` d’interface ;
+- pas de `catch (A|B $e)` ;
+- `break` dans un `try`/`catch` avec `finally` est refusé ;
+- le code de `finally` est dupliqué dans les chemins normal et exceptionnel,
+  ce qui reste sans effet observable hors retour/exception.
 
 Un exemple complet est fourni dans
-[`examples/native-exceptions.php`](../examples/native-exceptions.php).
+[`examples/native-exception-classes.php`](../examples/native-exception-classes.php).
+L’exemple historique reste [`examples/native-exceptions.php`](../examples/native-exceptions.php).
 
 ### Classes et objets
 
@@ -618,8 +655,8 @@ ligne :
   invocation immédiate `(function () {})()` ;
 - `eval`, réflexion, `include`/`require`, autoload ;
 - références (`&$x`), `++`/`--`, opérateurs combinés (`+=`) ;
-- hiérarchies d’exceptions, `finally`, multi-catch, exceptions typées autres
-  que `string` ;
+- interface `Throwable`, `catch` d’interface et `catch (A|B $e)` ;
+- `break` dans un `try`/`catch` avec `finally` ;
 - exceptions provenant des erreurs fatales du runtime (index hors limites,
   clé absente) : elles terminent encore le programme ;
 - générateurs, fibres ;
@@ -889,6 +926,221 @@ Limites actuelles :
 Un exemple complet est fourni dans
 [`examples/native-json.php`](../examples/native-json.php).
 
+### Console native
+
+Une mini-console inspirée de Symfony Console est injectée dès qu’un programme
+référence `Cyonima\Console` :
+
+```php
+namespace App;
+
+use Cyonima\Console\Application;
+use Cyonima\Console\Command;
+use Cyonima\Console\Input;
+use Cyonima\Console\Output;
+
+final class GreetCommand extends Command {
+    protected function configure(): void {
+        $this->setName('greet');
+        $this->setDescription('Salue une personne');
+        $this->addArgument('name', true, 'Nom à saluer');
+        $this->addOption('shout', 's', false, 'Exclamation');
+    }
+
+    public function run(Input $input, Output $output): int {
+        $name = $input->argument('name', 'world');
+        $message = 'Hello ' . $name;
+
+        if ($input->hasOption('shout')) {
+            $message = $message . '!';
+        }
+
+        $output->writeln($message);
+
+        return 0;
+    }
+}
+
+$app = new Application('cyonima-demo', '1.0.0');
+$app->add(new GreetCommand());
+
+return $app->run(cli_args());
+```
+
+- `cli_args()` retourne `array<string>` (nom du programme inclus) ;
+- `Command::configure()` déclare nom, description, arguments et options ;
+- arguments positionnels, options longues/courtes, options à valeur ;
+- `Input::argument`, `Input::option`, `Input::hasOption` ;
+- `Output::write`, `writeln`, `error` (`stderr_write`) ;
+- commandes intégrées : aucune commande, `list`, `help <commande>`, `--help`,
+  `--version` ;
+- erreurs d’argument/option/commande → message sur `stderr`, code `1` ;
+- les exceptions objets des commandes sont capturées et affichées ;
+- code de sortie du binaire = valeur retournée par `run()`.
+
+Nouvelles primitives utiles :
+
+```text
+str_starts_with, str_contains, substr, substr_len
+stderr_write, cli_args
+```
+
+Limites actuelles :
+
+- options au format `--name value` ou `-s`, pas `--name=value` ;
+- pas de sous-commandes, pas d’interaction, pas de couleurs ANSI ;
+- les valeurs par défaut d’arguments sont passées explicitement à
+  `argument()`/`option()`.
+
+Un exemple complet est fourni dans
+[`examples/native-console.php`](../examples/native-console.php).
+
+### Base de données native
+
+`Cyonima\Database` encapsule SQLite et injecte automatiquement le module natif
+`sqlite` :
+
+```php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Migration;
+use Cyonima\Database\Migrator;
+use Cyonima\Database\Repository;
+
+final class CreateUsers extends Migration {
+    public function version(): int {
+        return 1;
+    }
+
+    public function up(Connection $connection): void {
+        $connection->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+    }
+}
+
+final class UserRepository extends Repository {
+    public function __construct(Connection $connection) {
+        parent::__construct($connection, 'users');
+    }
+
+    public function create(string $name): User {
+        $this->execute(
+            'INSERT INTO users (name) VALUES (' . $this->connection->quote($name) . ')'
+        );
+
+        return new User($this->lastId(), $name);
+    }
+
+    public function find(int $id): ?User {
+        $row = $this->row('SELECT id, name FROM users WHERE id = ' . strval($id));
+
+        if (count($row) === 0) {
+            return null;
+        }
+
+        return new User(intval($row['id']), $row['name']);
+    }
+}
+
+$db = new Connection(':memory:');
+$migrator = new Migrator($db);
+$migrator->add(new CreateUsers());
+echo $migrator->run();
+```
+
+`Connection` :
+
+```text
+exec, queryInt, queryFloat, queryBool, queryString, row
+quote, lastInsertId, changes, error
+begin, commit, rollback, close
+```
+
+`Repository` :
+
+```text
+tableName, count, exists(id), delete(id), row, execute, lastId, changes
+```
+
+`Migrator` :
+
+- crée `cyonima_migrations (version INTEGER PRIMARY KEY, applied_at TEXT)` ;
+- exécute chaque migration une seule fois ;
+- transaction par migration ;
+- rollback et propagation si `up()` échoue ;
+- retourne le nombre de migrations appliquées.
+
+Nouvelles fonctions du module SQLite :
+
+```text
+sqlite_query_row_string  → array<string,string>
+sqlite_quote             → échappement SQL (%Q)
+```
+
+Limites actuelles :
+
+- helpers `exists`/`delete` supposent une clé primaire entière `id` ;
+- pas d’ORM, de relations, de lazy loading ni de collections d’entités ;
+- pas de requêtes préparées : `quote()` est fourni pour les valeurs ;
+- les row maps sont des `array<string,string>` (caster avec `intval`,
+  `floatval`, etc.) ;
+- pas de jointures typées ni de migrations descendantes.
+
+Un exemple complet est fourni dans
+[`examples/native-database.php`](../examples/native-database.php).
+
+### Validation typée
+
+```php
+use Cyonima\Validation\Email;
+use Cyonima\Validation\MinLength;
+use Cyonima\Validation\Required;
+use Cyonima\Validation\ValidationException;
+use Cyonima\Validation\Validator;
+
+$validator = new Validator();
+$validator->add('name', new Required());
+$validator->add('name', new MinLength(3));
+$validator->add('email', new Email());
+
+$errors = $validator->validate([
+    'name' => 'Al',
+    'email' => 'bad',
+]);
+
+foreach ($errors as $field => $message) {
+    echo $field, ': ', $message, "\n";
+}
+```
+
+Règles fournies :
+
+```text
+Required, MinLength, MaxLength, Email
+Integer, Numeric, MinValue, MaxValue, In
+```
+
+- `Validator::add(string $field, Rule $rule)` ;
+- `Validator::validate(array<string,string>): array<string,string>` ;
+- une seule erreur par champ (la première règle en échec) ;
+- `Validator::validateOrFail()` lève `ValidationException` ;
+- `ValidationException::getErrors()` retourne la table des erreurs ;
+- `ValidationException::getMessage()` retourne un résumé `; `.
+
+Helpers ajoutés :
+
+```text
+trim, is_numeric, is_integer
+```
+
+Limites actuelles :
+
+- validation de chaînes uniquement (`array<string,string>`) ;
+- pas de validation d’objets, de tableaux imbriqués ni de messages
+  personnalisés par règle ;
+- pas de regex ; `Email` est une vérification simple `@` + `.`.
+
+Un exemple complet est fourni dans
+[`examples/native-validation.php`](../examples/native-validation.php).
+
 ### Modèle mémoire
 
 Le runtime natif (`runtime/native/cyonima_runtime.h`) centralise toutes les
@@ -1032,6 +1284,125 @@ $app->run();
 - un exemple complet est fourni dans
   [`examples/native-ui-object.php`](../examples/native-ui-object.php).
 
+### Templates `.ui` compilés
+
+Un template déclaratif `.ui` est compilé en une classe PHP du namespace
+`Cyonima\Templates`, puis avec le reste du programme : aucun moteur de
+template n’est embarqué à l’exécution.
+
+```html
+@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+
+<window title="{{ $title }}" width="440" height="520">
+    <box vertical="true" spacing="10">
+        <label text="{{ $title }}" />
+
+        @if (count($todos) === 0)
+            <label>Aucune tâche.</label>
+        @endif
+
+        @foreach ($todos as $todo)
+            <box vertical="false" spacing="8">
+                <label>{{ $todo->title }}</label>
+                <label>{{ $todo->status }}</label>
+            </box>
+        @endforeach
+
+        <entry placeholder="Nouvelle tâche" />
+        <button text="Ajouter" on-click="{{ $onAdd }}" />
+    </box>
+</window>
+```
+
+Le fichier `templates/todo-list.ui` produit :
+
+```php
+namespace Cyonima\Templates;
+
+final class TodoList
+{
+    /** @param array<\App\Todo> $todos */
+    public static function build(array $todos, string $title, callable():void $onAdd): Window
+    {
+        // construction des widgets GTK
+    }
+}
+```
+
+Appel :
+
+```php
+use Application;
+use Cyonima\Templates\TodoList;
+
+$application = new Application('com.cyonima.templates.demo');
+$window = TodoList::build($todos, 'Tâches', $onAdd);
+$window->present();
+$application->run();
+```
+
+L’`Application` doit être créée avant `build()`.
+
+#### Découverte
+
+Les templates sont cherchés dans :
+
+```text
+templates/
+.cyonima/templates/
+```
+
+puis dans la clé `templates` de `.cyonima/compiler.json`, puis dans chaque
+option `--templates=PATH` (fichier `.ui` ou dossier).
+
+```json
+{
+  "sources": ["src"],
+  "templates": ["templates", "ui/partials"]
+}
+```
+
+Le nom de classe est dérivé du nom de fichier : `todo-list.ui` → `TodoList`.
+Deux fichiers produisant la même classe sont refusés.
+
+#### Syntaxe
+
+| Élément | Rôle |
+|---|---|
+| `@params(types $noms)` | signature de `build()` |
+| `<window title width height>` | fenêtre racine, unique |
+| `<box vertical spacing>` | conteneur horizontal ou vertical |
+| `<label text>` | libellé ; texte direct accepté |
+| `<button text on-click>` | bouton et callback |
+| `<entry placeholder on-activate>` | champ de saisie |
+| `{{ expression }}` | interpolation dans un texte ou un attribut |
+| `@if` / `@elseif` / `@else` / `@endif` | conditions |
+| `@foreach` / `@endforeach` | boucles |
+| `{{-- ... --}}` | commentaire |
+
+Les types de `@params` suivent la syntaxe du compilateur : scalaires,
+`array<T>`, `array<string,T>`, `?T`, `callable():void`. Les classes doivent
+être nommées de façon absolue, par exemple `App\Todo` ou `\App\Todo`.
+
+Attributs :
+
+- `width`, `height`, `spacing` : entiers ou `{{ expression }}` ;
+- `vertical` : `true`, `false` ou `{{ expression }}` ;
+- `title`, `text`, `placeholder` : texte avec interpolation ;
+- `on-click`, `on-activate` : obligatoirement `{{ $callable }}`.
+
+Un exemple complet est fourni dans
+[`examples/native-templates.php`](../examples/native-templates.php) et
+[`examples/native-todo-list.ui`](../examples/native-todo-list.ui).
+
+Limites :
+
+- un seul `<window>` racine, pas de fragments ni d’inclusion ;
+- `<label>` et `<button>` n’acceptent pas de balises imbriquées ;
+- pas encore de CSS, d’identifiants, de listes GTK ni de liaison de données ;
+- pas de cache de templates : ils sont recompilés à chaque compilation ;
+- les expressions restent du PHP du sous-ensemble, analysé statiquement.
+
 ### Limites de cette première couche
 
 - façade objet et composition par objets disponibles ; widgets limités à la
@@ -1070,6 +1441,13 @@ bin/cyonima-compile \
   --project=/chemin/du/projet \
   --php=examples/native-ui.php \
   --emit=elf
+
+# Template .ui compilé avec l’application
+bin/cyonima-compile \
+  --project=. \
+  --php=examples/native-templates.php \
+  --templates=examples/native-todo-list.ui \
+  --emit=elf
 ```
 
 Options :
@@ -1083,6 +1461,7 @@ Options :
 | `--output=PATH` | sortie du binaire |
 | `--module=NAME` | active un module natif (`sqlite`, `curl`, `ssh2`), répétable |
 | `--sources=PATH` | fichier ou dossier source supplémentaire, répétable |
+| `--templates=PATH` | fichier `.ui` ou dossier de templates, répétable |
 | `--package=appimage\|flatpak` | compile puis empaquette directement l’application |
 | `--help` | aide |
 
@@ -1198,6 +1577,7 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 3 | runtime natif : mémoire, UI GTK4 | livré, façade objet incluse |
 | 4 | modules natifs : SQLite, `libcurl`, `libssh2` | livré |
 | 5 | packaging : `--package=appimage` et `--package=flatpak` | livré |
+| 6 | templates `.ui` compilés vers la façade GTK | livré |
 
 La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la

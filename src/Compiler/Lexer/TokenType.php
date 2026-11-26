@@ -26,6 +26,7 @@ enum TokenType: string
     case ClassKeyword = 'class';
     case InterfaceKeyword = 'interface';
     case AbstractKeyword = 'abstract';
+    case FinalKeyword = 'final';
     case ImplementsKeyword = 'implements';
     case ExtendsKeyword = 'extends';
     case ParentKeyword = 'parent';

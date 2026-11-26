@@ -30,6 +30,7 @@ use Cyonima\Compiler\Lexer\Lexer;
 use Cyonima\Compiler\Lexer\TokenType;
 use Cyonima\Compiler\Parser\Parser;
 use Cyonima\Compiler\PhpCompiler;
+use Cyonima\Compiler\Template\TemplateCompiler;
 use Cyonima\Runtime\FormDocument;
 use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\RecentProjects;
@@ -1236,7 +1237,7 @@ $factorial = $compilePhp('factorial', $factorialSource);
 T::ok($factorial['ok'], 'compilateur PHP : génération C');
 $phpCSource = (string) file_get_contents($factorial['cPath']);
 T::ok(str_contains($phpCSource, '#include "cyonima_runtime.h"'), 'backend PHP : runtime natif');
-T::ok(str_contains($phpCSource, 'int main(void)'), 'backend PHP : main natif');
+T::ok(str_contains($phpCSource, 'int main(int argc, char **argv)'), 'backend PHP : main natif');
 T::ok(str_contains($phpCSource, 'fn_factorial'), 'backend PHP : fonction C');
 T::ok(str_contains($phpCSource, 'goto L'), 'IR PHP : contrôle de flux');
 T::ok(str_contains($phpCSource, 'cy_echo_int'), 'backend PHP : echo');
@@ -2322,13 +2323,12 @@ PHP, 'elf');
 }
 
 $exceptionErrors = [
-    ['throw non-string', '<?php throw 1;', 'throw attend string'],
-    ['catch non-string', '<?php try { echo "x"; } catch (int $e) { echo $e; }', 'catch attend le type string'],
-    ['try sans catch', '<?php try { echo "x"; }', 'attendu : catch après try'],
-    ['finally refusé', '<?php try { echo "x"; } catch (string $e) { echo $e; } finally { echo "f"; }', 'finally non supporté'],
+    ['throw non-string', '<?php throw 1;', 'throw attend une chaîne ou une Exception'],
+    ['catch non-string', '<?php try { echo "x"; } catch (int $e) { echo $e; }', 'catch attend string ou une Exception'],
+    ['try sans catch', '<?php try { echo "x"; }', 'try doit avoir au moins un catch ou un finally'],
+    ['finally hors try', '<?php finally { echo "f"; }', 'finally doit suivre try/catch'],
     ['catch après try', '<?php try { echo "x"; } catch (string $e) { echo "c"; } echo $e;', 'peut ne pas être affectée'],
     ['retour partiel', '<?php function f(): int { try { throw "x"; } catch (string $e) { echo $e; } }', 'ne retourne pas sur tous les chemins'],
-    ['multi-catch', '<?php try { echo "x"; } catch (string $e) { echo $e; } catch (string $e2) { echo $e2; }', 'un seul catch est supporté'],
 ];
 
 foreach ($exceptionErrors as $index => [$label, $source, $needle]) {
@@ -5105,6 +5105,710 @@ foreach ($jsonErrors as $index => [$label, $source, $needle]) {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+T::section('37. Hiérarchie d’exceptions et finally');
+
+$exceptionSource = <<<'PHP'
+<?php
+class AppException extends RuntimeException {
+}
+
+function classify(bool $app, int $mode): string {
+    $result = "";
+
+    try {
+        if ($app) {
+            throw new AppException("app");
+        }
+
+        if ($mode === 1) {
+            throw new RuntimeException("rt");
+        }
+
+        $result = "none";
+    } catch (AppException $e) {
+        $result = "App:" . $e->getMessage();
+    } catch (RuntimeException $e) {
+        $result = "Rt:" . $e->getMessage();
+    } catch (Exception $e) {
+        $result = "Ex:" . $e->getMessage();
+    } finally {
+        $result = $result . "+F";
+    }
+
+    return $result;
+}
+
+function early(): string {
+    try {
+        return "try";
+    } finally {
+        echo "cleanup\n";
+    }
+}
+
+function catchThrow(): string {
+    try {
+        throw new RuntimeException("first");
+    } catch (RuntimeException $e) {
+        throw new RuntimeException("second");
+    } finally {
+        echo "catch-finally\n";
+    }
+}
+
+echo classify(true, 0), "\n";
+echo classify(false, 1), "\n";
+echo classify(false, 0), "\n";
+echo early(), "\n";
+
+try {
+    catchThrow();
+} catch (RuntimeException $e) {
+    echo "outer: ", $e->getMessage(), "\n";
+}
+
+$i = 0;
+
+while ($i < 1000) {
+    $tmp = strval($i);
+    $i = $i + 1;
+}
+
+try {
+    throw new RuntimeException("survivor");
+} catch (Exception $e) {
+    echo "gc: ", $e->getMessage(), "\n";
+}
+PHP;
+
+$exceptionC = $compilePhp('exception-hierarchy', $exceptionSource, 'c');
+$exceptionCSource = (string) file_get_contents($exceptionC['cPath']);
+T::ok(str_contains($exceptionCSource, 'cy_throw_object'), 'exceptions : throw objet');
+T::ok(str_contains($exceptionCSource, 'cy_exception_matches'), 'exceptions : dispatch de type');
+T::ok(str_contains($exceptionCSource, 'cy_exception_suspend'), 'exceptions : finally et propagation');
+T::ok(str_contains($exceptionCSource, 'cy_class_is_a'), 'exceptions : hiérarchie de classes');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des exceptions non testée');
+} else {
+    $exceptionElf = $compilePhp('exception-hierarchy', $exceptionSource, 'elf');
+    T::same(
+        "App:app+F\nRt:rt+F\nnone+F\ncleanup\ntry\ncatch-finally\nouter: second\ngc: survivor\n",
+        shell_exec(escapeshellarg((string) $exceptionElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : hiérarchie, catch multiple, finally et GC',
+    );
+
+    $exceptionCustomElf = $compilePhp('exception-custom', <<<'PHP'
+<?php
+class DetailedException extends Exception {
+    public int $detail;
+
+    public function __construct(string $message, int $detail) {
+        parent::__construct($message);
+        $this->detail = $detail;
+    }
+}
+
+try {
+    throw new DetailedException("detail", 7);
+} catch (DetailedException $e) {
+    echo $e->getMessage(), " ", $e->detail, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "detail 7\n",
+        shell_exec(escapeshellarg((string) $exceptionCustomElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception personnalisée et parent::__construct',
+    );
+
+    $exceptionNamespaceElf = $compilePhp('exception-namespace', <<<'PHP'
+<?php
+namespace App;
+
+use Exception;
+
+class MyException extends Exception {
+}
+
+try {
+    throw new MyException("namespace");
+} catch (Exception $e) {
+    echo $e->getMessage(), "\n";
+}
+PHP, 'elf');
+    T::same(
+        "namespace\n",
+        shell_exec(escapeshellarg((string) $exceptionNamespaceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : exception dans un namespace',
+    );
+
+    $exceptionFinallyElf = $compilePhp('exception-finally-uncaught', <<<'PHP'
+<?php
+try {
+    throw new RuntimeException("gone");
+} finally {
+    echo "normal-finally\n";
+}
+PHP, 'elf');
+    $exceptionFinallyOutput = (string) shell_exec(
+        escapeshellarg((string) $exceptionFinallyElf['binaryPath']) . ' 2>&1',
+    );
+    T::ok(
+        str_contains($exceptionFinallyOutput, "normal-finally")
+            && str_contains($exceptionFinallyOutput, "exception non capturée : gone"),
+        'compilateur PHP : finally avant propagation non capturée',
+        $exceptionFinallyOutput,
+    );
+}
+
+$exceptionErrors = [
+    ['throw objet non Exception', '<?php class Plain {} $plain = new Plain(); throw $plain;', 'throw attend une chaîne ou une Exception'],
+    ['catch objet non Exception', '<?php class Plain {} try { echo "x"; } catch (Plain $e) { echo "c"; }', 'catch attend string ou une Exception'],
+    ['catch mixte', '<?php try { echo "x"; } catch (string $e) { echo $e; } catch (Exception $e) { echo $e; }', 'catch string et catch d’exception non mélangeables'],
+    ['break dans try/finally', '<?php try { switch (1) { case 1: break; } } finally { echo "f"; }', 'break dans try/finally non supporté'],
+    ['try vide', '<?php try { echo "x"; }', 'try doit avoir au moins un catch ou un finally'],
+    ['finally hors try', '<?php finally { echo "f"; }', 'finally doit suivre try/catch'],
+];
+
+foreach ($exceptionErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('exception-error-' . $index, $source, 'c');
+        T::ok(false, 'exceptions : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'exceptions : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('38. Cyonima\\Console — commandes natives');
+
+$consoleSource = <<<'PHP'
+<?php
+namespace App;
+
+use Cyonima\Console\Application;
+use Cyonima\Console\Command;
+use Cyonima\Console\Input;
+use Cyonima\Console\Output;
+
+final class GreetCommand extends Command {
+    protected function configure(): void {
+        $this->setName('greet');
+        $this->setDescription('Salue une personne');
+        $this->addArgument('name', true, 'Nom à saluer');
+        $this->addOption('shout', 's', false, 'Exclamation');
+    }
+
+    public function run(Input $input, Output $output): int {
+        $name = $input->argument('name', 'world');
+        $message = 'Hello ' . $name;
+
+        if ($input->hasOption('shout')) {
+            $message = $message . '!';
+        }
+
+        $output->writeln($message);
+
+        return 0;
+    }
+}
+
+$app = new Application('cyonima-demo', '1.0.0');
+$app->add(new GreetCommand());
+
+return $app->run(cli_args());
+PHP;
+
+$consoleC = $compilePhp('console-app', $consoleSource, 'c');
+$consoleCSource = (string) file_get_contents($consoleC['cPath']);
+T::ok(str_contains($consoleCSource, 'cy_cli_args'), 'console : arguments CLI');
+T::ok(str_contains($consoleCSource, 'CyObj_Cyonima__Console__Application'), 'console : façade Application');
+T::ok(str_contains($consoleCSource, 'fn_App__GreetCommand__run'), 'console : commande compilée');
+T::ok(str_contains($consoleCSource, 'cy_cli_error'), 'console : sortie d’erreur');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution de la console non testée');
+} else {
+    $consoleElf = $compilePhp('console-app', $consoleSource, 'elf');
+    $binary = escapeshellarg((string) $consoleElf['binaryPath']);
+
+    T::same(
+        "Hello Alice\n",
+        shell_exec($binary . ' greet Alice 2>&1'),
+        'console : argument positionnel',
+    );
+    T::same(
+        "Hello Bob!\n",
+        shell_exec($binary . ' greet Bob --shout 2>&1'),
+        'console : option longue',
+    );
+    T::same(
+        "Hello Bob!\n",
+        shell_exec($binary . ' greet Bob -s 2>&1'),
+        'console : option courte',
+    );
+    T::same(
+        "cyonima-demo 1.0.0\n",
+        shell_exec($binary . ' --version 2>&1'),
+        'console : --version',
+    );
+
+    $listOutput = (string) shell_exec($binary . ' list 2>&1');
+    T::ok(
+        str_contains($listOutput, 'greet')
+            && str_contains($listOutput, 'Salue une personne'),
+        'console : liste des commandes',
+        $listOutput,
+    );
+
+    $helpOutput = (string) shell_exec($binary . ' help greet 2>&1');
+    T::ok(
+        str_contains($helpOutput, 'Usage:')
+            && str_contains($helpOutput, 'name (requis)')
+            && str_contains($helpOutput, '--shout, -s'),
+        'console : aide de commande',
+        $helpOutput,
+    );
+
+    $lines = [];
+    $status = 0;
+    exec($binary . ' greet 2>&1', $lines, $status);
+    T::same(1, $status, 'console : argument requis, code de sortie');
+    T::ok(
+        str_contains(implode("\n", $lines), 'argument manquant : name'),
+        'console : argument requis, message',
+        implode("\n", $lines),
+    );
+
+    $lines = [];
+    $status = 0;
+    exec($binary . ' missing 2>&1', $lines, $status);
+    T::same(1, $status, 'console : commande inconnue, code de sortie');
+    T::ok(
+        str_contains(implode("\n", $lines), 'commande inconnue : missing'),
+        'console : commande inconnue, message',
+        implode("\n", $lines),
+    );
+
+    $lines = [];
+    $status = 0;
+    exec($binary . ' greet Alice --nope 2>&1', $lines, $status);
+    T::same(1, $status, 'console : option inconnue, code de sortie');
+    T::ok(
+        str_contains(implode("\n", $lines), 'option inconnue : --nope'),
+        'console : option inconnue, message',
+        implode("\n", $lines),
+    );
+
+    $stringsElf = $compilePhp('console-string-helpers', <<<'PHP'
+<?php
+if (str_starts_with('abcdef', 'abc')) {
+    echo "start\n";
+}
+
+if (str_contains('abcdef', 'cde')) {
+    echo "contains\n";
+}
+
+echo substr('abcdef', 2), "\n";
+echo substr_len('abcdef', 2, 3), "\n";
+PHP, 'elf');
+    T::same(
+        "start\ncontains\ncdef\ncde\n",
+        shell_exec(escapeshellarg((string) $stringsElf['binaryPath']) . ' 2>&1'),
+        'console : primitives de chaînes CLI',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('39. Cyonima\\Database — repositories SQLite et migrations');
+
+$databaseSource = <<<'PHP'
+<?php
+namespace App;
+
+use Cyonima\Database\Connection;
+use Cyonima\Database\Migration;
+use Cyonima\Database\Migrator;
+use Cyonima\Database\Repository;
+
+final class CreateUsers extends Migration {
+    public function version(): int {
+        return 1;
+    }
+
+    public function up(Connection $connection): void {
+        $connection->exec('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+    }
+}
+
+final class User {
+    public int $id;
+    public string $name;
+
+    public function __construct(int $id, string $name) {
+        $this->id = $id;
+        $this->name = $name;
+    }
+}
+
+final class UserRepository extends Repository {
+    public function __construct(Connection $connection) {
+        parent::__construct($connection, 'users');
+    }
+
+    public function create(string $name): User {
+        $this->execute(
+            'INSERT INTO users (name) VALUES (' . $this->connection->quote($name) . ')'
+        );
+
+        return new User($this->lastId(), $name);
+    }
+
+    public function find(int $id): ?User {
+        $row = $this->row('SELECT id, name FROM users WHERE id = ' . strval($id));
+
+        if (count($row) === 0) {
+            return null;
+        }
+
+        return new User(intval($row['id']), $row['name']);
+    }
+}
+
+$db = new Connection(':memory:');
+$migrator = new Migrator($db);
+$migrator->add(new CreateUsers());
+echo 'migrations: ', $migrator->run(), "\n";
+echo 'migrations again: ', $migrator->run(), "\n";
+
+$users = new UserRepository($db);
+$user = $users->create("O'Reilly");
+echo $user->id, ' ', $user->name, "\n";
+
+$found = $users->find($user->id);
+
+if ($found !== null) {
+    echo 'found: ', $found->name, "\n";
+}
+
+if ($users->exists($user->id)) {
+    echo "exists: yes\n";
+}
+
+echo 'count: ', $users->count(), "\n";
+$users->delete($user->id);
+echo 'after delete: ', $users->count(), "\n";
+$db->close();
+PHP;
+
+$databaseC = $compilePhp('database-app', $databaseSource, 'c');
+$databaseCSource = (string) file_get_contents($databaseC['cPath']);
+T::ok(str_contains($databaseCSource, 'CyObj_Cyonima__Database__Connection'), 'database : Connection');
+T::ok(str_contains($databaseCSource, 'sqlite_query_row_string'), 'database : row map SQLite');
+T::ok(str_contains($databaseCSource, 'cyonima_migrations'), 'database : table de migrations');
+T::ok(str_contains($databaseCSource, 'sqlite_quote'), 'database : quoting SQL');
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution Database non testée');
+} else {
+    $databaseElf = $compilePhp('database-app', $databaseSource, 'elf');
+    T::same(
+        "migrations: 1\nmigrations again: 0\n1 O'Reilly\nfound: O'Reilly\nexists: yes\ncount: 1\nafter delete: 0\n",
+        shell_exec(escapeshellarg((string) $databaseElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : migrations, repository et quoting SQLite',
+    );
+
+    $databaseErrorElf = $compilePhp('database-open-error', <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use Exception;
+
+try {
+    $db = new Connection('/nonexistent/cyonima/database.sqlite');
+    echo "unexpected\n";
+} catch (Exception $error) {
+    echo $error->getMessage(), "\n";
+}
+PHP, 'elf');
+    T::ok(
+        str_contains(
+            (string) shell_exec(escapeshellarg((string) $databaseErrorElf['binaryPath']) . ' 2>&1'),
+            'ouverture SQLite impossible',
+        ),
+        'compilateur PHP : erreur d’ouverture SQLite',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('40. Cyonima\\Validation — règles typées');
+
+$validationSource = <<<'PHP'
+<?php
+namespace App;
+
+use Cyonima\Validation\Email;
+use Cyonima\Validation\In;
+use Cyonima\Validation\Integer;
+use Cyonima\Validation\MinLength;
+use Cyonima\Validation\MinValue;
+use Cyonima\Validation\Required;
+use Cyonima\Validation\ValidationException;
+use Cyonima\Validation\Validator;
+
+$validator = new Validator();
+$validator->add('name', new Required());
+$validator->add('name', new MinLength(3));
+$validator->add('email', new Email());
+$validator->add('age', new Integer());
+$validator->add('age', new MinValue(18));
+$validator->add('role', new In(['admin', 'user']));
+
+$invalid = ['name' => 'Al', 'email' => 'bad', 'age' => '12', 'role' => 'guest'];
+$errors = $validator->validate($invalid);
+echo count($errors), "\n";
+
+foreach ($errors as $field => $message) {
+    echo $field, ': ', $message, "\n";
+}
+
+$valid = ['name' => 'Alice', 'email' => 'alice@example.com', 'age' => '30', 'role' => 'admin'];
+$validErrors = $validator->validate($valid);
+echo 'valid errors: ', count($validErrors), "\n";
+
+try {
+    $validator->validateOrFail($invalid);
+} catch (ValidationException $error) {
+    echo 'exception: ', $error->getMessage(), "\n";
+    echo 'errors: ', count($error->getErrors()), "\n";
+}
+
+echo trim('  hello  '), "\n";
+
+if (is_numeric('1.5')) {
+    echo "numeric\n";
+}
+
+if (is_integer('-42')) {
+    echo "integer\n";
+}
+PHP;
+
+$validationC = $compilePhp('validation-app', $validationSource, 'c');
+$validationCSource = (string) file_get_contents($validationC['cPath']);
+T::ok(str_contains($validationCSource, 'CyObj_Cyonima__Validation__Validator'), 'validation : Validator');
+T::ok(str_contains($validationCSource, 'CyVTable_Cyonima__Validation__Rule'), 'validation : interface Rule');
+T::ok(str_contains($validationCSource, 'CyObj_Cyonima__Validation__ValidationException'), 'validation : exception');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution de la validation non testée');
+} else {
+    $validationElf = $compilePhp('validation-app', $validationSource, 'elf');
+    $validationExpected = <<<'TXT'
+4
+name: name doit contenir au moins 3 caractères
+email: email doit être une adresse email valide
+age: age doit être supérieur ou égal à 18
+role: role doit être une valeur autorisée
+valid errors: 0
+exception: name doit contenir au moins 3 caractères; email doit être une adresse email valide; age doit être supérieur ou égal à 18; role doit être une valeur autorisée
+errors: 4
+hello
+numeric
+integer
+
+TXT;
+    T::same(
+        $validationExpected,
+        shell_exec(escapeshellarg((string) $validationElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : règles, erreurs, exception et helpers',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('41. Compilateur PHP — templates .ui vers GTK');
+
+$templateRoot = sys_get_temp_dir() . '/cyonima_templates_' . getmypid();
+$removeTree($templateRoot);
+mkdir($templateRoot . '/src', 0775, true);
+mkdir($templateRoot . '/templates', 0775, true);
+
+$templateSource = <<<'UI'
+@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+
+<window title="{{ $title }}" width="420" height="480">
+    <box vertical="true" spacing="8">
+        <label text="{{ $title }}" />
+        @foreach ($todos as $todo)
+            <box vertical="false" spacing="6">
+                <label>{{ $todo->title }}</label>
+                <label>{{ $todo->status }}</label>
+            </box>
+        @endforeach
+        @if (count($todos) === 0)
+            <label>Rien à afficher</label>
+        @else
+            <label>Total : {{ count($todos) }}</label>
+        @endif
+        <entry placeholder="Nouvelle tâche" />
+        <button text="Ajouter" on-click="{{ $onAdd }}" />
+    </box>
+</window>
+UI;
+
+file_put_contents($templateRoot . '/templates/todo-list.ui', $templateSource);
+
+$templateAppSource = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\TodoList;
+
+final class Todo
+{
+    public string $title;
+    public string $status;
+
+    public function __construct(string $title, string $status)
+    {
+        $this->title = $title;
+        $this->status = $status;
+    }
+}
+
+$todos = [];
+$todos[] = new Todo('Compiler', 'fait');
+$todos[] = new Todo('Templates', 'en cours');
+
+$onAdd = function (): void {
+    echo "add\n";
+};
+
+$application = new Application('com.cyonima.templates.test');
+$window = TodoList::build($todos, 'Tâches', $onAdd);
+$window->present();
+$application->after(80, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+file_put_contents($templateRoot . '/src/app.php', $templateAppSource);
+
+$generatedTemplate = (new TemplateCompiler('TodoList'))->compile($templateSource);
+T::ok(
+    str_contains($generatedTemplate, 'namespace Cyonima\\Templates;'),
+    'template : namespace généré',
+);
+T::ok(
+    str_contains($generatedTemplate, 'public static function build(array $todos, string $title, callable():void $onAdd): Window'),
+    'template : signature build()',
+);
+T::ok(
+    str_contains($generatedTemplate, '@param array<\\App\\Todo> $todos'),
+    'template : type de collection conservé',
+);
+T::ok(str_contains($generatedTemplate, 'foreach ($todos as $todo)'), 'template : boucle foreach');
+T::ok(str_contains($generatedTemplate, '->onClicked(($onAdd))'), 'template : callback on-click');
+T::ok(str_contains($generatedTemplate, "new Entry('Nouvelle tâche')"), 'template : entrée');
+
+$templateC = (new PhpCompiler($templateRoot))->compile(
+    $templateRoot . '/src/app.php',
+    null,
+    'c',
+);
+$templateCSource = (string) file_get_contents($templateC['cPath']);
+T::ok(
+    str_contains($templateCSource, '#include "cyonima_ui.h"'),
+    'template : prélude UI forcé',
+);
+T::ok(
+    str_contains($templateCSource, 'CyObj_Cyonima__Templates__TodoList'),
+    'template : classe C générée',
+);
+T::ok(str_contains($templateCSource, 'cy_ui_window'), 'template : fenêtre GTK');
+T::ok(str_contains($templateCSource, 'cy_ui_entry'), 'template : entrée GTK');
+T::ok(str_contains($templateCSource, 'cy_ui_button'), 'template : bouton GTK');
+T::ok(
+    str_contains($templateCSource, 'Tâches'),
+    'template : texte interpolé statique',
+);
+
+$exampleTemplateC = (new PhpCompiler(
+    $templateRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-todo-list.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-templates.php',
+    null,
+    'c',
+);
+$exampleTemplateSource = (string) file_get_contents($exampleTemplateC['cPath']);
+T::ok(
+    str_contains($exampleTemplateSource, 'CyObj_Cyonima__Templates__NativeTodoList'),
+    'template : exemple du dépôt',
+);
+
+$templateErrors = [
+    ['window manquante', '<box vertical="true"></box>', 'balise racine <window> manquante'],
+    ['balise inconnue', '<window><frame /></window>', 'balise inconnue <frame>'],
+    ['attribut inconnu', '<window><label color="red">x</label></window>', 'attribut inconnu "color"'],
+    ['balise non fermée', '<window><box>', 'balise <box> non fermée'],
+    ['callback littéral', '<window><button text="x" on-click="handler" /></window>', 'doit être {{ $callable }}'],
+];
+
+foreach ($templateErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('Broken' . $index))->compile($source);
+        T::ok(false, 'template : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'template : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$templateGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$templateDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$templateGtk) {
+    T::skip('GTK4 dev absent : exécution des templates non testée');
+} elseif (!$templateDisplay) {
+    T::skip('DISPLAY absent : exécution des templates non testée');
+} else {
+    $templateElf = (new PhpCompiler($templateRoot))->compile(
+        $templateRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $templateRunner = 'timeout 8 ' . escapeshellarg((string) $templateElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $templateRunner = 'dbus-run-session -- ' . $templateRunner;
+    }
+
+    $templateOut = [];
+    $templateStatus = 0;
+    exec($templateRunner . ' 2>&1', $templateOut, $templateStatus);
+    T::ok(
+        $templateStatus === 0,
+        'template : application GTK exécutée',
+        implode("\n", $templateOut),
+    );
+}
+
+$removeTree($templateRoot);
 
 $removeTree($phpRoot);
 

@@ -16,6 +16,7 @@ $output = null;
 $emit = 'elf';
 $modules = [];
 $sources = [];
+$templates = [];
 $package = null;
 
 foreach ($arguments as $argument) {
@@ -36,6 +37,8 @@ foreach ($arguments as $argument) {
           --output=PATH   sortie du binaire
           --module=NAME   active un module natif (sqlite, curl, ssh2) ; répétable
           --sources=PATH  fichier ou dossier source supplémentaire ; répétable
+          --templates=PATH
+                          fichier .ui ou dossier de templates ; répétable
           --package=appimage|flatpak
                           compile puis empaquette directement l’application
           --help          affiche cette aide
@@ -75,6 +78,10 @@ foreach ($arguments as $argument) {
         $sources[] = substr($argument, strlen('--sources='));
         continue;
     }
+    if (str_starts_with($argument, '--templates=')) {
+        $templates[] = substr($argument, strlen('--templates='));
+        continue;
+    }
     if (str_starts_with($argument, '--package=')) {
         $package = substr($argument, strlen('--package='));
     }
@@ -87,7 +94,7 @@ try {
 
     $compiler = $php === null
         ? new FormCompiler($project)
-        : new PhpCompiler($project, $modules, $sources);
+        : new PhpCompiler($project, $modules, $sources, $templates);
     $result = $php === null
         ? $compiler->compile($form, $output, $emit)
         : $compiler->compile($php, $output, $emit, $package);

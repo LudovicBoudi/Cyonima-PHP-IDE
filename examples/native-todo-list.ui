@@ -1,0 +1,21 @@
+@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+
+<window title="{{ $title }}" width="440" height="520">
+    <box vertical="true" spacing="10">
+        <label text="{{ $title }}" />
+
+        @if (count($todos) === 0)
+            <label>Aucune tâche pour le moment.</label>
+        @endif
+
+        @foreach ($todos as $todo)
+            <box vertical="false" spacing="8">
+                <label>{{ $todo->title }}</label>
+                <label>{{ $todo->status }}</label>
+            </box>
+        @endforeach
+
+        <entry placeholder="Nouvelle tâche" />
+        <button text="Ajouter" on-click="{{ $onAdd }}" />
+    </box>
+</window>

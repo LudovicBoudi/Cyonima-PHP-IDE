@@ -49,6 +49,16 @@ final class SqliteModule implements NativeModule
                 ['handle' => 'int', 'sql' => 'string'],
                 'bool',
             ),
+            'sqlite_query_row_string' => new NativeFunction(
+                'sqlite_query_row_string',
+                ['handle' => 'int', 'sql' => 'string'],
+                'array<string,string>',
+            ),
+            'sqlite_quote' => new NativeFunction(
+                'sqlite_quote',
+                ['handle' => 'int', 'value' => 'string'],
+                'string',
+            ),
         ];
     }
 
@@ -244,6 +254,60 @@ final class SqliteModule implements NativeModule
                 sqlite3_finalize(statement);
 
                 return result;
+            }
+
+            static CyMap *fn_sqlite_query_row_string(cy_int handle, const char *sql)
+            {
+                CyMap *result = cy_map_new();
+                sqlite3_stmt *statement = cy_native_sqlite_prepare(handle, sql);
+
+                if (statement == NULL) {
+                    return result;
+                }
+
+                if (sqlite3_step(statement) == SQLITE_ROW) {
+                    int columns = sqlite3_column_count(statement);
+
+                    for (int index = 0; index < columns; index++) {
+                        const char *name = sqlite3_column_name(statement, index);
+                        const unsigned char *text = sqlite3_column_text(statement, index);
+                        const char *value = "";
+
+                        if (text != NULL) {
+                            value = cy_strdup((const char *) text);
+                        }
+
+                        cy_map_set_string_string(
+                            result,
+                            cy_strdup(name == NULL ? "" : name),
+                            value
+                        );
+                    }
+                }
+
+                sqlite3_finalize(statement);
+
+                return result;
+            }
+
+            static const char *fn_sqlite_quote(cy_int handle, const char *value)
+            {
+                sqlite3 *db = cy_native_sqlite_db(handle);
+
+                if (db == NULL || value == NULL) {
+                    return "''";
+                }
+
+                char *quoted = sqlite3_mprintf("%Q", value);
+
+                if (quoted == NULL) {
+                    return "''";
+                }
+
+                const char *copy = cy_strdup(quoted);
+                sqlite3_free(quoted);
+
+                return copy;
             }
             C;
     }

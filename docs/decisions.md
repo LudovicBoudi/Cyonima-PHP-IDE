@@ -639,6 +639,68 @@ Trois écarts assumés par rapport au miroir strict du C :
   mécanisme existant. Les objets, closures, tableaux d’objets, structures
   imbriquées et le décodage non typé restent hors périmètre.
 
+61. **Hiérarchie d’exceptions et finally** : `Exception`, `RuntimeException`,
+  `LogicException`, `InvalidArgumentException` et `DomainException` sont
+  injectées comme classes globales. `throw` accepte une chaîne ou une instance
+  d’`Exception` ; les exceptions objets portent `message` et `getMessage()`.
+  Le runtime conserve l’objet et son identifiant de classe, et le GC les
+  marque. Chaque objet porte `cy_class_id`; une table de parents générée
+  permet `catch (Parent $e)` via `cy_class_is_a`. Les `catch` multiples sont
+  évalués dans l’ordre, les catches string et objets ne se mélangent pas.
+  `finally` est généré sur le chemin normal et sur le chemin exceptionnel ;
+  une exception en attente est suspendue/reprise pendant le finally. Un
+  `return` dans un `try`/`catch` exécute les `finally` en attente. Limites :
+  pas de `Throwable`/catch d’interface, pas de catch union, `break` dans un
+  try/catch avec finally refusé, duplication du code finally.
+
+62. **Console native** : prélude `Cyonima\Console` injecté à la demande
+  (`Application`, `Command`, `Input`, `Output`, `Argument`, `Option`).
+  `Command::configure()` déclare nom, description, arguments et options ;
+  `Application::run(cli_args())` gère `list`, `help`, `--help`, `--version`,
+  les arguments positionnels, les options longues/courtes et les erreurs avec
+  code de sortie. `cli_args()` expose `argv` via `cy_cli_args()`, et
+  `stderr_write` via `cy_cli_error()`. Ajout de `str_starts_with`,
+  `str_contains`, `substr`, `substr_len`. Les paramètres CLI sont séparés
+  (`--name value`), sans `--name=value`, sous-commandes ni couleurs ANSI. Le
+  modificateur `final` est accepté et ignoré.
+
+63. **Base de données native** : prélude `Cyonima\Database` (`Connection`,
+  `Repository`, `Migration`, `Migrator`) injecté à la demande, avec activation
+  automatique du module natif `sqlite`. `Connection` expose SQL, requêtes
+  scalaires, row map `array<string,string>`, quoting SQL, transactions et
+  fermeture. `Repository` fournit `count`, `exists(id)`, `delete(id)`, `row`,
+  `execute`, `lastId`, `changes`. `Migrator` crée `cyonima_migrations`, applique
+  chaque version une fois, utilise une transaction par migration et fait un
+  rollback en cas d’échec. Ajout de `sqlite_query_row_string` et
+  `sqlite_quote` au module. Pas d’ORM, de relations, de requêtes préparées ni
+  de migrations descendantes ; les helpers `exists`/`delete` supposent une clé
+  entière `id`.
+
+64. **Validation typée** : prélude `Cyonima\Validation` injecté à la demande
+  (`Validator`, `Rule`, `ValidationException`, règles `Required`, `MinLength`,
+  `MaxLength`, `Email`, `Integer`, `Numeric`, `MinValue`, `MaxValue`, `In`).
+  Les règles implémentent une interface, sont stockées dans une liste
+  `array<RuleEntry>` et validées sur `array<string,string>`. Une seule erreur
+  par champ est conservée. `validateOrFail()` lève une `ValidationException`
+  qui expose `getErrors()` et un résumé dans `getMessage()`. Ajout de `trim`,
+  `is_numeric`, `is_integer`. Limitations : chaînes uniquement, pas de regex,
+  pas de messages personnalisés par règle, pas d’objets ni de tableaux
+  imbriqués.
+
+65. **Templates `.ui` compilés** : un mini-langage déclaratif (balises
+  `window`, `box`, `label`, `button`, `entry`, directives `@params`, `@if`,
+  `@elseif`, `@else`, `@endif`, `@foreach`, `@endforeach`, interpolation
+  `{{ }}`) est traduit en une classe PHP `Cyonima\Templates\<Nom>` avec
+  `static build(...): Window`, puis compilée comme le reste du programme.
+  Aucun moteur de template n’est embarqué. Découverte dans `templates/`,
+  `.cyonima/templates`, la clé `templates` de `compiler.json` et l’option
+  `--templates`. Le prélude UI est injecté dès qu’un template est présent.
+  Les types de `@params` utilisent les noms absolus (`App\Todo`) et les
+  expressions restent du PHP du sous-ensemble analysé statiquement.
+  Limitations : une seule fenêtre racine, pas de fragments ni d’inclusion,
+  pas de balises imbriquées dans `label`/`button`, pas de CSS ni d’identifiants,
+  recompilation à chaque build.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

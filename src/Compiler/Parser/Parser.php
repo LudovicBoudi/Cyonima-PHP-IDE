@@ -151,6 +151,13 @@ final class Parser
                 continue;
             }
 
+            if ($this->match(TokenType::FinalKeyword)) {
+                $final = $this->previous();
+                $this->consume(TokenType::ClassKeyword, 'attendu : class après final');
+                $classes[] = $this->parseClassAfterKeyword($final, false);
+                continue;
+            }
+
             if ($this->match(TokenType::ClassKeyword)) {
                 $classes[] = $this->parseClassAfterKeyword($this->previous(), false);
                 continue;
@@ -422,6 +429,10 @@ final class Parser
                     continue;
                 }
 
+                if ($this->match(TokenType::FinalKeyword)) {
+                    continue;
+                }
+
                 if ($this->match(
                     TokenType::PublicKeyword,
                     TokenType::PrivateKeyword,
@@ -651,7 +662,7 @@ final class Parser
 
         if ($this->match(TokenType::Finally)) {
             throw new CompilerException(
-                "ligne {$token->line} : finally non supporté",
+                "ligne {$token->line} : finally doit suivre try/catch",
             );
         }
 
@@ -827,36 +838,41 @@ final class Parser
     {
         $this->consume(TokenType::LeftBrace, 'attendu : { après try');
         $body = $this->parseBlockAfterBrace($keyword->line);
-        $this->consume(TokenType::Catch, 'attendu : catch après try');
-        $this->consume(TokenType::LeftParen, 'attendu : ( après catch');
-        $type = $this->parseType();
-        $variable = $this->consume(TokenType::Variable, 'attendu : variable après le type de catch');
-        $this->consume(TokenType::RightParen, 'attendu : ) après catch');
-        $this->consume(TokenType::LeftBrace, 'attendu : { après catch');
-        $catchBody = $this->parseBlockAfterBrace($keyword->line);
+        $catches = [];
 
-        if ($this->check(TokenType::Catch)) {
-            throw new CompilerException(
-                "ligne {$this->peek()->line} : un seul catch est supporté",
+        while ($this->match(TokenType::Catch)) {
+            $catch = $this->previous();
+            $this->consume(TokenType::LeftParen, 'attendu : ( après catch');
+            $type = $this->parseType();
+            $variable = $this->consume(
+                TokenType::Variable,
+                'attendu : variable après le type de catch',
             );
-        }
-
-        if ($this->check(TokenType::Finally)) {
-            throw new CompilerException(
-                "ligne {$this->peek()->line} : finally non supporté",
-            );
-        }
-
-        return new TryStmt(
-            $body,
-            new CatchClause(
+            $this->consume(TokenType::RightParen, 'attendu : ) après catch');
+            $this->consume(TokenType::LeftBrace, 'attendu : { après catch');
+            $catchBody = $this->parseBlockAfterBrace($catch->line);
+            $catches[] = new CatchClause(
                 $type,
                 (string) $variable->literal,
                 $catchBody,
-                $keyword->line,
-            ),
-            $keyword->line,
-        );
+                $catch->line,
+            );
+        }
+
+        $finally = null;
+
+        if ($this->match(TokenType::Finally)) {
+            $this->consume(TokenType::LeftBrace, 'attendu : { après finally');
+            $finally = $this->parseBlockAfterBrace($keyword->line);
+        }
+
+        if ($catches === [] && $finally === null) {
+            throw new CompilerException(
+                "ligne {$keyword->line} : try doit avoir au moins un catch ou un finally",
+            );
+        }
+
+        return new TryStmt($body, $catches, $finally, $keyword->line);
     }
 
     private function parseReturnAfterKeyword(Token $keyword): ReturnStmt
@@ -1630,9 +1646,23 @@ final class Parser
             return 'callable';
         }
 
+        if ($this->check(TokenType::Backslash)) {
+            [$name, $absolute] = $this->parseQualifiedName();
+
+            return $this->resolveClassName($name, $absolute);
+        }
+
         if ($token->type === TokenType::Identifier) {
             $this->advance();
             $name = (string) $token->literal;
+
+            while ($this->match(TokenType::Backslash)) {
+                $part = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : segment de type après \\',
+                );
+                $name .= '\\' . $part->literal;
+            }
 
             if (strtolower($name) === 'array') {
                 if ($this->check(TokenType::Less)) {

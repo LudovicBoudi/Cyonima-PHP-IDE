@@ -14,6 +14,7 @@ use Cyonima\Compiler\Native\NativeModuleRegistry;
 use Cyonima\Compiler\Packaging\NativePackager;
 use Cyonima\Compiler\Parser\Parser;
 use Cyonima\Compiler\Semantic\SemanticAnalyzer;
+use Cyonima\Compiler\Template\TemplateCompiler;
 
 /**
  * Compile un fichier PHP du sous-ensemble supporté vers C11 puis ELF.
@@ -27,11 +28,13 @@ final class PhpCompiler
     /**
      * @param list<string> $moduleNames
      * @param list<string> $sourcePaths
+     * @param list<string> $templatePaths
      */
     public function __construct(
         private readonly string $projectRoot,
         private readonly array $moduleNames = [],
         private readonly array $sourcePaths = [],
+        private readonly array $templatePaths = [],
     ) {
     }
 
@@ -123,11 +126,99 @@ final class PhpCompiler
             $entryProgram->line,
         );
 
-        $registry = new NativeModuleRegistry();
-        $modules = $registry->activeForTokens($tokens, $this->moduleNames);
-        $nativeFunctions = $registry->functions($modules);
+        $templates = $this->templateFiles();
+        $usesTemplates = $templates !== [];
 
-        if ($this->usesUiClasses($tokens)) {
+        foreach ($templates as $templatePath => $className) {
+            $templateSource = file_get_contents($templatePath);
+
+            if ($templateSource === false) {
+                throw new CompilerException('Lecture impossible : ' . $templatePath);
+            }
+
+            try {
+                $generated = (new TemplateCompiler($className))->compile($templateSource);
+                $templateProgram = (new Parser(
+                    (new Lexer($generated))->tokenize(),
+                ))->parse();
+            } catch (CompilerException $exception) {
+                throw new CompilerException(
+                    $this->relativePath($templatePath) . ' : ' . $exception->getMessage(),
+                );
+            }
+
+            $program = new Program(
+                array_merge($templateProgram->functions, $program->functions),
+                array_merge($templateProgram->classes, $program->classes),
+                array_merge($templateProgram->interfaces, $program->interfaces),
+                $program->statements,
+                $program->line,
+            );
+        }
+
+        $usesDatabase = $this->usesDatabase($tokens);
+        $requestedModules = $this->moduleNames;
+
+        if ($usesDatabase) {
+            $requestedModules[] = 'sqlite';
+        }
+
+        $registry = new NativeModuleRegistry();
+        $modules = $registry->activeForTokens($tokens, $requestedModules);
+        $nativeFunctions = $registry->functions($modules);
+        $exceptions = (new Parser(
+            (new Lexer(ExceptionPrelude::SOURCE))->tokenize(),
+        ))->parse();
+        $program = new Program(
+            array_merge($exceptions->functions, $program->functions),
+            array_merge($exceptions->classes, $program->classes),
+            array_merge($exceptions->interfaces, $program->interfaces),
+            $program->statements,
+            $program->line,
+        );
+
+        if ($usesDatabase) {
+            $database = (new Parser(
+                (new Lexer(DatabasePrelude::SOURCE))->tokenize(),
+            ))->parse();
+            $program = new Program(
+                array_merge($database->functions, $program->functions),
+                array_merge($database->classes, $program->classes),
+                array_merge($database->interfaces, $program->interfaces),
+                $program->statements,
+                $program->line,
+            );
+        }
+
+        $usesConsole = $this->usesConsole($tokens);
+
+        if ($usesConsole) {
+            $console = (new Parser(
+                (new Lexer(ConsolePrelude::SOURCE))->tokenize(),
+            ))->parse();
+            $program = new Program(
+                array_merge($console->functions, $program->functions),
+                array_merge($console->classes, $program->classes),
+                array_merge($console->interfaces, $program->interfaces),
+                $program->statements,
+                $program->line,
+            );
+        }
+
+        if ($this->usesValidation($tokens)) {
+            $validation = (new Parser(
+                (new Lexer(ValidationPrelude::SOURCE))->tokenize(),
+            ))->parse();
+            $program = new Program(
+                array_merge($validation->functions, $program->functions),
+                array_merge($validation->classes, $program->classes),
+                array_merge($validation->interfaces, $program->interfaces),
+                $program->statements,
+                $program->line,
+            );
+        }
+
+        if ($usesTemplates || $this->usesUiClasses($tokens, $usesConsole)) {
             $prelude = (new Parser((new Lexer(UiPrelude::SOURCE))->tokenize()))->parse();
             $program = new Program(
                 array_merge($prelude->functions, $program->functions),
@@ -354,6 +445,150 @@ final class PhpCompiler
         return array_keys($files);
     }
 
+    /**
+     * Découvre les templates `.ui` et associe chaque fichier à sa classe
+     * générée dans `Cyonima\Templates`.
+     *
+     * @return array<string, string>
+     */
+    private function templateFiles(): array
+    {
+        $project = rtrim($this->projectRoot, '/');
+        $paths = [];
+
+        foreach (['templates', '.cyonima/templates'] as $default) {
+            if (is_dir($project . '/' . $default)) {
+                $paths[] = $default;
+            }
+        }
+
+        $configPath = $project . '/.cyonima/compiler.json';
+
+        if (is_file($configPath)) {
+            $config = json_decode((string) file_get_contents($configPath), true);
+            $templates = is_array($config) && is_array($config['templates'] ?? null)
+                ? $config['templates']
+                : [];
+
+            foreach ($templates as $template) {
+                if (is_string($template) && trim($template) !== '') {
+                    $paths[] = trim($template);
+                }
+            }
+        }
+
+        foreach ($this->templatePaths as $path) {
+            $paths[] = $path;
+        }
+
+        $files = [];
+
+        foreach ($paths as $path) {
+            $resolved = str_starts_with($path, '/')
+                ? $path
+                : $project . '/' . $path;
+
+            if (is_dir($resolved)) {
+                $directory = realpath($resolved) ?: $resolved;
+                $iterator = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator(
+                        $directory,
+                        \FilesystemIterator::SKIP_DOTS,
+                    ),
+                );
+                $found = [];
+
+                foreach ($iterator as $file) {
+                    if (!$file->isFile()
+                        || strtolower($file->getExtension()) !== 'ui') {
+                        continue;
+                    }
+
+                    $pathname = $file->getPathname();
+                    $parts = explode(DIRECTORY_SEPARATOR, $pathname);
+
+                    if (array_intersect($parts, [
+                        'vendor',
+                        'dist',
+                        'build',
+                        'build-dir',
+                        '.git',
+                        'node_modules',
+                    ]) !== []) {
+                        continue;
+                    }
+
+                    $found[] = $pathname;
+                }
+
+                sort($found);
+
+                foreach ($found as $file) {
+                    $files[$file] = true;
+                }
+                continue;
+            }
+
+            if (is_file($resolved)) {
+                if (strtolower(pathinfo($resolved, PATHINFO_EXTENSION)) !== 'ui') {
+                    throw new CompilerException(
+                        'Template invalide (extension .ui attendue) : ' . $path,
+                    );
+                }
+
+                $files[realpath($resolved) ?: $resolved] = true;
+                continue;
+            }
+
+            throw new CompilerException('Template déclaré introuvable : ' . $path);
+        }
+
+        $templates = [];
+        $owners = [];
+
+        foreach (array_keys($files) as $file) {
+            $className = $this->templateClassName($file);
+
+            if (isset($owners[$className])) {
+                throw new CompilerException(
+                    'template : classe ' . $className . ' générée deux fois ('
+                    . $this->relativePath($owners[$className]) . ' et '
+                    . $this->relativePath($file) . ')',
+                );
+            }
+
+            $owners[$className] = $file;
+            $templates[$file] = $className;
+        }
+
+        return $templates;
+    }
+
+    private function templateClassName(string $path): string
+    {
+        $base = pathinfo($path, PATHINFO_FILENAME);
+        $parts = preg_split('/[^A-Za-z0-9]+/', $base) ?: [];
+        $name = '';
+
+        foreach ($parts as $part) {
+            if ($part !== '') {
+                $name .= ucfirst($part);
+            }
+        }
+
+        if ($name === '') {
+            throw new CompilerException(
+                'template : nom de fichier invalide : ' . $path,
+            );
+        }
+
+        if (ctype_digit($name[0])) {
+            $name = 'Template' . $name;
+        }
+
+        return $name;
+    }
+
     private function relativePath(string $path): string
     {
         $root = rtrim($this->projectRoot, '/') . '/';
@@ -369,7 +604,61 @@ final class PhpCompiler
     }
 
     /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
-    private function usesUiClasses(array $tokens): bool
+    private function usesValidation(array $tokens): bool
+    {
+        $count = count($tokens);
+
+        for ($index = 0; $index < $count - 2; $index++) {
+            if ($tokens[$index]->type === TokenType::Identifier
+                && $tokens[$index]->literal === 'Cyonima'
+                && $tokens[$index + 1]->type === TokenType::Backslash
+                && $tokens[$index + 2]->type === TokenType::Identifier
+                && $tokens[$index + 2]->literal === 'Validation') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
+    private function usesDatabase(array $tokens): bool
+    {
+        $count = count($tokens);
+
+        for ($index = 0; $index < $count - 2; $index++) {
+            if ($tokens[$index]->type === TokenType::Identifier
+                && $tokens[$index]->literal === 'Cyonima'
+                && $tokens[$index + 1]->type === TokenType::Backslash
+                && $tokens[$index + 2]->type === TokenType::Identifier
+                && $tokens[$index + 2]->literal === 'Database') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
+    private function usesConsole(array $tokens): bool
+    {
+        $count = count($tokens);
+
+        for ($index = 0; $index < $count - 2; $index++) {
+            if ($tokens[$index]->type === TokenType::Identifier
+                && $tokens[$index]->literal === 'Cyonima'
+                && $tokens[$index + 1]->type === TokenType::Backslash
+                && $tokens[$index + 2]->type === TokenType::Identifier
+                && $tokens[$index + 2]->literal === 'Console') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
+    private function usesUiClasses(array $tokens, bool $console = false): bool
     {
         $classes = ['Application', 'Widget', 'Window', 'Box', 'Label', 'Button', 'Entry'];
         $count = count($tokens);
@@ -388,6 +677,10 @@ final class PhpCompiler
             if (isset($tokens[$next])
                 && $tokens[$next]->type === TokenType::Identifier
                 && in_array($tokens[$next]->literal, $classes, true)) {
+                if ($console && $tokens[$next]->literal === 'Application') {
+                    continue;
+                }
+
                 return true;
             }
         }

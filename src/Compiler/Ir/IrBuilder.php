@@ -70,6 +70,12 @@ final class IrBuilder
     /** @var array<string, true> */
     private array $currentByRefCaptures = [];
 
+    /** @var list<Block> */
+    private array $finallyReturnStack = [];
+
+    /** @var list<Block> */
+    private array $finallyThrowStack = [];
+
     public function __construct(private readonly Analysis $analysis)
     {
     }
@@ -214,6 +220,10 @@ final class IrBuilder
         }
 
         if ($statement instanceof ReturnStmt) {
+            if ($this->finallyReturnStack !== []) {
+                $this->lowerFinallyBlocks($this->finallyReturnStack, $function);
+            }
+
             $function->instructions[] = new ReturnInstruction(
                 $statement->value === null ? null : $this->lowerExpr($statement->value, $function),
             );
@@ -433,6 +443,12 @@ final class IrBuilder
                 );
             }
 
+            if ($this->finallyReturnStack !== []) {
+                throw new CompilerException(
+                    "ligne {$statement->line} : break dans try/finally non supporté",
+                );
+            }
+
             $function->instructions[] = new JumpInstruction(
                 $this->breakLabels[count($this->breakLabels) - 1],
             );
@@ -441,7 +457,23 @@ final class IrBuilder
 
         if ($statement instanceof ThrowStmt) {
             $value = $this->lowerExpr($statement->value, $function);
-            $function->instructions[] = new ThrowInstruction($value);
+
+            if ($this->finallyThrowStack !== []) {
+                $this->lowerFinallyBlocks($this->finallyThrowStack, $function);
+            }
+
+            if ($statement->throwType === null || $statement->throwType === 'string') {
+                $function->instructions[] = new ThrowInstruction($value);
+            } else {
+                $message = $this->newTemporary('string', $function);
+                $function->instructions[] = new PropertyGetInstruction(
+                    $value,
+                    'message',
+                    $message,
+                );
+                $function->instructions[] = new ThrowObjectInstruction($value, $message);
+            }
+
             $handler = $this->exceptionLabels[count($this->exceptionLabels) - 1]
                 ?? throw new CompilerException(
                     "ligne {$statement->line} : aucun gestionnaire d’exception",
@@ -451,27 +483,148 @@ final class IrBuilder
         }
 
         if ($statement instanceof TryStmt) {
-            $catchLabel = $this->newLabel();
-            $endLabel = $this->newLabel();
-            $this->exceptionLabels[] = $catchLabel;
-            $this->lowerStatement($statement->body, $function);
-            array_pop($this->exceptionLabels);
-            $function->instructions[] = new JumpInstruction($endLabel);
-            $function->instructions[] = new LabelInstruction($catchLabel);
-            $capture = $this->newTemporary('string', $function);
-            $function->instructions[] = new CaptureExceptionInstruction($capture);
-            $function->instructions[] = new AssignInstruction(
-                new VariableOperand($statement->catch->variable, 'string'),
-                $capture,
-            );
-            $this->lowerStatement($statement->catch->body, $function);
-            $function->instructions[] = new LabelInstruction($endLabel);
+            $this->lowerTry($statement, $function);
             return;
         }
 
         throw new CompilerException(
             "ligne {$statement->line} : instruction non supportée par l’IR",
         );
+    }
+
+    /** @param list<Block> $blocks */
+    private function lowerFinallyBlocks(array $blocks, IrFunction $function): void
+    {
+        $savedReturn = $this->finallyReturnStack;
+        $savedThrow = $this->finallyThrowStack;
+        $this->finallyReturnStack = [];
+        $this->finallyThrowStack = [];
+
+        foreach (array_reverse($blocks) as $block) {
+            $this->lowerStatements($block->statements, $function);
+        }
+
+        $this->finallyReturnStack = $savedReturn;
+        $this->finallyThrowStack = $savedThrow;
+    }
+
+    private function lowerTry(TryStmt $statement, IrFunction $function): void
+    {
+        $outer = $this->exceptionLabels[count($this->exceptionLabels) - 1]
+            ?? throw new CompilerException(
+                "ligne {$statement->line} : aucun gestionnaire d’exception englobant",
+            );
+        $hasCatches = $statement->catches !== [];
+        $hasFinally = $statement->finally !== null;
+        $endLabel = $this->newLabel();
+        $finallyLabel = $hasFinally ? $this->newLabel() : $endLabel;
+        $catchLabel = $hasCatches ? $this->newLabel() : null;
+        $exceptionFinallyLabel = ($hasFinally && !$hasCatches)
+            ? $this->newLabel()
+            : null;
+        $handler = $hasCatches ? $catchLabel : ($exceptionFinallyLabel ?? $outer);
+
+        $this->exceptionLabels[] = $handler;
+
+        if ($hasFinally) {
+            $this->finallyReturnStack[] = $statement->finally;
+        }
+
+        $this->lowerStatement($statement->body, $function);
+
+        if ($hasFinally) {
+            array_pop($this->finallyReturnStack);
+        }
+
+        array_pop($this->exceptionLabels);
+        $function->instructions[] = new JumpInstruction($finallyLabel);
+
+        if ($hasCatches) {
+            $function->instructions[] = new LabelInstruction((string) $catchLabel);
+            $bodyLabels = [];
+
+            foreach ($statement->catches as $index => $_catch) {
+                $bodyLabels[$index] = $this->newLabel();
+            }
+
+            $noMatchLabel = $this->newLabel();
+
+            foreach ($statement->catches as $index => $catch) {
+                $match = $this->newTemporary('bool', $function);
+                $function->instructions[] = new ExceptionMatchInstruction(
+                    $catch->type === 'string' ? null : $catch->type,
+                    $match,
+                );
+                $function->instructions[] = new JumpIfTrueInstruction(
+                    $match,
+                    $bodyLabels[$index],
+                );
+            }
+
+            $function->instructions[] = new JumpInstruction($noMatchLabel);
+            $commonType = $statement->catches[0]->type === 'string'
+                ? 'string'
+                : 'Exception';
+
+            foreach ($statement->catches as $index => $catch) {
+                $function->instructions[] = new LabelInstruction($bodyLabels[$index]);
+                $captureType = $catch->type === 'string' ? 'string' : $catch->type;
+                $capture = $this->newTemporary($captureType, $function);
+
+                if ($catch->type === 'string') {
+                    $function->instructions[] = new CaptureExceptionInstruction($capture);
+                } else {
+                    $function->instructions[] = new CaptureExceptionObjectInstruction(
+                        $capture,
+                    );
+                }
+
+                $function->instructions[] = new AssignInstruction(
+                    new VariableOperand($catch->variable, $commonType),
+                    $capture,
+                );
+
+                if ($hasFinally) {
+                    $this->finallyReturnStack[] = $statement->finally;
+                    $this->finallyThrowStack[] = $statement->finally;
+                }
+
+                $this->lowerStatement($catch->body, $function);
+
+                if ($hasFinally) {
+                    array_pop($this->finallyReturnStack);
+                    array_pop($this->finallyThrowStack);
+                }
+
+                $function->instructions[] = new JumpInstruction($finallyLabel);
+            }
+
+            $function->instructions[] = new LabelInstruction($noMatchLabel);
+
+            if ($hasFinally) {
+                $function->instructions[] = new SuspendExceptionInstruction();
+                $this->lowerStatement($statement->finally, $function);
+                $this->appendExceptionCheck($function);
+                $function->instructions[] = new ResumeExceptionInstruction();
+            }
+
+            $function->instructions[] = new JumpInstruction($outer);
+        } elseif ($exceptionFinallyLabel !== null) {
+            $function->instructions[] = new LabelInstruction($exceptionFinallyLabel);
+            $function->instructions[] = new SuspendExceptionInstruction();
+            $this->lowerStatement($statement->finally, $function);
+            $this->appendExceptionCheck($function);
+            $function->instructions[] = new ResumeExceptionInstruction();
+            $function->instructions[] = new JumpInstruction($outer);
+        }
+
+        if ($hasFinally) {
+            $function->instructions[] = new LabelInstruction($finallyLabel);
+            $this->lowerStatement($statement->finally, $function);
+            $this->appendExceptionCheck($function);
+        }
+
+        $function->instructions[] = new LabelInstruction($endLabel);
     }
 
     private function lowerExpr(Expr $expression, IrFunction $function): Operand

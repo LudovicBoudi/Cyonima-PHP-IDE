@@ -212,6 +212,7 @@ final class Lexer
             'class' => TokenType::ClassKeyword,
             'interface' => TokenType::InterfaceKeyword,
             'abstract' => TokenType::AbstractKeyword,
+            'final' => TokenType::FinalKeyword,
             'implements' => TokenType::ImplementsKeyword,
             'extends' => TokenType::ExtendsKeyword,
             'parent' => TokenType::ParentKeyword,

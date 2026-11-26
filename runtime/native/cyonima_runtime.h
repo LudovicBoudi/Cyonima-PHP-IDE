@@ -46,6 +46,8 @@ typedef enum {
 
 static CyAllocation *cy_allocations = NULL;
 static bool cy_runtime_registered = false;
+static int cy_cli_argc = 0;
+static char **cy_cli_argv = NULL;
 static size_t cy_allocations_since_gc = 0;
 static size_t cy_bytes_since_gc = 0;
 
@@ -165,12 +167,38 @@ static inline void cy_add_root_slot(void *address)
     cy_extra_root_slots[cy_extra_root_slot_count++] = (void **) address;
 }
 
+static bool cy_class_is_a(int child, int target);
+
 static const char *cy_current_exception = NULL;
+static void *cy_current_exception_object = NULL;
+static int cy_current_exception_class = -1;
 static bool cy_exception_pending_flag = false;
+
+typedef struct {
+    const char *message;
+    void *object;
+    int class_id;
+    bool pending;
+} CyExceptionState;
+
+#define CY_EXCEPTION_STACK_CAPACITY 16
+
+static CyExceptionState cy_exception_stack[CY_EXCEPTION_STACK_CAPACITY];
+static size_t cy_exception_stack_depth = 0;
 
 static inline void cy_throw_exception(const char *message)
 {
     cy_current_exception = message == NULL ? "" : message;
+    cy_current_exception_object = NULL;
+    cy_current_exception_class = -1;
+    cy_exception_pending_flag = true;
+}
+
+static inline void cy_throw_object(void *object, int class_id, const char *message)
+{
+    cy_current_exception = message == NULL ? "" : message;
+    cy_current_exception_object = object;
+    cy_current_exception_class = class_id;
     cy_exception_pending_flag = true;
 }
 
@@ -184,13 +212,77 @@ static inline const char *cy_exception_message(void)
     return cy_current_exception == NULL ? "" : cy_current_exception;
 }
 
+static inline bool cy_exception_is_object(void)
+{
+    return cy_current_exception_object != NULL;
+}
+
+static inline void *cy_exception_object(void)
+{
+    return cy_current_exception_object;
+}
+
+static inline int cy_exception_class(void)
+{
+    return cy_current_exception_class;
+}
+
+static inline bool cy_exception_matches(int class_id)
+{
+    return cy_exception_is_object() && cy_class_is_a(cy_current_exception_class, class_id);
+}
+
+static inline void cy_exception_clear(void)
+{
+    cy_current_exception = NULL;
+    cy_current_exception_object = NULL;
+    cy_current_exception_class = -1;
+    cy_exception_pending_flag = false;
+}
+
 static inline const char *cy_exception_capture(void)
 {
     const char *message = cy_exception_message();
-    cy_current_exception = NULL;
-    cy_exception_pending_flag = false;
+    cy_exception_clear();
 
     return message;
+}
+
+static inline void *cy_exception_capture_object(void)
+{
+    void *object = cy_current_exception_object;
+    cy_exception_clear();
+
+    return object;
+}
+
+static inline void cy_exception_suspend(void)
+{
+    if (cy_exception_stack_depth >= CY_EXCEPTION_STACK_CAPACITY) {
+        fputs("cyonima: pile d’exceptions saturée\n", stderr);
+        exit(1);
+    }
+
+    CyExceptionState state;
+    state.message = cy_current_exception;
+    state.object = cy_current_exception_object;
+    state.class_id = cy_current_exception_class;
+    state.pending = cy_exception_pending_flag;
+    cy_exception_stack[cy_exception_stack_depth++] = state;
+    cy_exception_clear();
+}
+
+static inline void cy_exception_resume(void)
+{
+    if (cy_exception_stack_depth == 0) {
+        return;
+    }
+
+    CyExceptionState state = cy_exception_stack[--cy_exception_stack_depth];
+    cy_current_exception = state.message;
+    cy_current_exception_object = state.object;
+    cy_current_exception_class = state.class_id;
+    cy_exception_pending_flag = state.pending;
 }
 
 typedef enum {
@@ -357,6 +449,12 @@ static void cy_cell_mark_pointer(void *cell)
 static inline void cy_gc_collect(void)
 {
     cy_mark_pointer((void *) cy_current_exception);
+    cy_mark_pointer(cy_current_exception_object);
+
+    for (size_t i = 0; i < cy_exception_stack_depth; i++) {
+        cy_mark_pointer((void *) cy_exception_stack[i].message);
+        cy_mark_pointer(cy_exception_stack[i].object);
+    }
 
     for (size_t i = 0; i < cy_extra_root_count; i++) {
         cy_mark_pointer(cy_extra_roots[i]);
@@ -1051,6 +1149,157 @@ static inline void cy_echo_string(const char *value)
     if (value != NULL) {
         fputs(value, stdout);
     }
+}
+
+static inline bool cy_str_starts_with(const char *value, const char *prefix)
+{
+    if (value == NULL || prefix == NULL) {
+        return false;
+    }
+
+    size_t prefixLength = strlen(prefix);
+
+    return strncmp(value, prefix, prefixLength) == 0;
+}
+
+static inline bool cy_str_contains(const char *value, const char *needle)
+{
+    if (value == NULL || needle == NULL) {
+        return false;
+    }
+
+    return strstr(value, needle) != NULL;
+}
+
+static inline const char *cy_substr(const char *value, cy_int offset)
+{
+    if (value == NULL) {
+        return "";
+    }
+
+    size_t length = strlen(value);
+
+    if (offset < 0 || (size_t) offset >= length) {
+        return "";
+    }
+
+    return cy_strdup(value + offset);
+}
+
+static inline const char *cy_substr_len(const char *value, cy_int offset, cy_int sublength)
+{
+    if (value == NULL || sublength <= 0) {
+        return "";
+    }
+
+    size_t length = strlen(value);
+
+    if (offset < 0 || (size_t) offset >= length) {
+        return "";
+    }
+
+    size_t available = length - (size_t) offset;
+    size_t wanted = (size_t) sublength;
+
+    if (wanted > available) {
+        wanted = available;
+    }
+
+    char *result = (char *) cy_alloc_kind(wanted + 1, CY_ALLOC_STRING);
+    memcpy(result, value + offset, wanted);
+    result[wanted] = '\0';
+
+    return result;
+}
+
+static inline const char *cy_str_trim(const char *value)
+{
+    if (value == NULL) {
+        return "";
+    }
+
+    const char *start = value;
+
+    while (*start == ' ' || *start == '\t' || *start == '\n' || *start == '\r') {
+        start++;
+    }
+
+    const char *end = start + strlen(start);
+
+    while (end > start
+        && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n' || end[-1] == '\r')) {
+        end--;
+    }
+
+    size_t length = (size_t) (end - start);
+    char *result = (char *) cy_alloc_kind(length + 1, CY_ALLOC_STRING);
+    memcpy(result, start, length);
+    result[length] = '\0';
+
+    return result;
+}
+
+static inline bool cy_is_numeric(const char *value)
+{
+    if (value == NULL || *value == '\0') {
+        return false;
+    }
+
+    char *end = NULL;
+    double parsed = strtod(value, &end);
+
+    if (end == value) {
+        return false;
+    }
+
+    while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') {
+        end++;
+    }
+
+    (void) parsed;
+
+    return *end == '\0';
+}
+
+static inline bool cy_is_integer(const char *value)
+{
+    if (value == NULL || *value == '\0') {
+        return false;
+    }
+
+    const char *cursor = value;
+
+    if (*cursor == '+' || *cursor == '-') {
+        cursor++;
+    }
+
+    if (*cursor == '\0') {
+        return false;
+    }
+
+    while (*cursor >= '0' && *cursor <= '9') {
+        cursor++;
+    }
+
+    return *cursor == '\0';
+}
+
+static inline void cy_cli_error(const char *message)
+{
+    if (message != NULL) {
+        fputs(message, stderr);
+    }
+}
+
+static inline CyArray *cy_cli_args(void)
+{
+    CyArray *arguments = cy_array_new();
+
+    for (int i = 0; i < cy_cli_argc; i++) {
+        cy_array_push_string(arguments, cy_strdup(cy_cli_argv[i]));
+    }
+
+    return arguments;
 }
 
 /* ------------------------------------------------------------------------- */

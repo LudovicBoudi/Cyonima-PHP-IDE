@@ -1316,29 +1316,65 @@ final class SemanticAnalyzer
 
         if ($statement instanceof ThrowStmt) {
             $type = $this->analyzeExpr($statement->value, $scope, $functions);
-            $this->requireType($type, 'string', $statement->line, 'throw');
 
-            return;
+            if ($type === 'string') {
+                $statement->throwType = 'string';
+
+                return;
+            }
+
+            if ($this->isObjectType($type) && $this->isAssignable($type, 'Exception')) {
+                $statement->throwType = $type;
+
+                return;
+            }
+
+            throw new CompilerException(
+                "ligne {$statement->line} : throw attend une chaîne ou une Exception, reçu {$type}",
+            );
         }
 
         if ($statement instanceof TryStmt) {
-            if ($statement->catch->type !== 'string') {
-                throw new CompilerException(
-                    "ligne {$statement->catch->line} : catch attend le type string, reçu {$statement->catch->type}",
-                );
-            }
-
             $this->analyzeStatement($statement->body, $scope, $returnType, $functions);
-            $existing = $scope->typeOf($statement->catch->variable);
+            $hasObjectCatch = false;
+            $hasStringCatch = false;
+            $commonCatchType = 'Exception';
 
-            if ($existing !== null && $existing !== 'string') {
+            foreach ($statement->catches as $catch) {
+                if ($catch->type === 'string') {
+                    $hasStringCatch = true;
+                } elseif ($this->isObjectType($catch->type)
+                    && $this->isAssignable($catch->type, 'Exception')) {
+                    $hasObjectCatch = true;
+                } else {
+                    throw new CompilerException(
+                        "ligne {$catch->line} : catch attend string ou une Exception, reçu {$catch->type}",
+                    );
+                }
+            }
+
+            if ($hasStringCatch && $hasObjectCatch) {
                 throw new CompilerException(
-                    "ligne {$statement->catch->line} : \${$statement->catch->variable} est de type {$existing}, string attendu",
+                    "ligne {$statement->line} : catch string et catch d’exception non mélangeables",
                 );
             }
 
-            $scope->define($statement->catch->variable, 'string');
-            $this->analyzeStatement($statement->catch->body, $scope, $returnType, $functions);
+            if ($hasStringCatch) {
+                $commonCatchType = 'string';
+            }
+
+            foreach ($statement->catches as $catch) {
+                $scope->define($catch->variable, $catch->type);
+                $this->analyzeStatement($catch->body, $scope, $returnType, $functions);
+            }
+
+            foreach ($statement->catches as $catch) {
+                $scope->define($catch->variable, $commonCatchType);
+            }
+
+            if ($statement->finally !== null) {
+                $this->analyzeStatement($statement->finally, $scope, $returnType, $functions);
+            }
 
             return;
         }
@@ -2787,17 +2823,34 @@ final class SemanticAnalyzer
                 $statement->body->statements,
                 $before,
             );
-            $catchAssigned = $before;
-            $catchAssigned[$statement->catch->variable] = true;
-            [$catchAssigned, $catchReturns] = $this->flowStatements(
-                $statement->catch->body->statements,
-                $catchAssigned,
-            );
+            $resultAssigned = $tryAssigned;
+            $returns = $tryReturns;
 
-            return [
-                array_intersect_key($tryAssigned, $catchAssigned),
-                $tryReturns && $catchReturns,
-            ];
+            if ($statement->catches !== []) {
+                $returns = $tryReturns;
+
+                foreach ($statement->catches as $catch) {
+                    $catchAssigned = $before;
+                    $catchAssigned[$catch->variable] = true;
+                    [$catchAssigned, $catchReturns] = $this->flowStatements(
+                        $catch->body->statements,
+                        $catchAssigned,
+                    );
+                    $resultAssigned = array_intersect_key($resultAssigned, $catchAssigned);
+                    $returns = $returns && $catchReturns;
+                }
+            }
+
+            if ($statement->finally !== null) {
+                [$finallyAssigned, $finallyReturns] = $this->flowStatements(
+                    $statement->finally->statements,
+                    $resultAssigned,
+                );
+                $resultAssigned = $finallyAssigned;
+                $returns = $finallyReturns || $returns;
+            }
+
+            return [$resultAssigned, $returns];
         }
 
         throw new CompilerException(
@@ -3691,6 +3744,15 @@ final class SemanticAnalyzer
     {
         return match ($name) {
             'strlen' => ['params' => ['string'], 'return' => 'int'],
+            'str_starts_with' => ['params' => ['string', 'string'], 'return' => 'bool'],
+            'str_contains' => ['params' => ['string', 'string'], 'return' => 'bool'],
+            'trim' => ['params' => ['string'], 'return' => 'string'],
+            'is_numeric' => ['params' => ['string'], 'return' => 'bool'],
+            'is_integer' => ['params' => ['string'], 'return' => 'bool'],
+            'substr' => ['params' => ['string', 'int'], 'return' => 'string'],
+            'substr_len' => ['params' => ['string', 'int', 'int'], 'return' => 'string'],
+            'stderr_write' => ['params' => ['string'], 'return' => 'void'],
+            'cli_args' => ['params' => [], 'return' => 'array<string>'],
             'intval' => ['params' => ['scalar'], 'return' => 'int'],
             'floatval' => ['params' => ['scalar'], 'return' => 'float'],
             'strval' => ['params' => ['scalar'], 'return' => 'string'],

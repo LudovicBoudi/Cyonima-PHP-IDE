@@ -393,9 +393,79 @@ $list = json_decode_array_string('["a", "b"]');
 scalaires). Le décodage est typé via `json_decode_int`, `json_decode_array_*`,
 `json_decode_map_*`, etc. Voir `examples/native-json.php`.
 
+Une console native est fournie :
+
+```php
+use Cyonima\Console\Application;
+use Cyonima\Console\Command;
+use Cyonima\Console\Input;
+use Cyonima\Console\Output;
+
+final class GreetCommand extends Command {
+    protected function configure(): void {
+        $this->setName('greet');
+        $this->addArgument('name', true, 'Nom');
+    }
+
+    public function run(Input $input, Output $output): int {
+        $output->writeln('Hello ' . $input->argument('name', 'world'));
+        return 0;
+    }
+}
+
+$app = new Application('demo', '1.0.0');
+$app->add(new GreetCommand());
+
+return $app->run(cli_args());
+```
+
+Commandes intégrées : `list`, `help`, `--version`. Voir
+`examples/native-console.php`.
+
+La couche base de données encapsule SQLite :
+
+```php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Repository;
+
+final class UserRepository extends Repository {
+    public function __construct(Connection $connection) {
+        parent::__construct($connection, 'users');
+    }
+
+    public function find(int $id): ?User {
+        $row = $this->row('SELECT id, name FROM users WHERE id = ' . strval($id));
+
+        if (count($row) === 0) {
+            return null;
+        }
+
+        return new User(intval($row['id']), $row['name']);
+    }
+}
+```
+
+`Migrator` exécute des migrations transactionnelles, `Connection::quote()`
+échappe les valeurs. Voir `examples/native-database.php`.
+
+La validation typée fournit des règles réutilisables :
+
+```php
+$validator = new Validator();
+$validator->add('name', new Required());
+$validator->add('name', new MinLength(3));
+$validator->add('email', new Email());
+
+$errors = $validator->validate($input);
+```
+
+`validateOrFail()` lève `ValidationException`, qui expose `getErrors()`.
+Voir `examples/native-validation.php`.
+
 Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
 typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, `switch`, `match`,
-`isset`, les exceptions `throw`/`try`/`catch`, les classes et objets
+`isset`, les exceptions typées avec hiérarchie `Exception`, `catch` multiple et
+`finally`, les classes et objets
 (`class`, propriétés, `new`, `$this`, méthodes), l’héritage avec dispatch
 dynamique, la covariance des retours, les interfaces avec héritage multiple,
 les classes abstraites, `parent::`, les membres
@@ -405,8 +475,12 @@ par référence `use (&$x)`, les tableaux
 indexés homogènes, les tables associatives `string => valeur`, les collections
 d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
 `?string`, `?Classe`, `?Interface`, `?callable`, les namespaces, les imports et
-la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, les
-signatures annotées via PHPDoc avec copie à l’appel, l’interpolation
+la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, la
+console native `Cyonima\Console` (commandes, arguments, options, aide), la
+couche `Cyonima\Database` (connexion SQLite, repositories, migrations), la
+validation typée `Cyonima\Validation`, les templates `.ui` compilés vers GTK,
+les signatures annotées via PHPDoc avec
+copie à l’appel, l’interpolation
 de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
 `floatval`, `strval`, `abs`, `count` et les modules natifs SQLite, libcurl et
 libssh2.
@@ -433,6 +507,38 @@ $button->onClicked(fn () => $label->setText('Cliqué !'));
 
 Les widgets héritent de `Widget` et se composent directement par objets.
 Voir `examples/native-ui-object.php`.
+
+Les templates `.ui` sont compilés en classes `Cyonima\Templates\<Nom>` :
+
+```html
+@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+
+<window title="{{ $title }}" width="440" height="520">
+    <box vertical="true" spacing="10">
+        <label text="{{ $title }}" />
+        @foreach ($todos as $todo)
+            <label>{{ $todo->title }}</label>
+        @endforeach
+        <button text="Ajouter" on-click="{{ $onAdd }}" />
+    </box>
+</window>
+```
+
+```php
+$application = new Application('com.cyonima.templates.demo');
+$window = TodoList::build($todos, 'Tâches', $onAdd);
+$window->present();
+$application->run();
+```
+
+```bash
+bin/cyonima-compile --project=. \
+  --php=examples/native-templates.php \
+  --templates=examples/native-todo-list.ui --emit=elf
+```
+
+Aucun moteur de template n’est embarqué : les balises et directives sont
+traduites en code PHP puis en C. Voir `examples/native-templates.php`.
 
 Les modules natifs **SQLite**, **libcurl** et **libssh2** sont disponibles dans
 le code compilé :
