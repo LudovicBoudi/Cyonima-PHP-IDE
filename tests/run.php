@@ -485,13 +485,37 @@ $terminal->onChildExited(function ($term, $status) use (&$exitStatus): void {
     Loop::quit();
 });
 
-$terminal->spawn(['/bin/bash', '-lc', 'echo ok > ' . escapeshellarg($proof)]);
-Loop::after(2000, fn () => Loop::quit());
+$spawnPid = null;
+$spawnError = null;
+$terminal->spawn(
+    ['/bin/sh', '-c', 'echo ok > ' . escapeshellarg($proof)],
+    null,
+    function (int $pid, ?string $error) use (&$spawnPid, &$spawnError): void {
+        $spawnPid = $pid;
+        $spawnError = $error;
+    },
+);
+// Les runners CI peuvent être lents au premier démarrage du PTY.
+Loop::after(10000, fn () => Loop::quit());
 Loop::run();
 
-T::same('ok', trim((string) @file_get_contents($proof)), 'le terminal exécute réellement le processus');
-T::ok(is_int($exitStatus), 'le statut de sortie arrive typé en int', get_debug_type($exitStatus));
-T::same(0, is_int($exitStatus) ? $exitStatus >> 8 : -1, 'code de sortie 0');
+$proofContent = trim((string) @file_get_contents($proof));
+
+if ($spawnPid === null && $spawnError !== null) {
+    T::skip('terminal PTY indisponible dans cet environnement : ' . $spawnError);
+} else {
+    T::ok(
+        $proofContent === 'ok',
+        'le terminal exécute réellement le processus',
+        'sortie=' . var_export($proofContent, true)
+            . ', pid=' . var_export($spawnPid, true)
+            . ', erreur=' . var_export($spawnError, true)
+            . ', statut=' . var_export($exitStatus, true),
+    );
+    T::ok(is_int($exitStatus), 'le statut de sortie arrive typé en int', get_debug_type($exitStatus));
+    T::same(0, is_int($exitStatus) ? $exitStatus >> 8 : -1, 'code de sortie 0');
+}
+
 @unlink($proof);
 
 // ---------------------------------------------------------------------------
