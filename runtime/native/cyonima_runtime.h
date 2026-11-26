@@ -405,6 +405,15 @@ static inline void cy_gc_maybe_collect(void)
     cy_gc_collect();
 }
 
+static inline CyValue cy_value_null(void)
+{
+    CyValue result;
+    result.type = CY_VALUE_NULL;
+    result.as.integer = 0;
+
+    return result;
+}
+
 static inline CyValue cy_value_bool(bool value)
 {
     CyValue result;
@@ -437,6 +446,15 @@ static inline CyValue cy_value_string(const char *value)
     CyValue result;
     result.type = CY_VALUE_STRING;
     result.as.string = value;
+
+    return result;
+}
+
+static inline CyValue cy_value_array(CyArray *value)
+{
+    CyValue result;
+    result.type = CY_VALUE_ARRAY;
+    result.as.array = value;
 
     return result;
 }
@@ -1033,6 +1051,697 @@ static inline void cy_echo_string(const char *value)
     if (value != NULL) {
         fputs(value, stdout);
     }
+}
+
+/* ------------------------------------------------------------------------- */
+/* JSON                                                                      */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    char *data;
+    size_t length;
+    size_t capacity;
+} CyJsonBuffer;
+
+static inline void cy_json_buffer_init(CyJsonBuffer *buffer)
+{
+    buffer->data = NULL;
+    buffer->length = 0;
+    buffer->capacity = 0;
+}
+
+static inline void cy_json_buffer_reserve(CyJsonBuffer *buffer, size_t extra)
+{
+    size_t needed = buffer->length + extra + 1;
+
+    if (needed <= buffer->capacity) {
+        return;
+    }
+
+    size_t capacity = buffer->capacity == 0 ? 64 : buffer->capacity;
+
+    while (capacity < needed) {
+        capacity *= 2;
+    }
+
+    char *data = (char *) realloc(buffer->data, capacity);
+
+    if (data == NULL) {
+        cy_runtime_out_of_memory();
+    }
+
+    buffer->data = data;
+    buffer->capacity = capacity;
+}
+
+static inline void cy_json_buffer_append(CyJsonBuffer *buffer, const char *data, size_t length)
+{
+    cy_json_buffer_reserve(buffer, length);
+    memcpy(buffer->data + buffer->length, data, length);
+    buffer->length += length;
+    buffer->data[buffer->length] = '\0';
+}
+
+static inline void cy_json_buffer_putc(CyJsonBuffer *buffer, char value)
+{
+    cy_json_buffer_append(buffer, &value, 1);
+}
+
+static inline const char *cy_json_buffer_finish(CyJsonBuffer *buffer)
+{
+    const char *result = cy_strdup(buffer->data == NULL ? "" : buffer->data);
+    free(buffer->data);
+
+    return result;
+}
+
+static inline void cy_json_encode_string(CyJsonBuffer *buffer, const char *value)
+{
+    if (value == NULL) {
+        cy_json_buffer_append(buffer, "null", 4);
+        return;
+    }
+
+    cy_json_buffer_putc(buffer, '"');
+
+    for (const unsigned char *cursor = (const unsigned char *) value; *cursor != 0; cursor++) {
+        unsigned char character = *cursor;
+
+        switch (character) {
+            case '"':
+                cy_json_buffer_append(buffer, "\\\"", 2);
+                break;
+            case '\\':
+                cy_json_buffer_append(buffer, "\\\\", 2);
+                break;
+            case '\b':
+                cy_json_buffer_append(buffer, "\\b", 2);
+                break;
+            case '\f':
+                cy_json_buffer_append(buffer, "\\f", 2);
+                break;
+            case '\n':
+                cy_json_buffer_append(buffer, "\\n", 2);
+                break;
+            case '\r':
+                cy_json_buffer_append(buffer, "\\r", 2);
+                break;
+            case '\t':
+                cy_json_buffer_append(buffer, "\\t", 2);
+                break;
+            default:
+                if (character < 0x20) {
+                    char escaped[7];
+                    snprintf(escaped, sizeof escaped, "\\u%04x", character);
+                    cy_json_buffer_append(buffer, escaped, 6);
+                } else {
+                    cy_json_buffer_putc(buffer, (char) character);
+                }
+                break;
+        }
+    }
+
+    cy_json_buffer_putc(buffer, '"');
+}
+
+static inline void cy_json_encode_value(CyJsonBuffer *buffer, CyValue value)
+{
+    char number[64];
+
+    switch (value.type) {
+        case CY_VALUE_NULL:
+            cy_json_buffer_append(buffer, "null", 4);
+            break;
+        case CY_VALUE_BOOL:
+            cy_json_buffer_append(
+                buffer,
+                value.as.boolean ? "true" : "false",
+                value.as.boolean ? 4 : 5
+            );
+            break;
+        case CY_VALUE_INT:
+            snprintf(number, sizeof number, "%lld", value.as.integer);
+            cy_json_buffer_append(buffer, number, strlen(number));
+            break;
+        case CY_VALUE_FLOAT:
+            if (!isfinite(value.as.floating)) {
+                cy_throw_exception("nombre JSON non fini");
+                cy_json_buffer_append(buffer, "null", 4);
+                break;
+            }
+            snprintf(number, sizeof number, "%.14g", value.as.floating);
+            cy_json_buffer_append(buffer, number, strlen(number));
+            break;
+        case CY_VALUE_STRING:
+            cy_json_encode_string(buffer, value.as.string);
+            break;
+        case CY_VALUE_ARRAY: {
+            cy_json_buffer_putc(buffer, '[');
+
+            for (size_t i = 0; i < value.as.array->length; i++) {
+                if (i > 0) {
+                    cy_json_buffer_putc(buffer, ',');
+                }
+
+                cy_json_encode_value(buffer, value.as.array->items[i]);
+            }
+
+            cy_json_buffer_putc(buffer, ']');
+            break;
+        }
+        case CY_VALUE_MAP: {
+            cy_json_buffer_putc(buffer, '{');
+
+            for (size_t i = 0; i < value.as.map->length; i++) {
+                if (i > 0) {
+                    cy_json_buffer_putc(buffer, ',');
+                }
+
+                cy_json_encode_string(buffer, value.as.map->entries[i].key.as.string);
+                cy_json_buffer_putc(buffer, ':');
+                cy_json_encode_value(buffer, value.as.map->entries[i].value);
+            }
+
+            cy_json_buffer_putc(buffer, '}');
+            break;
+        }
+        default:
+            cy_throw_exception("valeur non encodable en JSON");
+            cy_json_buffer_append(buffer, "null", 4);
+            break;
+    }
+}
+
+static inline const char *cy_json_encode_int(cy_int value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_value(&buffer, cy_value_int(value));
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline const char *cy_json_encode_float(cy_float value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_value(&buffer, cy_value_float(value));
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline const char *cy_json_encode_bool(bool value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_value(&buffer, cy_value_bool(value));
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline const char *cy_json_encode_string_value(const char *value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_string(&buffer, value);
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline const char *cy_json_encode_array(CyArray *value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_value(&buffer, cy_value_array(value));
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline const char *cy_json_encode_map(CyMap *value)
+{
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+    cy_json_encode_value(&buffer, cy_value_map(value));
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline void cy_json_skip_whitespace(const char **cursor)
+{
+    while (**cursor == ' ' || **cursor == '\t' || **cursor == '\n' || **cursor == '\r') {
+        (*cursor)++;
+    }
+}
+
+static inline int cy_json_hex(unsigned char character)
+{
+    if (character >= '0' && character <= '9') {
+        return character - '0';
+    }
+
+    if (character >= 'a' && character <= 'f') {
+        return character - 'a' + 10;
+    }
+
+    if (character >= 'A' && character <= 'F') {
+        return character - 'A' + 10;
+    }
+
+    return -1;
+}
+
+static inline unsigned int cy_json_read_hex4(const char **cursor)
+{
+    unsigned int value = 0;
+
+    for (int i = 0; i < 4; i++) {
+        int digit = cy_json_hex((unsigned char) **cursor);
+
+        if (digit < 0) {
+            return 0xFFFFFFFFu;
+        }
+
+        value = value * 16 + (unsigned int) digit;
+        (*cursor)++;
+    }
+
+    return value;
+}
+
+static inline void cy_json_append_utf8(CyJsonBuffer *buffer, unsigned int code)
+{
+    char encoded[4];
+
+    if (code <= 0x7F) {
+        encoded[0] = (char) code;
+        cy_json_buffer_append(buffer, encoded, 1);
+    } else if (code <= 0x7FF) {
+        encoded[0] = (char) (0xC0 | (code >> 6));
+        encoded[1] = (char) (0x80 | (code & 0x3F));
+        cy_json_buffer_append(buffer, encoded, 2);
+    } else if (code <= 0xFFFF) {
+        encoded[0] = (char) (0xE0 | (code >> 12));
+        encoded[1] = (char) (0x80 | ((code >> 6) & 0x3F));
+        encoded[2] = (char) (0x80 | (code & 0x3F));
+        cy_json_buffer_append(buffer, encoded, 3);
+    } else {
+        encoded[0] = (char) (0xF0 | (code >> 18));
+        encoded[1] = (char) (0x80 | ((code >> 12) & 0x3F));
+        encoded[2] = (char) (0x80 | ((code >> 6) & 0x3F));
+        encoded[3] = (char) (0x80 | (code & 0x3F));
+        cy_json_buffer_append(buffer, encoded, 4);
+    }
+}
+
+static inline const char *cy_json_parse_string(const char **cursor)
+{
+    if (**cursor != '"') {
+        cy_throw_exception("chaîne JSON attendue");
+        return "";
+    }
+
+    (*cursor)++;
+    CyJsonBuffer buffer;
+    cy_json_buffer_init(&buffer);
+
+    while (**cursor != 0 && **cursor != '"') {
+        unsigned char character = (unsigned char) **cursor;
+
+        if (character != '\\') {
+            cy_json_buffer_putc(&buffer, (char) character);
+            (*cursor)++;
+            continue;
+        }
+
+        (*cursor)++;
+        unsigned char escaped = (unsigned char) **cursor;
+
+        switch (escaped) {
+            case '"':
+            case '\\':
+            case '/':
+                cy_json_buffer_putc(&buffer, (char) escaped);
+                (*cursor)++;
+                break;
+            case 'b':
+                cy_json_buffer_putc(&buffer, '\b');
+                (*cursor)++;
+                break;
+            case 'f':
+                cy_json_buffer_putc(&buffer, '\f');
+                (*cursor)++;
+                break;
+            case 'n':
+                cy_json_buffer_putc(&buffer, '\n');
+                (*cursor)++;
+                break;
+            case 'r':
+                cy_json_buffer_putc(&buffer, '\r');
+                (*cursor)++;
+                break;
+            case 't':
+                cy_json_buffer_putc(&buffer, '\t');
+                (*cursor)++;
+                break;
+            case 'u': {
+                (*cursor)++;
+                unsigned int code = cy_json_read_hex4(cursor);
+
+                if (code == 0xFFFFFFFFu) {
+                    free(buffer.data);
+                    cy_throw_exception("échappement Unicode JSON invalide");
+                    return "";
+                }
+
+                if (code >= 0xD800 && code <= 0xDBFF
+                    && (*cursor)[0] == '\\' && (*cursor)[1] == 'u') {
+                    const char *next = *cursor + 2;
+                    unsigned int low = cy_json_read_hex4(&next);
+
+                    if (low >= 0xDC00 && low <= 0xDFFF) {
+                        code = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                        *cursor = next;
+                    }
+                }
+
+                cy_json_append_utf8(&buffer, code);
+                break;
+            }
+            default:
+                free(buffer.data);
+                cy_throw_exception("échappement JSON invalide");
+                return "";
+        }
+    }
+
+    if (**cursor != '"') {
+        free(buffer.data);
+        cy_throw_exception("chaîne JSON non terminée");
+        return "";
+    }
+
+    (*cursor)++;
+
+    return cy_json_buffer_finish(&buffer);
+}
+
+static inline bool cy_json_parse_bool(const char **cursor)
+{
+    if (strncmp(*cursor, "true", 4) == 0) {
+        *cursor += 4;
+        return true;
+    }
+
+    if (strncmp(*cursor, "false", 5) == 0) {
+        *cursor += 5;
+        return false;
+    }
+
+    cy_throw_exception("booléen JSON attendu");
+
+    return false;
+}
+
+static inline cy_int cy_json_parse_int(const char **cursor)
+{
+    char *end = NULL;
+    long long value = strtoll(*cursor, &end, 10);
+
+    if (end == *cursor) {
+        cy_throw_exception("entier JSON attendu");
+        return 0;
+    }
+
+    *cursor = end;
+
+    return (cy_int) value;
+}
+
+static inline cy_float cy_json_parse_float(const char **cursor)
+{
+    char *end = NULL;
+    double value = strtod(*cursor, &end);
+
+    if (end == *cursor) {
+        cy_throw_exception("nombre JSON attendu");
+        return 0.0;
+    }
+
+    *cursor = end;
+
+    return (cy_float) value;
+}
+
+static inline CyValue cy_json_parse_typed(const char **cursor, CyValueType expected)
+{
+    cy_json_skip_whitespace(cursor);
+
+    switch (expected) {
+        case CY_VALUE_STRING:
+            return cy_value_string(cy_json_parse_string(cursor));
+        case CY_VALUE_BOOL:
+            return cy_value_bool(cy_json_parse_bool(cursor));
+        case CY_VALUE_INT:
+            return cy_value_int(cy_json_parse_int(cursor));
+        case CY_VALUE_FLOAT:
+            return cy_value_float(cy_json_parse_float(cursor));
+        default:
+            cy_throw_exception("type JSON non supporté");
+            return cy_value_null();
+    }
+}
+
+static inline CyArray *cy_json_decode_array(const char *json, CyValueType expected)
+{
+    CyArray *result = cy_array_new();
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != '[') {
+        cy_throw_exception("tableau JSON attendu");
+        return result;
+    }
+
+    cursor++;
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor == ']') {
+        cursor++;
+    } else {
+        for (;;) {
+            CyValue value = cy_json_parse_typed(&cursor, expected);
+
+            if (cy_exception_pending()) {
+                return result;
+            }
+
+            cy_array_push_value(result, value);
+            cy_json_skip_whitespace(&cursor);
+
+            if (*cursor == ',') {
+                cursor++;
+                continue;
+            }
+
+            if (*cursor == ']') {
+                cursor++;
+                break;
+            }
+
+            cy_throw_exception("tableau JSON invalide");
+            return result;
+        }
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return result;
+}
+
+static inline CyMap *cy_json_decode_map(const char *json, CyValueType expected)
+{
+    CyMap *result = cy_map_new();
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != '{') {
+        cy_throw_exception("objet JSON attendu");
+        return result;
+    }
+
+    cursor++;
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor == '}') {
+        cursor++;
+    } else {
+        for (;;) {
+            cy_json_skip_whitespace(&cursor);
+            const char *key = cy_json_parse_string(&cursor);
+
+            if (cy_exception_pending()) {
+                return result;
+            }
+
+            cy_json_skip_whitespace(&cursor);
+
+            if (*cursor != ':') {
+                cy_throw_exception("objet JSON invalide");
+                return result;
+            }
+
+            cursor++;
+            CyValue value = cy_json_parse_typed(&cursor, expected);
+
+            if (cy_exception_pending()) {
+                return result;
+            }
+
+            cy_map_set_value_string(result, key, value);
+            cy_json_skip_whitespace(&cursor);
+
+            if (*cursor == ',') {
+                cursor++;
+                continue;
+            }
+
+            if (*cursor == '}') {
+                cursor++;
+                break;
+            }
+
+            cy_throw_exception("objet JSON invalide");
+            return result;
+        }
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return result;
+}
+
+static inline cy_int fn_json_decode_int(const char *json)
+{
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+    cy_int value = cy_json_parse_int(&cursor);
+
+    if (cy_exception_pending()) {
+        return value;
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return value;
+}
+
+static inline cy_float fn_json_decode_float(const char *json)
+{
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+    cy_float value = cy_json_parse_float(&cursor);
+
+    if (cy_exception_pending()) {
+        return value;
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return value;
+}
+
+static inline bool fn_json_decode_bool(const char *json)
+{
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+    bool value = cy_json_parse_bool(&cursor);
+
+    if (cy_exception_pending()) {
+        return value;
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return value;
+}
+
+static inline const char *fn_json_decode_string(const char *json)
+{
+    const char *cursor = json;
+    cy_json_skip_whitespace(&cursor);
+    const char *value = cy_json_parse_string(&cursor);
+
+    if (cy_exception_pending()) {
+        return value;
+    }
+
+    cy_json_skip_whitespace(&cursor);
+
+    if (*cursor != 0) {
+        cy_throw_exception("contenu JSON superflu");
+    }
+
+    return value;
+}
+
+static inline CyArray *fn_json_decode_array_int(const char *json)
+{
+    return cy_json_decode_array(json, CY_VALUE_INT);
+}
+
+static inline CyArray *fn_json_decode_array_float(const char *json)
+{
+    return cy_json_decode_array(json, CY_VALUE_FLOAT);
+}
+
+static inline CyArray *fn_json_decode_array_bool(const char *json)
+{
+    return cy_json_decode_array(json, CY_VALUE_BOOL);
+}
+
+static inline CyArray *fn_json_decode_array_string(const char *json)
+{
+    return cy_json_decode_array(json, CY_VALUE_STRING);
+}
+
+static inline CyMap *fn_json_decode_map_int(const char *json)
+{
+    return cy_json_decode_map(json, CY_VALUE_INT);
+}
+
+static inline CyMap *fn_json_decode_map_float(const char *json)
+{
+    return cy_json_decode_map(json, CY_VALUE_FLOAT);
+}
+
+static inline CyMap *fn_json_decode_map_bool(const char *json)
+{
+    return cy_json_decode_map(json, CY_VALUE_BOOL);
+}
+
+static inline CyMap *fn_json_decode_map_string(const char *json)
+{
+    return cy_json_decode_map(json, CY_VALUE_STRING);
 }
 
 #endif

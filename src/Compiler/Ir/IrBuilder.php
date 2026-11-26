@@ -1073,17 +1073,18 @@ final class IrBuilder
                 return $result;
             }
 
+            $callName = $expression->resolvedName ?? $expression->name;
             $arguments = array_map(
                 fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
                 $expression->arguments,
             );
-            $parameterTypes = isset($this->analysis->functions[$expression->name])
-                ? array_values($this->analysis->functions[$expression->name]->params)
+            $parameterTypes = isset($this->analysis->functions[$callName])
+                ? array_values($this->analysis->functions[$callName]->params)
                 : null;
 
             if ($expression->type === 'void') {
                 $function->instructions[] = new CallInstruction(
-                    $expression->name,
+                    $callName,
                     $arguments,
                     null,
                     $parameterTypes,
@@ -1095,7 +1096,7 @@ final class IrBuilder
 
             $result = $this->newTemporary((string) $expression->type, $function);
             $function->instructions[] = new CallInstruction(
-                $expression->name,
+                $callName,
                 $arguments,
                 $result,
                 $parameterTypes,

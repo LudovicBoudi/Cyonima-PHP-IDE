@@ -539,7 +539,8 @@ $openedByClick = null;
 $clickBrowser = new UI\FileBrowser($examples, function (string $path) use (&$openedByClick): void {
     $openedByClick = $path;
 });
-$clickBrowser->activateRow(0);
+$firstFile = $clickBrowser->firstFileIndex();
+$clickBrowser->activateRow($firstFile ?? 0);
 T::same($examples . '/adw.php', $openedByClick, 'clic réel : row-activated ouvre le premier fichier');
 
 $lsp = LspClient::start([PHP_BINARY, __DIR__ . '/fixtures/fake_lsp.php']);
@@ -4711,6 +4712,395 @@ foreach ($nullableErrors as $index => [$label, $source, $needle]) {
         T::ok(
             str_contains($exception->getMessage(), $needle),
             'nullable : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('35. Namespaces, imports et compilation multi-fichiers');
+
+$namespaceSource = <<<'PHP'
+<?php
+namespace App\Models;
+
+class User {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+}
+
+function helper(): string {
+    return "helper";
+}
+
+class Service {
+    public function label(User $user): string {
+        return $user->name . ":" . helper();
+    }
+}
+
+$user = new User("alice");
+$service = new Service();
+echo $service->label($user), "\n";
+echo strlen("abc"), " ", \strlen("abcd"), "\n";
+echo \App\Models\helper(), "\n";
+PHP;
+
+$namespaceC = $compilePhp('namespace-single', $namespaceSource, 'c');
+$namespaceCSource = (string) file_get_contents($namespaceC['cPath']);
+T::ok(str_contains($namespaceCSource, 'CyObj_App__Models__User'), 'namespace : type C');
+T::ok(str_contains($namespaceCSource, 'fn_App__Models__helper'), 'namespace : fonction C');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des namespaces non testée');
+} else {
+    $namespaceElf = $compilePhp('namespace-single', $namespaceSource, 'elf');
+    T::same(
+        "alice:helper\n3 4\nhelper\n",
+        shell_exec(escapeshellarg((string) $namespaceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : namespace, fonction locale et repli global',
+    );
+}
+
+$multiRoot = $phpRoot . '/namespace-project';
+mkdir($multiRoot . '/.cyonima', 0775, true);
+mkdir($multiRoot . '/src/Contracts', 0775, true);
+mkdir($multiRoot . '/src/Models', 0775, true);
+mkdir($multiRoot . '/src/Services', 0775, true);
+file_put_contents($multiRoot . '/.cyonima/compiler.json', json_encode([
+    'sources' => ['src/Contracts', 'src/Models', 'src/Services', 'src/Utils.php'],
+], JSON_PRETTY_PRINT));
+file_put_contents($multiRoot . '/src/Contracts/Named.php', <<<'PHP'
+<?php
+namespace App\Contracts;
+
+interface Named {
+    public function name(): string;
+}
+PHP);
+file_put_contents($multiRoot . '/src/Models/User.php', <<<'PHP'
+<?php
+namespace App\Models;
+
+use App\Contracts\Named;
+
+class User implements Named {
+    public string $label;
+
+    public function __construct(string $label) {
+        $this->label = $label;
+    }
+
+    public function name(): string {
+        return $this->label;
+    }
+}
+PHP);
+file_put_contents($multiRoot . '/src/Models/Collection.php', <<<'PHP'
+<?php
+namespace App\Models;
+
+class Collection {
+    /** @param array<User> $users */
+    public function join(array $users): string {
+        $result = "";
+
+        foreach ($users as $user) {
+            $result = $result . $user->name() . ",";
+        }
+
+        return $result;
+    }
+}
+PHP);
+file_put_contents($multiRoot . '/src/Services/UserService.php', <<<'PHP'
+<?php
+namespace App\Services;
+
+use App\Models\User as Member;
+
+class UserService {
+    public function describe(Member $user): string {
+        return "user:" . $user->name();
+    }
+}
+PHP);
+file_put_contents($multiRoot . '/src/Utils.php', <<<'PHP'
+<?php
+namespace App;
+
+function localHelper(): string {
+    return "local";
+}
+PHP);
+file_put_contents($multiRoot . '/src/main.php', <<<'PHP'
+<?php
+namespace App;
+
+use App\Models\Collection;
+use App\Models\User;
+use App\Services\UserService;
+
+$user = new User("alice");
+$service = new UserService();
+echo $service->describe($user), "\n";
+echo localHelper(), " ", strlen("abcd"), "\n";
+
+$users = [new User("a"), new User("b")];
+$collection = new Collection();
+echo $collection->join($users), "\n";
+PHP);
+
+$multiResult = (new PhpCompiler($multiRoot))->compile(
+    $multiRoot . '/src/main.php',
+    null,
+    'c',
+);
+$multiCSource = (string) file_get_contents($multiResult['cPath']);
+T::ok(str_contains($multiCSource, 'CyObj_App__Contracts__Named'), 'multi : interface');
+T::ok(str_contains($multiCSource, 'CyObj_App__Models__User'), 'multi : modèle');
+T::ok(str_contains($multiCSource, 'CyObj_App__Services__UserService'), 'multi : service');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution multi-fichiers non testée');
+} else {
+    $multiElf = (new PhpCompiler($multiRoot))->compile(
+        $multiRoot . '/src/main.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "user:alice\nlocal 4\na,b,\n",
+        shell_exec(escapeshellarg((string) $multiElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : imports, interfaces et collections multi-fichiers',
+    );
+}
+
+$namespaceUiSource = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Window;
+use Box;
+use Label;
+use Button;
+
+$app = new Application('com.example.namespaceui');
+$window = new Window('Namespace UI', 400, 200);
+$box = new Box(true, 8);
+$label = new Label('Bonjour');
+$button = new Button('Cliquer');
+$box->append($label);
+$box->append($button);
+$window->setChild($box);
+$button->onClicked(function () use ($label): void {
+    $label->setText('Clique');
+});
+$window->present();
+$app->after(100, fn () => $app->quit());
+$app->run();
+PHP;
+$namespaceUiC = $compilePhp('namespace-ui', $namespaceUiSource, 'c');
+$namespaceUiCSource = (string) file_get_contents($namespaceUiC['cPath']);
+T::ok(
+    str_contains($namespaceUiCSource, '#include "cyonima_ui.h"')
+    && str_contains($namespaceUiCSource, 'CyObj_Application'),
+    'namespace : imports de la façade UI',
+);
+
+$namespaceErrors = [
+    ['deux namespaces', '<?php namespace A; namespace B;', 'une seule déclaration namespace'],
+    ['namespace après use', '<?php use A\B; namespace C;', 'namespace doit précéder use'],
+    ['use après déclaration', '<?php namespace A; class X {} use A\Y;', 'use doit précéder les déclarations'],
+    ['use function', '<?php namespace A; use function A\foo;', 'use function non supporté'],
+    ['use groupé', '<?php namespace A; use A\{B, C};', 'use groupé non supporté'],
+    ['alias dupliqué', '<?php namespace A; use A\B; use C\B;', 'alias dupliqué'],
+    ['classe inconnue', '<?php namespace A; new Missing();', 'classe inconnue : A\Missing'],
+    ['fonction inconnue', '<?php namespace A; missing();', 'fonction inconnue : A\missing'],
+];
+
+foreach ($namespaceErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('namespace-error-' . $index, $source, 'c');
+        T::ok(false, 'namespace : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'namespace : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$multErrorRoot = $phpRoot . '/namespace-errors';
+mkdir($multErrorRoot . '/.cyonima', 0775, true);
+mkdir($multErrorRoot . '/src', 0775, true);
+file_put_contents($multErrorRoot . '/.cyonima/compiler.json', '{"sources":["src"]}');
+file_put_contents($multErrorRoot . '/src/main.php', "<?php\nnamespace App;\necho \"main\\n\";\n");
+file_put_contents($multErrorRoot . '/src/A.php', "<?php\nnamespace App;\nclass User {}\n");
+file_put_contents($multErrorRoot . '/src/B.php', "<?php\nnamespace App;\nclass User {}\n");
+
+try {
+    (new PhpCompiler($multErrorRoot))->compile($multErrorRoot . '/src/main.php', null, 'c');
+    T::ok(false, 'multi : erreur classe dupliquée');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'type déjà défini : App\User'),
+        'multi : erreur classe dupliquée',
+        $exception->getMessage(),
+    );
+}
+
+file_put_contents($multErrorRoot . '/src/B.php', "<?php\nnamespace App;\necho \"side\";\n");
+
+try {
+    (new PhpCompiler($multErrorRoot))->compile($multErrorRoot . '/src/main.php', null, 'c');
+    T::ok(false, 'multi : code exécutable non-entry refusé');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'ne peut contenir que des déclarations'),
+        'multi : code exécutable non-entry refusé',
+        $exception->getMessage(),
+    );
+}
+
+file_put_contents($multErrorRoot . '/.cyonima/compiler.json', '{"sources":["missing"]}');
+
+try {
+    (new PhpCompiler($multErrorRoot))->compile($multErrorRoot . '/src/main.php', null, 'c');
+    T::ok(false, 'multi : source introuvable refusée');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'Source déclarée introuvable'),
+        'multi : source introuvable refusée',
+        $exception->getMessage(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('36. JSON natif — encodage et décodage typé');
+
+$jsonSource = <<<'PHP'
+<?php
+echo json_encode(42), "\n";
+echo json_encode(1.5), "\n";
+echo json_encode(true), " ", json_encode(false), "\n";
+echo json_encode("a\n\"b"), "\n";
+echo json_encode([1, 2, 3]), "\n";
+echo json_encode(["a" => 1, "b" => 2]), "\n";
+echo json_encode(["x" => "y"]), "\n";
+echo json_encode(null), "\n";
+
+$n = json_decode_int("42");
+$f = json_decode_float("2.5");
+$b = json_decode_bool("true");
+$s = json_decode_string("\"hello\"");
+echo $n, " ", $f, " ", $b, " ", $s, "\n";
+
+$list = json_decode_array_int("[1, 2, 3]");
+echo count($list), " ", $list[1], "\n";
+
+$table = json_decode_map_string("{\"a\": \"x\", \"b\": \"y\"}");
+echo count($table), " ", $table["b"], "\n";
+PHP;
+
+$jsonC = $compilePhp('json-basic', $jsonSource, 'c');
+$jsonCSource = (string) file_get_contents($jsonC['cPath']);
+T::ok(str_contains($jsonCSource, 'cy_json_encode_array'), 'JSON : encodage de tableau');
+T::ok(str_contains($jsonCSource, 'cy_json_encode_map'), 'JSON : encodage de table');
+T::ok(str_contains($jsonCSource, 'fn_json_decode_map_string'), 'JSON : décodage typé');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution JSON non testée');
+} else {
+    $jsonElf = $compilePhp('json-basic', $jsonSource, 'elf');
+    $jsonExpected = <<<'TXT'
+42
+1.5
+true false
+"a\n\"b"
+[1,2,3]
+{"a":1,"b":2}
+{"x":"y"}
+null
+42 2.5 1 hello
+3 2
+2 y
+
+TXT;
+    T::same(
+        $jsonExpected,
+        shell_exec(escapeshellarg((string) $jsonElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : encodage et décodage JSON',
+    );
+
+    $jsonErrorElf = $compilePhp('json-errors-runtime', <<<'PHP'
+<?php
+$emptyList = json_decode_array_int("[]");
+$emptyMap = json_decode_map_int("{}");
+echo count($emptyList), " ", count($emptyMap), "\n";
+echo json_decode_string("\"caf\\u00e9\""), "\n";
+$strings = json_decode_array_string("[\"a\",\"b\"]");
+echo $strings[0], "\n";
+
+try {
+    json_decode_int("nope");
+} catch (string $error) {
+    echo "int: ", $error, "\n";
+}
+
+try {
+    json_decode_array_int("[1, \"x\"]");
+} catch (string $error) {
+    echo "array: ", $error, "\n";
+}
+
+try {
+    json_decode_map_string("{\"a\": 1}");
+} catch (string $error) {
+    echo "map: ", $error, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "0 0\ncafé\na\nint: entier JSON attendu\narray: entier JSON attendu\nmap: chaîne JSON attendue\n",
+        shell_exec(escapeshellarg((string) $jsonErrorElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : JSON vide, Unicode et erreurs typées',
+    );
+
+    $jsonNullableElf = $compilePhp('json-nullable', <<<'PHP'
+<?php
+function encode(?string $value): string {
+    return json_encode($value);
+}
+
+echo encode(null), " ", encode("x"), "\n";
+PHP, 'elf');
+    T::same(
+        "null \"x\"\n",
+        shell_exec(escapeshellarg((string) $jsonNullableElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : JSON d’une chaîne nullable',
+    );
+}
+
+$jsonErrors = [
+    ['objet', '<?php class User {} $user = new User(); echo json_encode($user);', 'json_encode ne supporte pas le type User'],
+    ['tableau d’objets', '<?php class User {} $users = [new User()]; echo json_encode($users);', 'json_encode ne supporte pas le type array<User>'],
+    ['closure', '<?php $fn = fn (): int => 1; echo json_encode($fn);', 'json_encode ne supporte pas le type callable():int'],
+    ['argument decode', '<?php echo json_decode_int(1);', 'json_decode_int attend string, reçu int'],
+];
+
+foreach ($jsonErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('json-error-' . $index, $source, 'c');
+        T::ok(false, 'JSON : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'JSON : erreur ' . $label,
             $exception->getMessage(),
         );
     }

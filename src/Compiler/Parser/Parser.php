@@ -64,6 +64,11 @@ final class Parser
 {
     private int $current = 0;
 
+    private ?string $namespace = null;
+
+    /** @var array<string, string> */
+    private array $imports = [];
+
     /** @param list<Token> $tokens */
     public function __construct(private readonly array $tokens)
     {
@@ -75,12 +80,64 @@ final class Parser
         $classes = [];
         $interfaces = [];
         $statements = [];
+        $declarationsStarted = false;
 
         while (!$this->check(TokenType::Eof)) {
             if ($this->match(TokenType::Declare)) {
                 $this->parseDeclareRemainder();
                 continue;
             }
+
+            if ($this->match(TokenType::NamespaceKeyword)) {
+                if ($this->namespace !== null) {
+                    throw new CompilerException(
+                        "ligne {$this->previous()->line} : une seule déclaration namespace par fichier",
+                    );
+                }
+
+                if ($declarationsStarted) {
+                    throw new CompilerException(
+                        "ligne {$this->previous()->line} : namespace doit précéder les déclarations",
+                    );
+                }
+
+                if ($this->imports !== []) {
+                    throw new CompilerException(
+                        "ligne {$this->previous()->line} : namespace doit précéder use",
+                    );
+                }
+
+                [$name, $absolute] = $this->parseQualifiedName();
+
+                if ($absolute) {
+                    throw new CompilerException(
+                        "ligne {$this->previous()->line} : namespace ne peut pas être absolu",
+                    );
+                }
+
+                if ($this->check(TokenType::LeftBrace)) {
+                    throw new CompilerException(
+                        "ligne {$this->peek()->line} : namespace avec accolades non supporté",
+                    );
+                }
+
+                $this->consume(TokenType::Semicolon, 'attendu : ; après namespace');
+                $this->namespace = $name;
+                continue;
+            }
+
+            if ($this->match(TokenType::UseKeyword)) {
+                if ($declarationsStarted) {
+                    throw new CompilerException(
+                        "ligne {$this->previous()->line} : use doit précéder les déclarations",
+                    );
+                }
+
+                $this->parseUseImport();
+                continue;
+            }
+
+            $declarationsStarted = true;
 
             if ($this->match(TokenType::Function)) {
                 $functions[] = $this->parseFunctionAfterKeyword($this->previous());
@@ -108,6 +165,166 @@ final class Parser
         }
 
         return new Program($functions, $classes, $interfaces, $statements);
+    }
+
+    /** @return array{0: string, 1: bool} */
+    private function parseQualifiedName(): array
+    {
+        $absolute = $this->match(TokenType::Backslash);
+        $first = $this->consume(TokenType::Identifier, 'attendu : nom');
+        $name = (string) $first->literal;
+
+        while ($this->match(TokenType::Backslash)) {
+            $part = $this->consume(
+                TokenType::Identifier,
+                'attendu : segment de nom après \\',
+            );
+            $name .= '\\' . $part->literal;
+        }
+
+        return [$name, $absolute];
+    }
+
+    private function parseUseImport(): void
+    {
+        $use = $this->previous();
+
+        if ($this->check(TokenType::Function)) {
+            throw new CompilerException(
+                "ligne {$use->line} : use function non supporté",
+            );
+        }
+
+        if ($this->check(TokenType::Identifier)
+            && strtolower((string) $this->peek()->literal) === 'const') {
+            throw new CompilerException(
+                "ligne {$use->line} : use const non supporté",
+            );
+        }
+
+        $this->match(TokenType::Backslash);
+        $first = $this->consume(TokenType::Identifier, 'attendu : nom après use');
+        $name = (string) $first->literal;
+
+        while ($this->check(TokenType::Backslash)) {
+            $this->advance();
+
+            if ($this->check(TokenType::LeftBrace)) {
+                throw new CompilerException(
+                    "ligne {$use->line} : use groupé non supporté",
+                );
+            }
+
+            $part = $this->consume(
+                TokenType::Identifier,
+                'attendu : segment de nom après \\',
+            );
+            $name .= '\\' . $part->literal;
+        }
+
+        if ($this->check(TokenType::LeftBrace)) {
+            throw new CompilerException(
+                "ligne {$use->line} : use groupé non supporté",
+            );
+        }
+
+        $segments = explode('\\', $name);
+        $alias = (string) end($segments);
+
+        if ($this->match(TokenType::As)) {
+            $aliasToken = $this->consume(
+                TokenType::Identifier,
+                'attendu : alias après as',
+            );
+            $alias = (string) $aliasToken->literal;
+        }
+
+        $this->consume(TokenType::Semicolon, 'attendu : ; après use');
+        $key = strtolower($alias);
+
+        if (isset($this->imports[$key])) {
+            throw new CompilerException(
+                "ligne {$use->line} : alias dupliqué : {$alias}",
+            );
+        }
+
+        $this->imports[$key] = $name;
+    }
+
+    private function resolveClassName(string $name, bool $absolute): string
+    {
+        if ($absolute) {
+            return $name;
+        }
+
+        if (in_array(strtolower($name), ['self', 'parent', 'static', 'this'], true)) {
+            return $name;
+        }
+
+        $segments = explode('\\', $name);
+        $first = strtolower($segments[0]);
+
+        if (isset($this->imports[$first])) {
+            $segments[0] = $this->imports[$first];
+
+            return implode('\\', $segments);
+        }
+
+        if ($this->namespace !== null && $this->namespace !== '') {
+            return $this->namespace . '\\' . $name;
+        }
+
+        return $name;
+    }
+
+    private function qualifyDeclarationName(string $name): string
+    {
+        if ($this->namespace === null || $this->namespace === '') {
+            return $name;
+        }
+
+        return $this->namespace . '\\' . $name;
+    }
+
+    /** @return array{0: string, 1: ?string} */
+    private function resolveFunctionName(string $name, bool $absolute): array
+    {
+        if ($absolute) {
+            return [$name, null];
+        }
+
+        if (str_contains($name, '\\')) {
+            return [$this->resolveClassName($name, false), null];
+        }
+
+        return [$name, $this->namespace];
+    }
+
+    private function resolveAnnotationArrayType(string $type): string
+    {
+        if (preg_match('/^array<([^,<>]+)>$/', $type, $matches) === 1) {
+            $element = $matches[1];
+
+            if (!in_array($element, ['int', 'float', 'bool', 'string'], true)
+                && $element !== 'callable') {
+                $element = $this->resolveClassName(ltrim($element, '\\'), str_starts_with($element, '\\'));
+            }
+
+            return 'array<' . $element . '>';
+        }
+
+        if (preg_match('/^array<string,([^,<>]+)>$/', $type, $matches) === 1) {
+            $element = $matches[1];
+
+            if (!in_array($element, ['int', 'float', 'bool', 'string'], true)
+                && $element !== 'callable') {
+                $element = $this->resolveClassName(ltrim($element, '\\'), str_starts_with($element, '\\'));
+            }
+
+            return 'array<string,' . $element . '>';
+        }
+
+        return $type;
     }
 
     private function parseDeclareRemainder(): void
@@ -156,7 +373,7 @@ final class Parser
         $body = $this->parseBlockAfterBrace($keyword->line);
 
         return new FunctionDecl(
-            (string) $name->literal,
+            $this->qualifyDeclarationName((string) $name->literal),
             $params,
             $returnType,
             $body,
@@ -167,25 +384,20 @@ final class Parser
     private function parseClassAfterKeyword(Token $keyword, bool $isAbstract): ClassDecl
     {
         $name = $this->consume(TokenType::Identifier, 'attendu : nom de classe après class');
+        $declarationName = $this->qualifyDeclarationName((string) $name->literal);
         $parentName = null;
 
         if ($this->match(TokenType::ExtendsKeyword)) {
-            $parent = $this->consume(
-                TokenType::Identifier,
-                'attendu : nom de classe parente après extends',
-            );
-            $parentName = (string) $parent->literal;
+            [$parent, $absolute] = $this->parseQualifiedName();
+            $parentName = $this->resolveClassName($parent, $absolute);
         }
 
         $interfaces = [];
 
         if ($this->match(TokenType::ImplementsKeyword)) {
             do {
-                $interface = $this->consume(
-                    TokenType::Identifier,
-                    'attendu : nom d’interface après implements',
-                );
-                $interfaces[] = (string) $interface->literal;
+                [$interface, $absolute] = $this->parseQualifiedName();
+                $interfaces[] = $this->resolveClassName($interface, $absolute);
             } while ($this->match(TokenType::Comma));
         }
 
@@ -272,7 +484,7 @@ final class Parser
         $this->consume(TokenType::RightBrace, 'attendu : } après la classe');
 
         return new ClassDecl(
-            (string) $name->literal,
+            $declarationName,
             $parentName,
             $interfaces,
             $isAbstract,
@@ -285,15 +497,13 @@ final class Parser
     private function parseInterfaceAfterKeyword(Token $keyword): InterfaceDecl
     {
         $name = $this->consume(TokenType::Identifier, 'attendu : nom d’interface');
+        $declarationName = $this->qualifyDeclarationName((string) $name->literal);
         $parents = [];
 
         if ($this->match(TokenType::ExtendsKeyword)) {
             do {
-                $parent = $this->consume(
-                    TokenType::Identifier,
-                    'attendu : nom d’interface parente après extends',
-                );
-                $parents[] = (string) $parent->literal;
+                [$parent, $absolute] = $this->parseQualifiedName();
+                $parents[] = $this->resolveClassName($parent, $absolute);
             } while ($this->match(TokenType::Comma));
         }
 
@@ -330,7 +540,7 @@ final class Parser
         $this->consume(TokenType::RightBrace, 'attendu : } après l’interface');
 
         return new InterfaceDecl(
-            (string) $name->literal,
+            $declarationName,
             $parents,
             $methods,
             $keyword->line,
@@ -1009,7 +1219,8 @@ final class Parser
 
         if ($this->match(TokenType::NewKeyword)) {
             $token = $this->previous();
-            $className = $this->consume(TokenType::Identifier, 'attendu : nom de classe après new');
+            [$rawName, $absolute] = $this->parseQualifiedName();
+            $className = $this->resolveClassName($rawName, $absolute);
             $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de classe');
             $arguments = [];
 
@@ -1021,7 +1232,7 @@ final class Parser
 
             $this->consume(TokenType::RightParen, 'attendu : ) après les arguments de new');
 
-            return new NewExpr((string) $className->literal, $arguments, $token->line);
+            return new NewExpr($className, $arguments, $token->line);
         }
 
         if ($this->match(TokenType::ParentKeyword)) {
@@ -1072,35 +1283,38 @@ final class Parser
             return new VariableExpr((string) $token->literal, $token->line);
         }
 
+        if ($this->match(TokenType::Backslash)) {
+            $token = $this->previous();
+            $first = $this->consume(
+                TokenType::Identifier,
+                'attendu : nom après \\',
+            );
+            $name = (string) $first->literal;
+
+            while ($this->match(TokenType::Backslash)) {
+                $part = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : segment de nom après \\',
+                );
+                $name .= '\\' . $part->literal;
+            }
+
+            return $this->parseNamedExpression($name, true, $token->line);
+        }
+
         if ($this->match(TokenType::Identifier)) {
             $token = $this->previous();
             $name = (string) $token->literal;
 
-            if (strtolower($name) === 'array' && $this->check(TokenType::LeftParen)) {
-                $this->advance();
-
-                return new ArrayExpr(
-                    $this->parseArrayElements(TokenType::RightParen),
-                    $token->line,
+            while ($this->match(TokenType::Backslash)) {
+                $part = $this->consume(
+                    TokenType::Identifier,
+                    'attendu : segment de nom après \\',
                 );
+                $name .= '\\' . $part->literal;
             }
 
-            if ($this->check(TokenType::DoubleColon)) {
-                return $this->parseStaticAccess($token, $name);
-            }
-
-            $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de fonction');
-            $arguments = [];
-
-            if (!$this->check(TokenType::RightParen)) {
-                do {
-                    $arguments[] = $this->parseExpression();
-                } while ($this->match(TokenType::Comma));
-            }
-
-            $this->consume(TokenType::RightParen, 'attendu : ) après les arguments');
-
-            return new CallExpr($name, $arguments, $token->line);
+            return $this->parseNamedExpression($name, false, $token->line);
         }
 
         if ($this->match(TokenType::LeftParen)) {
@@ -1116,7 +1330,43 @@ final class Parser
         );
     }
 
-    private function parseStaticAccess(Token $classToken, string $className): Expr
+    private function parseNamedExpression(string $name, bool $absolute, int $line): Expr
+    {
+        if (!$absolute
+            && !str_contains($name, '\\')
+            && strtolower($name) === 'array'
+            && $this->check(TokenType::LeftParen)) {
+            $this->advance();
+
+            return new ArrayExpr(
+                $this->parseArrayElements(TokenType::RightParen),
+                $line,
+            );
+        }
+
+        if ($this->check(TokenType::DoubleColon)) {
+            return $this->parseStaticAccess(
+                $line,
+                $this->resolveClassName($name, $absolute),
+            );
+        }
+
+        [$resolvedName, $namespace] = $this->resolveFunctionName($name, $absolute);
+        $this->consume(TokenType::LeftParen, 'attendu : ( après le nom de fonction');
+        $arguments = [];
+
+        if (!$this->check(TokenType::RightParen)) {
+            do {
+                $arguments[] = $this->parseExpression();
+            } while ($this->match(TokenType::Comma));
+        }
+
+        $this->consume(TokenType::RightParen, 'attendu : ) après les arguments');
+
+        return new CallExpr($resolvedName, $arguments, $line, $namespace);
+    }
+
+    private function parseStaticAccess(int $line, string $className): Expr
     {
         $this->consume(TokenType::DoubleColon, 'attendu : ::');
 
@@ -1126,7 +1376,7 @@ final class Parser
             return new StaticPropertyExpr(
                 $className,
                 (string) $property->literal,
-                $classToken->line,
+                $line,
             );
         }
 
@@ -1137,7 +1387,7 @@ final class Parser
 
         if (!$this->check(TokenType::LeftParen)) {
             throw new CompilerException(
-                "ligne {$classToken->line} : constante de classe non supportée : "
+                "ligne {$line} : constante de classe non supportée : "
                 . $className . '::' . $member->literal,
             );
         }
@@ -1157,7 +1407,7 @@ final class Parser
             $className,
             (string) $member->literal,
             $arguments,
-            $classToken->line,
+            $line,
         );
     }
 
@@ -1384,11 +1634,15 @@ final class Parser
             $this->advance();
             $name = (string) $token->literal;
 
-            if (strtolower($name) === 'array' && $this->check(TokenType::Less)) {
-                return $this->parseArrayType($token);
+            if (strtolower($name) === 'array') {
+                if ($this->check(TokenType::Less)) {
+                    return $this->parseArrayType($token);
+                }
+
+                return 'array';
             }
 
-            return $name;
+            return $this->resolveClassName($name, false);
         }
 
         $type = match ($token->type) {
@@ -1476,7 +1730,9 @@ final class Parser
             $type = $param->type;
 
             if ($type === 'array' && isset($annotations['params'][$param->name])) {
-                $type = $annotations['params'][$param->name];
+                $type = $this->resolveAnnotationArrayType(
+                    $annotations['params'][$param->name],
+                );
             }
 
             $result[] = $type === $param->type
@@ -1495,7 +1751,9 @@ final class Parser
 
         $annotations = $this->parseDocblock($doc);
 
-        return $annotations['return'] ?? $returnType;
+        return isset($annotations['return'])
+            ? $this->resolveAnnotationArrayType($annotations['return'])
+            : $returnType;
     }
 
     private function applyPropertyDocblock(string $type, ?string $doc): string
@@ -1506,7 +1764,9 @@ final class Parser
 
         $annotations = $this->parseDocblock($doc);
 
-        return $annotations['var'] ?? $type;
+        return isset($annotations['var'])
+            ? $this->resolveAnnotationArrayType($annotations['var'])
+            : $type;
     }
 
     /**

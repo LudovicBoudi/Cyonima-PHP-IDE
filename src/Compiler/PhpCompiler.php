@@ -24,10 +24,14 @@ use Cyonima\Compiler\Semantic\SemanticAnalyzer;
  */
 final class PhpCompiler
 {
-    /** @param list<string> $moduleNames */
+    /**
+     * @param list<string> $moduleNames
+     * @param list<string> $sourcePaths
+     */
     public function __construct(
         private readonly string $projectRoot,
         private readonly array $moduleNames = [],
+        private readonly array $sourcePaths = [],
     ) {
     }
 
@@ -60,14 +64,65 @@ final class PhpCompiler
             throw new CompilerException('Fichier PHP introuvable : ' . $sourcePath);
         }
 
-        $source = file_get_contents($sourcePath);
+        $sourceFiles = $this->sourceFiles($sourcePath);
+        $tokens = [];
+        $programs = [];
 
-        if ($source === false) {
-            throw new CompilerException('Lecture impossible : ' . $sourcePath);
+        foreach ($sourceFiles as $file) {
+            $source = file_get_contents($file);
+
+            if ($source === false) {
+                throw new CompilerException('Lecture impossible : ' . $file);
+            }
+
+            $fileTokens = (new Lexer($source))->tokenize();
+
+            try {
+                $fileProgram = (new Parser($fileTokens))->parse();
+            } catch (CompilerException $exception) {
+                if ($file === $sourcePath) {
+                    throw $exception;
+                }
+
+                throw new CompilerException(
+                    $this->relativePath($file) . ' : ' . $exception->getMessage(),
+                );
+            }
+
+            $tokens = array_merge($tokens, $fileTokens);
+            $programs[$file] = $fileProgram;
         }
 
-        $tokens = (new Lexer($source))->tokenize();
-        $program = (new Parser($tokens))->parse();
+        $functions = [];
+        $classes = [];
+        $interfaces = [];
+        $entryProgram = $programs[$sourcePath];
+
+        foreach ($programs as $file => $fileProgram) {
+            if ($file === $sourcePath) {
+                continue;
+            }
+
+            if ($fileProgram->statements !== []) {
+                throw new CompilerException(
+                    $this->relativePath($file)
+                    . ' : un fichier source non-entry ne peut contenir que des déclarations',
+                );
+            }
+
+            $functions = array_merge($functions, $fileProgram->functions);
+            $classes = array_merge($classes, $fileProgram->classes);
+            $interfaces = array_merge($interfaces, $fileProgram->interfaces);
+        }
+
+        $program = new Program(
+            array_merge($functions, $entryProgram->functions),
+            array_merge($classes, $entryProgram->classes),
+            array_merge($interfaces, $entryProgram->interfaces),
+            $entryProgram->statements,
+            $entryProgram->line,
+        );
+
         $registry = new NativeModuleRegistry();
         $modules = $registry->activeForTokens($tokens, $this->moduleNames);
         $nativeFunctions = $registry->functions($modules);
@@ -221,6 +276,91 @@ final class PhpCompiler
         return implode(' ', array_filter($flags));
     }
 
+    /** @return list<string> */
+    private function sourceFiles(string $entry): array
+    {
+        $entry = realpath($entry) ?: $entry;
+        $files = [$entry => true];
+        $paths = $this->sourcePaths;
+        $configPath = rtrim($this->projectRoot, '/') . '/.cyonima/compiler.json';
+
+        if (is_file($configPath)) {
+            $config = json_decode((string) file_get_contents($configPath), true);
+            $sources = is_array($config) && is_array($config['sources'] ?? null)
+                ? $config['sources']
+                : [];
+
+            foreach ($sources as $source) {
+                if (is_string($source) && trim($source) !== '') {
+                    $paths[] = trim($source);
+                }
+            }
+        }
+
+        foreach ($paths as $path) {
+            $resolved = str_starts_with($path, '/')
+                ? $path
+                : rtrim($this->projectRoot, '/') . '/' . $path;
+
+            if (is_dir($resolved)) {
+                $directory = realpath($resolved) ?: $resolved;
+                $iterator = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator(
+                        $directory,
+                        \FilesystemIterator::SKIP_DOTS,
+                    ),
+                );
+                $found = [];
+
+                foreach ($iterator as $file) {
+                    if (!$file->isFile() || $file->getExtension() !== 'php') {
+                        continue;
+                    }
+
+                    $pathname = $file->getPathname();
+                    $parts = explode(DIRECTORY_SEPARATOR, $pathname);
+
+                    if (array_intersect($parts, [
+                        'vendor',
+                        'dist',
+                        'build',
+                        'build-dir',
+                        '.cyonima',
+                        '.git',
+                        'node_modules',
+                    ]) !== []) {
+                        continue;
+                    }
+
+                    $found[] = $pathname;
+                }
+
+                sort($found);
+
+                foreach ($found as $file) {
+                    $files[$file] = true;
+                }
+                continue;
+            }
+
+            if (is_file($resolved)) {
+                $files[realpath($resolved) ?: $resolved] = true;
+                continue;
+            }
+
+            throw new CompilerException('Source déclarée introuvable : ' . $path);
+        }
+
+        return array_keys($files);
+    }
+
+    private function relativePath(string $path): string
+    {
+        $root = rtrim($this->projectRoot, '/') . '/';
+
+        return str_starts_with($path, $root) ? substr($path, strlen($root)) : $path;
+    }
+
     private function write(string $path, string $content): void
     {
         if (file_put_contents($path, $content) === false) {
@@ -235,9 +375,19 @@ final class PhpCompiler
         $count = count($tokens);
 
         for ($index = 0; $index < $count - 1; $index++) {
-            if ($tokens[$index]->type === TokenType::NewKeyword
-                && $tokens[$index + 1]->type === TokenType::Identifier
-                && in_array($tokens[$index + 1]->literal, $classes, true)) {
+            if ($tokens[$index]->type !== TokenType::NewKeyword) {
+                continue;
+            }
+
+            $next = $index + 1;
+
+            if ($tokens[$next]->type === TokenType::Backslash) {
+                $next++;
+            }
+
+            if (isset($tokens[$next])
+                && $tokens[$next]->type === TokenType::Identifier
+                && in_array($tokens[$next]->literal, $classes, true)) {
                 return true;
             }
         }

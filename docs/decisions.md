@@ -614,6 +614,31 @@ Trois écarts assumés par rapport au miroir strict du C :
   les tableaux nullables, les éléments nullables et les signatures de
   closures/callables nullables restent hors périmètre.
 
+59. **Namespaces et compilation multi-fichiers** : `namespace`, `use` et
+  alias sont supportés, avec résolution relative au namespace/imports et noms
+  absolus. Les fonctions non qualifiées tentent le namespace courant puis le
+  global, ce qui préserve les builtins, les modules natifs et les fonctions
+  globales. Les déclarations reçoivent un nom pleinement qualifié ; le backend
+  C encode `\` en `__` (`App\Models\User` → `CyObj_App__Models__User`). Un
+  projet peut lister des fichiers/dossiers dans `.cyonima/compiler.json`
+  (`sources`) ou via `--sources` ; l’entrée reste `--php`. Les fichiers
+  non-entry ne peuvent contenir que des déclarations, le code exécutable
+  non-entry est refusé. La découverte est statique à la compilation : pas
+  d’autoload runtime, pas de Composer, pas de `require`/`include`. Les
+  namespaces multiples par fichier, les namespaces avec accolades, `use
+  function`/`use const` et `use` groupé restent hors périmètre.
+
+60. **JSON natif** : `json_encode` est un builtin dispatché à la compilation
+  selon le type statique (scalaires, `?string`, listes/tables de scalaires,
+  tableau vide, `null`), avec échappement complet des chaînes. Le décodage est
+  typé : `json_decode_int/float/bool/string`, `json_decode_array_*` et
+  `json_decode_map_*`, car le langage n’a pas de `mixed`. Le runtime contient
+  un encodeur JSON (buffer malloc/realloc, copie finale dans le tas managé) et
+  un parseur plat avec échappements `\uXXXX` et paires de substitution. Une
+  erreur de syntaxe ou de type lève une exception `string` propagée par le
+  mécanisme existant. Les objets, closures, tableaux d’objets, structures
+  imbriquées et le décodage non typé restent hors périmètre.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

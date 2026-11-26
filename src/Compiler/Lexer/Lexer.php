@@ -206,6 +206,7 @@ final class Lexer
         $lexeme = substr($this->source, $start, $this->position - $start);
         $type = match (strtolower($lexeme)) {
             'function' => TokenType::Function,
+            'namespace' => TokenType::NamespaceKeyword,
             'fn' => TokenType::FnKeyword,
             'use' => TokenType::UseKeyword,
             'class' => TokenType::ClassKeyword,
@@ -474,6 +475,7 @@ final class Lexer
             '=' => TokenType::Assign,
             '&' => TokenType::Ampersand,
             '?' => TokenType::Question,
+            '\\' => TokenType::Backslash,
             '<' => TokenType::Less,
             '>' => TokenType::Greater,
             '!' => TokenType::Bang,

@@ -2449,7 +2449,23 @@ final class SemanticAnalyzer
             return 'bool';
         }
 
-        $builtin = $this->builtin($expression->name);
+        $resolvedName = $expression->name;
+
+        if ($expression->namespace !== null
+            && $expression->namespace !== ''
+            && !str_contains($expression->name, '\\')) {
+            $candidate = $expression->namespace . '\\' . $expression->name;
+
+            if (isset($functions[$candidate]) || $this->builtin($candidate) !== null) {
+                $resolvedName = $candidate;
+            } elseif (!isset($functions[$expression->name])
+                && $this->builtin($expression->name) === null) {
+                $resolvedName = $candidate;
+            }
+        }
+
+        $expression->resolvedName = $resolvedName;
+        $builtin = $this->builtin($resolvedName);
 
         if ($builtin !== null) {
             $arguments = array_map(
@@ -2504,6 +2520,15 @@ final class SemanticAnalyzer
                             "ligne {$expression->line} : {$expression->name} attend un tableau, reçu {$arguments[$index]}",
                         );
                     }
+                    continue;
+                }
+
+                if ($expected === 'json') {
+                    $this->requireJsonEncodable(
+                        $arguments[$index],
+                        $expression->line,
+                        $expression->name,
+                    );
                     continue;
                 }
 
@@ -2571,13 +2596,13 @@ final class SemanticAnalyzer
             return $expression->type;
         }
 
-        if (!isset($functions[$expression->name])) {
+        if (!isset($functions[$resolvedName])) {
             throw new CompilerException(
-                "ligne {$expression->line} : fonction inconnue : {$expression->name}",
+                "ligne {$expression->line} : fonction inconnue : {$resolvedName}",
             );
         }
 
-        $function = $functions[$expression->name];
+        $function = $functions[$resolvedName];
         $parameters = array_values($function->params);
 
         if (count($expression->arguments) !== count($parameters)) {
@@ -3081,6 +3106,44 @@ final class SemanticAnalyzer
         $expression->type = $expected;
 
         return true;
+    }
+
+    private function requireJsonEncodable(string $type, int $line, string $context): void
+    {
+        if ($type === 'null') {
+            return;
+        }
+
+        $effective = $this->unwrapNullable($type);
+
+        if (in_array($effective, ['int', 'float', 'bool', 'string'], true)) {
+            if ($this->isNullableType($type) && $effective !== 'string') {
+                throw new CompilerException(
+                    "ligne {$line} : {$context} ne supporte pas une valeur nullable de type {$type}",
+                );
+            }
+
+            return;
+        }
+
+        if ($effective === 'array') {
+            return;
+        }
+
+        if ($this->isArrayType($effective)) {
+            $element = $this->isMapType($effective)
+                ? $this->mapValueType($effective)
+                : $this->arrayElementType($effective);
+
+            if ($element !== null
+                && in_array($element, ['int', 'float', 'bool', 'string'], true)) {
+                return;
+            }
+        }
+
+        throw new CompilerException(
+            "ligne {$line} : {$context} ne supporte pas le type {$type}",
+        );
     }
 
     private function requireType(string $actual, string $expected, int $line, string $context): void
@@ -3633,6 +3696,19 @@ final class SemanticAnalyzer
             'strval' => ['params' => ['scalar'], 'return' => 'string'],
             'abs' => ['params' => ['numeric'], 'return' => 'same'],
             'count' => ['params' => ['array'], 'return' => 'int'],
+            'json_encode' => ['params' => ['json'], 'return' => 'string'],
+            'json_decode_int' => ['params' => ['string'], 'return' => 'int'],
+            'json_decode_float' => ['params' => ['string'], 'return' => 'float'],
+            'json_decode_bool' => ['params' => ['string'], 'return' => 'bool'],
+            'json_decode_string' => ['params' => ['string'], 'return' => 'string'],
+            'json_decode_array_int' => ['params' => ['string'], 'return' => 'array<int>'],
+            'json_decode_array_float' => ['params' => ['string'], 'return' => 'array<float>'],
+            'json_decode_array_bool' => ['params' => ['string'], 'return' => 'array<bool>'],
+            'json_decode_array_string' => ['params' => ['string'], 'return' => 'array<string>'],
+            'json_decode_map_int' => ['params' => ['string'], 'return' => 'array<string,int>'],
+            'json_decode_map_float' => ['params' => ['string'], 'return' => 'array<string,float>'],
+            'json_decode_map_bool' => ['params' => ['string'], 'return' => 'array<string,bool>'],
+            'json_decode_map_string' => ['params' => ['string'], 'return' => 'array<string,string>'],
             'ui_init' => ['params' => ['string'], 'return' => 'void'],
             'ui_window' => ['params' => ['string', 'int', 'int'], 'return' => 'int'],
             'ui_box' => ['params' => ['bool', 'int'], 'return' => 'int'],

@@ -1454,6 +1454,7 @@ final class PhpCGenerator
             'count' => $this->isMapType($instruction->arguments[0]->type ?? '')
                 ? 'cy_map_count(' . ($arguments[0] ?? 'NULL') . ')'
                 : 'cy_array_count(' . ($arguments[0] ?? 'NULL') . ')',
+            'json_encode' => $this->jsonEncodeExpression($instruction->arguments[0] ?? null),
             'ui_init' => 'cy_ui_init(' . ($arguments[0] ?? '""') . ')',
             'ui_window' => 'cy_ui_window(' . implode(', ', $arguments) . ')',
             'ui_box' => 'cy_ui_box(' . implode(', ', $arguments) . ')',
@@ -1487,6 +1488,38 @@ final class PhpCGenerator
             default => $this->functionName($instruction->name)
                 . '(' . implode(', ', $arguments) . ')',
         };
+    }
+
+    private function jsonEncodeExpression(?Operand $operand): string
+    {
+        if ($operand === null) {
+            return '"null"';
+        }
+
+        $type = $this->unwrapNullableType($operand->type);
+        $value = $this->operand($operand);
+
+        if ($type === 'null') {
+            return '"null"';
+        }
+
+        if ($type === 'int' || $type === 'float' || $type === 'bool') {
+            return 'cy_json_encode_' . $type . '(' . $value . ')';
+        }
+
+        if ($type === 'string') {
+            return 'cy_json_encode_string_value(' . $value . ')';
+        }
+
+        if ($this->isListType($type)) {
+            return 'cy_json_encode_array(' . $value . ')';
+        }
+
+        if ($this->isMapType($type)) {
+            return 'cy_json_encode_map(' . $value . ')';
+        }
+
+        throw new CompilerException('type non encodable en JSON : ' . $operand->type);
     }
 
     private function conversion(string $prefix, ?Operand $operand): string
@@ -1873,7 +1906,8 @@ final class PhpCGenerator
 
     private function identifier(string $name): string
     {
-        $identifier = preg_replace('/[^A-Za-z0-9_]/', '_', $name) ?? 'value';
+        $identifier = str_replace('\\', '__', $name);
+        $identifier = preg_replace('/[^A-Za-z0-9_]/', '_', $identifier) ?? 'value';
 
         if ($identifier === '' || ctype_digit($identifier[0])) {
             $identifier = '_' . $identifier;

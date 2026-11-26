@@ -82,6 +82,17 @@ final class FileBrowser extends Widget
         return count($this->rows);
     }
 
+    public function firstFileIndex(): ?int
+    {
+        foreach ($this->entries as $index => $entry) {
+            if (!$entry['directory']) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
     /** Simule un clic sur une ligne (même chemin que GTK : row-activated). */
     public function activateRow(int $index): void
     {

@@ -20,6 +20,7 @@ enum TokenType: string
     case Null = 'null';
 
     case Function = 'function';
+    case NamespaceKeyword = 'namespace';
     case FnKeyword = 'fn';
     case UseKeyword = 'use';
     case ClassKeyword = 'class';
@@ -69,6 +70,7 @@ enum TokenType: string
     case Assign = 'assign';
     case Ampersand = 'ampersand';
     case Question = 'question';
+    case Backslash = 'backslash';
     case Equal = 'equal';
     case NotEqual = 'not-equal';
     case Identical = 'identical';

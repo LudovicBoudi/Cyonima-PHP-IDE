@@ -360,10 +360,38 @@ bin/cyonima-compile --project=./mon-projet --php=src/programme.php --emit=elf
 # Application GTK4 native (ui_*)
 bin/cyonima-compile --project=./mon-projet --php=examples/native-ui.php --emit=elf
 
+# Projet multi-fichiers avec namespaces
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --sources=src/Models --sources=src/Services --emit=elf
+
 # Empaquetage direct d’un projet compilé
 bin/cyonima-compile --project=./mon-projet --php=src/main.php --package=appimage
 bin/cyonima-compile --project=./mon-projet --php=src/main.php --package=flatpak
 ```
+
+Un projet peut déclarer ses sources dans `.cyonima/compiler.json` :
+
+```json
+{
+  "sources": ["src/Contracts", "src/Models", "src/Services"]
+}
+```
+
+Les fichiers non-entry doivent contenir uniquement des déclarations. Voir
+`examples/native-namespaces/`.
+
+Le JSON est natif :
+
+```php
+echo json_encode(['a' => 1, 'b' => 2]);
+
+$table = json_decode_map_int('{"a": 1, "b": 2}');
+$list = json_decode_array_string('["a", "b"]');
+```
+
+`json_encode` est dispatché à la compilation (scalaires, tableaux/tables de
+scalaires). Le décodage est typé via `json_decode_int`, `json_decode_array_*`,
+`json_decode_map_*`, etc. Voir `examples/native-json.php`.
 
 Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
 typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, `switch`, `match`,
@@ -376,8 +404,9 @@ paramètres/retours/propriétés, les closures et arrow functions avec capture
 par référence `use (&$x)`, les tableaux
 indexés homogènes, les tables associatives `string => valeur`, les collections
 d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
-`?string`, `?Classe`, `?Interface`, `?callable`, les signatures annotées via
-PHPDoc avec copie à l’appel, l’interpolation
+`?string`, `?Classe`, `?Interface`, `?callable`, les namespaces, les imports et
+la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, les
+signatures annotées via PHPDoc avec copie à l’appel, l’interpolation
 de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
 `floatval`, `strval`, `abs`, `count` et les modules natifs SQLite, libcurl et
 libssh2.

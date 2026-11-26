@@ -119,6 +119,7 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 |---|---|
 | Balise | `<?php`, fichiers `.php` |
 | Types | `int`, `float`, `bool`, `string`, `void`, `array` annoté, `?string`, `?Classe`, `?Interface`, `?callable` |
+| Namespaces | `namespace`, `use`, alias, résolution des noms, multi-fichiers |
 | Variables | `$nom`, affectation simple |
 | Littéraux | entiers, flottants, chaînes, `true`, `false`, `null` |
 | Chaînes | concaténation `.`, interpolation `"Bonjour $nom"` et `"{$nom}"` |
@@ -139,7 +140,7 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Closures | `function (...) use (...)` / `use (&$x)` et `fn (...) => ...`, appels `$fn(...)` |
 | Fonctions | déclaration typée, paramètres, retour, appels |
 | Sortie | `echo` multi-arguments |
-| Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count` |
+| Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`, JSON typé |
 | Modules natifs | SQLite, libcurl et libssh2 (`sqlite_*`, `curl_*`, `ssh2_*`) |
 | Packaging natif | `--package=appimage\|flatpak` |
 | Analyse | types, portée, affectation définie sur tous les chemins, retours exhaustifs |
@@ -607,6 +608,9 @@ ligne :
   d’interface, valeurs par défaut de propriétés statiques ;
 - `?int`, `?float`, `?bool`, `?array`, `array<?T>` et les signatures de
   closures/callables nullables ;
+- plusieurs namespaces par fichier, namespaces avec accolades, `use function`,
+  `use const`, `use` groupé, autoload Composer et `require`/`include` ;
+- `json_encode` d’objets/structures imbriquées et `json_decode` non typé ;
 - appel explicite à `__construct` hors `parent::`, contravariance des
   paramètres, valeurs par défaut de propriétés, `clone`, `instanceof` ;
 - capture de `$this`, closures `static`, paramètres `&$x` ;
@@ -762,6 +766,128 @@ Limites actuelles :
 
 Un exemple complet est fourni dans
 [`examples/native-nullable.php`](../examples/native-nullable.php).
+
+### Namespaces et multi-fichiers
+
+```php
+<?php
+namespace App\Models;
+
+use App\Contracts\Named;
+
+class User implements Named {
+    public function name(): string {
+        return 'alice';
+    }
+}
+```
+
+- une seule déclaration `namespace` par fichier, avant les `use` et les
+  déclarations ;
+- `use App\Models\User;`, `use App\Models\User as Member;` ;
+- noms qualifiés `App\Models\User`, noms absolus `\App\Models\User` ;
+- résolution relative au namespace courant et aux imports ;
+- un nom de fonction non qualifié essaie d’abord le namespace courant, puis
+  le global (`strlen`, fonctions natives, modules) ;
+- `\strlen()` force la fonction globale ; une fonction locale peut masquer un
+  builtin ;
+- `self`, `parent`, `static` restent réservés ;
+- les classes de la façade UI sont globales : `use Application;`,
+  `use Window;`, `use Box;`, etc. ;
+- les noms C encodent le namespace : `App\Models\User` →
+  `CyObj_App__Models__User`.
+
+#### Compilation multi-fichiers
+
+```json
+// .cyonima/compiler.json
+{
+  "sources": ["src/Contracts", "src/Models", "src/Services"]
+}
+```
+
+```bash
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --emit=elf
+
+# ou explicitement
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --sources=src/Models --sources=src/Services --emit=elf
+```
+
+- les entrées de `sources` peuvent être des fichiers ou des dossiers ;
+- les dossiers sont scannés récursivement (`*.php`), en ignorant `vendor`,
+  `dist`, `build`, `.git`, `.cyonima`, `node_modules` ;
+- le fichier d’entrée est toujours compilé ; il peut aussi être listé ;
+- les fichiers non-entry doivent contenir **uniquement des déclarations** ;
+  du code exécutable non-entry est refusé ;
+- les déclarations de tous les fichiers sont fusionnées avant l’analyse ;
+- les doublons de classes/fonctions/interfaces sont refusés ;
+- il n’y a pas d’autoload à l’exécution : la découverte est statique à la
+  compilation.
+
+Limites actuelles :
+
+- un seul namespace par fichier, pas de namespace avec accolades ;
+- `use function`, `use const` et `use` groupé non supportés ;
+- pas d’autoload Composer, pas de `require`/`include` ;
+- les gestionnaires UI passés sous forme de chaîne ne sont pas résolus dans
+  un namespace ; préférer les closures.
+
+Un exemple complet est fourni dans
+[`examples/native-namespaces/`](../examples/native-namespaces).
+
+### JSON natif
+
+L’encodage est dispatché à la compilation selon le type statique :
+
+```php
+echo json_encode(42);                       // 42
+echo json_encode("a\"b");                   // "a\"b"
+echo json_encode([1, 2, 3]);                // [1,2,3]
+echo json_encode(["a" => 1, "b" => 2]);     // {"a":1,"b":2}
+echo json_encode(null);                     // null
+```
+
+Le décodage est typé, car le compilateur n’a pas de type `mixed` :
+
+```php
+$n = json_decode_int('42');
+$f = json_decode_float('2.5');
+$b = json_decode_bool('true');
+$s = json_decode_string('"hello"');
+
+$list = json_decode_array_int('[1, 2, 3]');
+$table = json_decode_map_string('{"a": "x"}');
+```
+
+Fonctions :
+
+```text
+json_encode
+json_decode_int / float / bool / string
+json_decode_array_int / float / bool / string
+json_decode_map_int / float / bool / string
+```
+
+- `json_encode` accepte scalaires, `?string`, tableaux/tables de scalaires,
+  tableau vide et `null` ;
+- les chaînes sont échappées (`\"`, `\\`, `\n`, `\t`, Unicode) ;
+- le décodage supporte les échappements JSON et `\uXXXX` (y compris les
+  paires de substitution) ;
+- un JSON invalide ou un type inattendu lève une exception `string` ;
+- tableaux/tables vides décodés en conteneurs vides ;
+- les valeurs texte décodées sont copiées dans le tas managé.
+
+Limites actuelles :
+
+- `json_encode` refuse les objets, closures, tableaux d’objets et structures
+  imbriquées ;
+- pas de `json_decode` non typé ni de `mixed` ;
+- les types nullables ne sont décodés que via `?string` à l’encodage.
+
+Un exemple complet est fourni dans
+[`examples/native-json.php`](../examples/native-json.php).
 
 ### Modèle mémoire
 
@@ -956,6 +1082,7 @@ Options :
 | `--emit=c\|elf` | code C seul, ou binaire natif |
 | `--output=PATH` | sortie du binaire |
 | `--module=NAME` | active un module natif (`sqlite`, `curl`, `ssh2`), répétable |
+| `--sources=PATH` | fichier ou dossier source supplémentaire, répétable |
 | `--package=appimage\|flatpak` | compile puis empaquette directement l’application |
 | `--help` | aide |
 
