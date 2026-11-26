@@ -380,6 +380,10 @@ final class PhpCGenerator
 
     private function staticDefaultValue(string $type): string
     {
+        if ($this->isNullableType($type)) {
+            return 'NULL';
+        }
+
         if ($this->isCallableType($type)
             || isset($this->classes[$type])
             || $this->isListType($type)
@@ -507,6 +511,8 @@ final class PhpCGenerator
 
     private function isGcReference(string $type): bool
     {
+        $type = $this->unwrapNullableType($type);
+
         return $type === 'string'
             || $this->isListType($type)
             || $this->isMapType($type)
@@ -789,6 +795,8 @@ final class PhpCGenerator
 
     private function rootKind(string $type): ?string
     {
+        $type = $this->unwrapNullableType($type);
+
         if ($type === 'string') {
             return 'CY_ROOT_STRING';
         }
@@ -914,7 +922,8 @@ final class PhpCGenerator
 
             if ($instruction->elementType !== null) {
                 foreach ($instruction->elements as $element) {
-                    $lines[] = 'cy_array_push_' . $instruction->elementType
+                    $lines[] = 'cy_array_push_'
+                        . $this->arrayElementSuffix($instruction->elementType)
                         . '(' . $this->operand($instruction->result) . ', '
                         . $this->operand($element) . ');';
                 }
@@ -929,19 +938,21 @@ final class PhpCGenerator
 
         if ($instruction instanceof IndexInstruction) {
             return $indent . $this->operand($instruction->result)
-                . ' = cy_array_get_' . $instruction->elementType
+                . ' = cy_array_get_' . $this->arrayElementSuffix($instruction->elementType)
                 . '(' . $this->operand($instruction->array) . ', '
                 . $this->operand($instruction->index) . ');';
         }
 
         if ($instruction instanceof AppendInstruction) {
-            return $indent . 'cy_array_push_' . $instruction->elementType
+            return $indent . 'cy_array_push_'
+                . $this->arrayElementSuffix($instruction->elementType)
                 . '(' . $this->operand($instruction->array) . ', '
                 . $this->operand($instruction->value) . ');';
         }
 
         if ($instruction instanceof SetIndexInstruction) {
-            return $indent . 'cy_array_set_' . $instruction->elementType
+            return $indent . 'cy_array_set_'
+                . $this->arrayElementSuffix($instruction->elementType)
                 . '(' . $this->operand($instruction->array) . ', '
                 . $this->operand($instruction->index) . ', '
                 . $this->operand($instruction->value) . ');';
@@ -951,7 +962,8 @@ final class PhpCGenerator
             $lines = [];
 
             foreach ($instruction->entries as [$key, $value]) {
-                $lines[] = 'cy_map_set_string_' . $instruction->valueType
+                $lines[] = 'cy_map_set_string_'
+                    . $this->arrayElementSuffix($instruction->valueType)
                     . '(' . $this->operand($instruction->result) . ', '
                     . $this->operand($key) . ', '
                     . $this->operand($value) . ');';
@@ -966,13 +978,15 @@ final class PhpCGenerator
 
         if ($instruction instanceof MapIndexInstruction) {
             return $indent . $this->operand($instruction->result)
-                . ' = cy_map_get_string_' . $instruction->valueType
+                . ' = cy_map_get_string_'
+                . $this->arrayElementSuffix($instruction->valueType)
                 . '(' . $this->operand($instruction->map) . ', '
                 . $this->operand($instruction->key) . ');';
         }
 
         if ($instruction instanceof SetMapIndexInstruction) {
-            return $indent . 'cy_map_set_string_' . $instruction->valueType
+            return $indent . 'cy_map_set_string_'
+                . $this->arrayElementSuffix($instruction->valueType)
                 . '(' . $this->operand($instruction->map) . ', '
                 . $this->operand($instruction->key) . ', '
                 . $this->operand($instruction->value) . ');';
@@ -986,7 +1000,8 @@ final class PhpCGenerator
 
         if ($instruction instanceof MapValueInstruction) {
             return $indent . $this->operand($instruction->result)
-                . ' = cy_map_value_' . $instruction->valueType
+                . ' = cy_map_value_'
+                . $this->arrayElementSuffix($instruction->valueType)
                 . '(' . $this->operand($instruction->map) . ', '
                 . $this->operand($instruction->index) . ');';
         }
@@ -1089,18 +1104,23 @@ final class PhpCGenerator
                     $instruction->parameterTypes[$index] ?? $argument->type,
                 );
             }
+            $closure = $this->operand($instruction->closure);
             $call = '((' . $this->cType($instruction->returnType) . ' (*)('
                 . implode(', ', $parameters) . ')) '
-                . $this->operand($instruction->closure) . '->invoke)('
-                . $this->operand($instruction->closure)
+                . $closure . '->invoke)('
+                . $closure
                 . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
                 . ')';
+            $statement = $instruction->result === null
+                ? $call . ';'
+                : $this->operand($instruction->result) . ' = ' . $call . ';';
 
-            if ($instruction->result === null) {
-                return $indent . $call . ';';
+            if ($this->isNullableType($instruction->closure->type)) {
+                return $indent . 'if (' . $closure . ' == NULL) { cy_throw_exception("appel d’une closure null"); } else { '
+                    . $statement . ' }';
             }
 
-            return $indent . $this->operand($instruction->result) . ' = ' . $call . ';';
+            return $indent . $statement;
         }
 
         if ($instruction instanceof ParentCallInstruction) {
@@ -1185,26 +1205,41 @@ final class PhpCGenerator
         }
 
         if ($instruction instanceof PropertyGetInstruction) {
+            $object = $this->operand($instruction->object);
+            $access = $object . '->' . $this->property($instruction->property);
+
+            if ($this->isNullableType($instruction->object->type)) {
+                return $indent . 'if (' . $object . ' == NULL) { cy_throw_exception("accès à une propriété sur null"); } else { '
+                    . $this->operand($instruction->result) . ' = ' . $access . '; }';
+            }
+
             return $indent . $this->operand($instruction->result)
-                . ' = ' . $this->operand($instruction->object)
-                . '->' . $this->property($instruction->property) . ';';
+                . ' = ' . $access . ';';
         }
 
         if ($instruction instanceof PropertySetInstruction) {
             $propertyType = null;
 
-            if (isset($this->classes[$instruction->object->type])) {
-                $propertyType = $this->classes[$instruction->object->type]
+            $objectClass = $this->unwrapNullableType($instruction->object->type);
+
+            if (isset($this->classes[$objectClass])) {
+                $propertyType = $this->classes[$objectClass]
                     ->properties[$instruction->property] ?? null;
             }
 
             $value = $propertyType !== null
                 ? $this->valueExpression($instruction->value, $propertyType)
                 : $this->operand($instruction->value);
+            $object = $this->operand($instruction->object);
+            $access = $object . '->' . $this->property($instruction->property)
+                . ' = ' . $value;
 
-            return $indent . $this->operand($instruction->object)
-                . '->' . $this->property($instruction->property)
-                . ' = ' . $value . ';';
+            if ($this->isNullableType($instruction->object->type)) {
+                return $indent . 'if (' . $object . ' == NULL) { cy_throw_exception("affectation de propriété sur null"); } else { '
+                    . $access . '; }';
+            }
+
+            return $indent . $access . ';';
         }
 
         if ($instruction instanceof StaticPropertyGetInstruction) {
@@ -1286,11 +1321,16 @@ final class PhpCGenerator
                 . ($arguments === [] ? '' : ', ' . implode(', ', $arguments))
                 . ')';
 
-            if ($instruction->result === null) {
-                return $indent . $call . ';';
+            $statement = $instruction->result === null
+                ? $call . ';'
+                : $this->operand($instruction->result) . ' = ' . $call . ';';
+
+            if ($this->isNullableType($instruction->object->type)) {
+                return $indent . 'if (' . $object . ' == NULL) { cy_throw_exception("appel de méthode sur null"); } else { '
+                    . $statement . ' }';
             }
 
-            return $indent . $this->operand($instruction->result) . ' = ' . $call . ';';
+            return $indent . $statement;
         }
 
         if ($instruction instanceof ExceptionCheckInstruction) {
@@ -1342,6 +1382,31 @@ final class PhpCGenerator
     {
         $left = $this->operand($instruction->left);
         $right = $this->operand($instruction->right);
+        $leftType = $this->unwrapNullableType($instruction->left->type);
+        $rightType = $this->unwrapNullableType($instruction->right->type);
+
+        if (in_array($instruction->operator, ['==', '!=', '===', '!=='], true)
+            && ($instruction->left->type === 'null' || $instruction->right->type === 'null')) {
+            $value = $instruction->left->type === 'null' ? $right : $left;
+            $equal = $instruction->operator === '==' || $instruction->operator === '===';
+            $operator = $equal ? '==' : '!=';
+
+            return '(' . $value . ' ' . $operator . ' NULL)';
+        }
+
+        if (in_array($instruction->operator, ['==', '!=', '===', '!=='], true)
+            && ($leftType === 'string' || $rightType === 'string')) {
+            $nullSafe = $this->isNullableType($instruction->left->type)
+                || $this->isNullableType($instruction->right->type);
+            $equal = $instruction->operator === '==' || $instruction->operator === '===';
+            $expression = $nullSafe
+                ? '(' . $left . ' == NULL || ' . $right . ' == NULL'
+                    . ' ? ' . $left . ' == ' . $right
+                    . ' : strcmp(' . $left . ', ' . $right . ') == 0)'
+                : '(strcmp(' . $left . ', ' . $right . ') == 0)';
+
+            return $equal ? $expression : '(!' . $expression . ')';
+        }
 
         return match ($instruction->operator) {
             '.' => 'cy_string_concat('
@@ -1450,24 +1515,30 @@ final class PhpCGenerator
             return '(void) 0';
         }
 
-        if (isset($this->classes[$operand->type])) {
+        $type = $this->unwrapNullableType($operand->type);
+
+        if ($this->isNullableType($operand->type) && $type !== 'string') {
+            throw new CompilerException('echo d’une valeur nullable non scalaire non supporté');
+        }
+
+        if (isset($this->classes[$type])) {
             throw new CompilerException('echo d’un objet non supporté par le backend C');
         }
 
-        if ($this->isCallableType($operand->type)) {
+        if ($this->isCallableType($type)) {
             throw new CompilerException('echo d’une closure non supporté par le backend C');
         }
 
-        if ($this->isArrayType($operand->type)) {
+        if ($this->isArrayType($type)) {
             throw new CompilerException('echo d’un tableau non supporté par le backend C');
         }
 
-        return 'cy_echo_' . $operand->type . '(' . $this->operand($operand) . ')';
+        return 'cy_echo_' . $type . '(' . $this->operand($operand) . ')';
     }
 
     private function toString(Operand $operand): string
     {
-        if ($operand->type === 'string') {
+        if ($operand->type === 'string' || $operand->type === '?string') {
             return $this->operand($operand);
         }
 
@@ -1475,19 +1546,21 @@ final class PhpCGenerator
             return '""';
         }
 
-        if (isset($this->classes[$operand->type])) {
+        $type = $this->unwrapNullableType($operand->type);
+
+        if (isset($this->classes[$type])) {
             throw new CompilerException('conversion d’un objet en chaîne non supportée');
         }
 
-        if ($this->isCallableType($operand->type)) {
+        if ($this->isCallableType($type)) {
             throw new CompilerException('conversion d’une closure en chaîne non supportée');
         }
 
-        if ($this->isArrayType($operand->type)) {
+        if ($this->isArrayType($type)) {
             throw new CompilerException('conversion d’un tableau en chaîne non supportée');
         }
 
-        return 'cy_string_from_' . $operand->type . '(' . $this->operand($operand) . ')';
+        return 'cy_string_from_' . $type . '(' . $this->operand($operand) . ')';
     }
 
     private function operand(Operand $operand): string
@@ -1567,6 +1640,8 @@ final class PhpCGenerator
 
     private function cType(string $type): string
     {
+        $type = $this->unwrapNullableType($type);
+
         if ($this->isCallableType($type)) {
             return 'CyClosure *';
         }
@@ -1597,6 +1672,10 @@ final class PhpCGenerator
 
     private function defaultValue(string $type): string
     {
+        if ($this->isNullableType($type)) {
+            return 'NULL';
+        }
+
         if ($this->isCallableType($type)) {
             return 'NULL';
         }
@@ -1625,17 +1704,32 @@ final class PhpCGenerator
     private function isListType(string $type): bool
     {
         return $type === 'array'
-            || preg_match('/^array<(int|float|bool|string)>$/', $type) === 1;
+            || preg_match('/^array<([^,<>]+)>$/', $type) === 1;
     }
 
     private function isMapType(string $type): bool
     {
-        return preg_match('/^array<string,(int|float|bool|string)>$/', $type) === 1;
+        return preg_match('/^array<string,([^,<>]+)>$/', $type) === 1;
     }
 
     private function isArrayType(string $type): bool
     {
         return $this->isListType($type) || $this->isMapType($type);
+    }
+
+    private function isNullableType(string $type): bool
+    {
+        return str_starts_with($type, '?');
+    }
+
+    private function unwrapNullableType(string $type): string
+    {
+        return $this->isNullableType($type) ? substr($type, 1) : $type;
+    }
+
+    private function arrayElementSuffix(string $type): string
+    {
+        return isset($this->classes[$type]) ? 'object' : $type;
     }
 
     private function functionName(string $name): string
@@ -1722,14 +1816,16 @@ final class PhpCGenerator
     private function castOperand(Operand $operand, string $targetType): string
     {
         $value = $this->operand($operand);
+        $sourceType = $this->unwrapNullableType($operand->type);
+        $targetType = $this->unwrapNullableType($targetType);
 
-        if ($targetType === $operand->type) {
+        if ($targetType === $sourceType) {
             return $value;
         }
 
         if (isset($this->classes[$targetType])
-            && isset($this->classes[$operand->type])
-            && $this->isAssignable($operand->type, $targetType)) {
+            && isset($this->classes[$sourceType])
+            && $this->isAssignable($sourceType, $targetType)) {
             if ($this->classes[$targetType]->isInterface) {
                 return '(CyObjectHeader *) ' . $value;
             }

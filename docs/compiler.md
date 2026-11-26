@@ -118,13 +118,13 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Famille | Support |
 |---|---|
 | Balise | `<?php`, fichiers `.php` |
-| Types | `int`, `float`, `bool`, `string`, `void`, `array` annoté `array<T>` / `array<string,T>` |
+| Types | `int`, `float`, `bool`, `string`, `void`, `array` annoté, `?string`, `?Classe`, `?Interface`, `?callable` |
 | Variables | `$nom`, affectation simple |
 | Littéraux | entiers, flottants, chaînes, `true`, `false`, `null` |
 | Chaînes | concaténation `.`, interpolation `"Bonjour $nom"` et `"{$nom}"` |
-| Tableaux indexés | homogènes, `[...]`, `array(...)`, `$a[i]`, `$a[]`, `count` |
+| Tableaux indexés | homogènes scalaires ou objets, `[...]`, `array(...)`, `$a[i]`, `$a[]`, `count` |
 | Tableaux associatifs | `['clé' => valeur]`, `$a['clé']`, `foreach` clé/valeur, `count` |
-| Signatures de tableaux | paramètres, retours et propriétés `array<T>`, copie à l’appel |
+| Signatures de tableaux | `array<T>`, `array<string,T>`, `T` scalaire ou classe/interface |
 | Opérateurs | `+ - * / % .`, comparaisons, `===`, `!==`, `&&`, `\|\|`, `!` |
 | Contrôle | `if`, `elseif`, `else`, `while`, `for`, `foreach`, `switch` (fall-through, `break`), `match` |
 | Vérification | `isset($a[$clé])` |
@@ -605,6 +605,8 @@ ligne :
   sont acceptés mais ignorés) ;
 - `static::`, `parent::` statique, méthodes statiques abstraites ou
   d’interface, valeurs par défaut de propriétés statiques ;
+- `?int`, `?float`, `?bool`, `?array`, `array<?T>` et les signatures de
+  closures/callables nullables ;
 - appel explicite à `__construct` hors `parent::`, contravariance des
   paramètres, valeurs par défaut de propriétés, `clone`, `instanceof` ;
 - capture de `$this`, closures `static`, paramètres `&$x` ;
@@ -619,10 +621,10 @@ ligne :
 - générateurs, fibres ;
 - index ou clé absents : le runtime s’arrête avec un message explicite.
 
-Les tableaux indexés sont **homogènes** (`int`, `float`, `bool` ou `string`).
-Les tables associatives utilisent des clés `string` et des valeurs homogènes.
-Une affectation de tableau ou de table associative crée une copie, comme en
-PHP pour les affectations par valeur.
+Les tableaux indexés sont **homogènes** (`int`, `float`, `bool`, `string` ou
+une classe/interface). Les tables associatives utilisent des clés `string` et
+des valeurs homogènes. Une affectation de tableau ou de table associative crée
+une copie, comme en PHP pour les affectations par valeur.
 
 Un tableau vide `[]` est raffiné par le contexte lorsqu’il est affecté à une
 variable annotée, passé à un paramètre typé ou retourné par une fonction
@@ -669,7 +671,29 @@ class Bag {
 }
 ```
 
-- `array<T>` : tableau indexé homogène (`T` scalaire) ;
+`T` peut aussi être une classe ou une interface :
+
+```php
+class User {
+    public string $name;
+}
+
+/**
+ * @param array<User> $users
+ * @return array<string,User>
+ */
+function indexByName(array $users): array {
+    $table = [];
+
+    foreach ($users as $user) {
+        $table[$user->name] = $user;
+    }
+
+    return $table;
+}
+```
+
+- `array<T>` : tableau indexé homogène (`T` scalaire, classe ou interface) ;
 - `array<string,T>` : table associative `string => T` ;
 - annotations acceptées : `@param`, `@return`, `@var` ;
 - l’annotation est obligatoire dans une signature : `array` seul est refusé ;
@@ -677,8 +701,67 @@ class Bag {
 - affectation, passage en argument et retour créent une **copie** : une
   mutation dans la fonction ne modifie pas le tableau de l’appelant ;
 - une propriété tableau est initialisée à un tableau vide par `new` ;
-- les tableaux de tableaux restent refusés, ainsi que les annotations dans
-  les closures et les callables.
+- les collections d’objets sont marquées par le GC, y compris dans les
+  propriétés, propriétés statiques et closures ;
+- `array<Enfant>` est assignable à `array<Parent>` ou `array<Interface>` ;
+- les tableaux de tableaux restent refusés, ainsi que les éléments
+  `callable` et les annotations dans les closures et les callables.
+
+Un exemple complet est fourni dans
+[`examples/native-object-collections.php`](../examples/native-object-collections.php).
+
+### Types nullables
+
+Les types représentés par un pointeur peuvent être nullables :
+
+```php
+function find(bool $present): ?User {
+    if (!$present) {
+        return null;
+    }
+
+    return new User('alice');
+}
+
+function greet(?string $name): string {
+    if ($name === null) {
+        return 'nobody';
+    }
+
+    return 'hello ' . $name;
+}
+```
+
+- supportés : `?string`, `?Classe`, `?Interface`, `?callable(signature)` ;
+- utilisables en paramètres, retours, propriétés instance/statiques et
+  captures de closures ;
+- `null` est assignable/retournable/passable vers un type nullable ;
+- comparaisons `=== null`, `!== null`, `== null`, `!= null` ;
+- comparaison de chaîne nullable avec une chaîne (`===`, `!==`, `==`, `!=`)
+  avec contrôle de null ;
+- concaténation et `echo` d’une chaîne nullable : `null` devient vide ;
+- retour covariant : `Dog` → `?Animal`, `?Dog` → `?Animal` ;
+- une valeur non nullable ne peut pas être affectée à un nullable sans
+  contrôle ; un nullable ne peut pas être affecté à un non-nullable ;
+- l’accès à une propriété, l’appel de méthode ou l’invocation d’une closure
+  nullable compile avec une **garde runtime** : si la valeur est `null`, une
+  exception `string` est levée et peut être capturée ;
+- les propriétés nullables sont initialisées à `NULL`, comme les variables
+  locales et les racines GC.
+
+Limites actuelles :
+
+- `?int`, `?float`, `?bool` ne sont pas supportés (représentation optionnelle
+  non encore définie) ;
+- `?array` et les éléments de tableau nullables (`array<?User>`) sont refusés ;
+- les paramètres/retours de closures et les callables ne peuvent pas encore
+  être nullables ;
+- une variable locale doit provenir d’une expression nullable typée : on ne
+  peut pas encore écrire `$x = null` puis l’affecter plus tard sans type
+  préalable.
+
+Un exemple complet est fourni dans
+[`examples/native-nullable.php`](../examples/native-nullable.php).
 
 ### Modèle mémoire
 

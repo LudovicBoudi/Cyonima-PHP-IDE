@@ -1330,6 +1330,19 @@ final class Parser
     {
         $token = $this->peek();
 
+        if ($this->match(TokenType::Question)) {
+            $question = $this->previous();
+            $inner = $this->parseType();
+
+            if ($inner === 'void' || str_starts_with($inner, '?')) {
+                throw new CompilerException(
+                    "ligne {$question->line} : type nullable invalide : ?{$inner}",
+                );
+            }
+
+            return '?' . $inner;
+        }
+
         if ($token->type === TokenType::Identifier
             && strtolower((string) $token->literal) === 'callable') {
             $this->advance();
@@ -1562,8 +1575,8 @@ final class Parser
     {
         $type = str_replace([' ', "\t"], '', $type);
 
-        if (preg_match('/^array<(int|float|bool|string)>$/', $type) === 1
-            || preg_match('/^array<string,(int|float|bool|string)>$/', $type) === 1) {
+        if (preg_match('/^array<([^,<>]+)>$/', $type) === 1
+            || preg_match('/^array<string,([^,<>]+)>$/', $type) === 1) {
             return $type;
         }
 

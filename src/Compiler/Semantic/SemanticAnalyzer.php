@@ -933,6 +933,19 @@ final class SemanticAnalyzer
             return true;
         }
 
+        if ($this->isNullableType($parent)) {
+            $inner = $this->nullableInnerType($parent);
+
+            return $this->returnTypeIsCovariant(
+                $this->isNullableType($child) ? $this->nullableInnerType($child) : $child,
+                $inner,
+            );
+        }
+
+        if ($this->isNullableType($child)) {
+            return false;
+        }
+
         if (!isset($this->rawTypes[$child]) || !isset($this->rawTypes[$parent])) {
             return false;
         }
@@ -1006,6 +1019,32 @@ final class SemanticAnalyzer
         string $context,
         bool $allowVoid,
     ): void {
+        if ($this->isNullableType($type)) {
+            $inner = $this->nullableInnerType($type);
+
+            if ($inner === 'void' || $inner === 'null' || str_starts_with($inner, '?')) {
+                throw new CompilerException(
+                    "ligne {$line} : type nullable invalide pour {$context} : {$type}",
+                );
+            }
+
+            if ($inner === 'array' || $this->isArrayType($inner)) {
+                throw new CompilerException(
+                    "ligne {$line} : tableau nullable non supporté pour {$context}",
+                );
+            }
+
+            if (in_array($inner, ['int', 'float', 'bool'], true)) {
+                throw new CompilerException(
+                    "ligne {$line} : scalaire nullable non supporté pour {$context} : {$type}",
+                );
+            }
+
+            $this->validateDeclaredType($inner, $line, $context, false);
+
+            return;
+        }
+
         if (in_array($type, ['int', 'float', 'bool', 'string'], true)) {
             return;
         }
@@ -1021,7 +1060,24 @@ final class SemanticAnalyzer
         }
 
         if ($this->isListType($type) || $this->isMapType($type)) {
-            return;
+            $element = $this->isMapType($type)
+                ? $this->mapValueType($type)
+                : $this->arrayElementType($type);
+
+            if ($element === null) {
+                throw new CompilerException(
+                    "ligne {$line} : type de tableau incomplet pour {$context}",
+                );
+            }
+
+            if (in_array($element, ['int', 'float', 'bool', 'string'], true)
+                || isset($this->classes[$element])) {
+                return;
+            }
+
+            throw new CompilerException(
+                "ligne {$line} : type d’élément de tableau non supporté pour {$context} : {$element}",
+            );
         }
 
         if ($this->isCallableType($type)) {
@@ -1069,8 +1125,11 @@ final class SemanticAnalyzer
         if ($statement instanceof EchoStmt) {
             foreach ($statement->expressions as $expression) {
                 $type = $this->analyzeExpr($expression, $scope, $functions);
+                $effective = $this->unwrapNullable($type);
 
-                if ($type !== 'null' && !$this->isScalar($type)) {
+                if ($type !== 'null'
+                    && (!$this->isScalar($effective)
+                        || ($this->isNullableType($type) && $effective !== 'string'))) {
                     throw new CompilerException(
                         "ligne {$expression->line} : echo ne peut pas afficher une valeur de type {$type}",
                     );
@@ -1494,20 +1553,21 @@ final class SemanticAnalyzer
 
         if ($expression instanceof CallableCallExpr) {
             $calleeType = $this->analyzeExpr($expression->callee, $scope, $functions);
+            $callableType = $this->unwrapNullable($calleeType);
 
-            if (!$this->isCallableType($calleeType)) {
+            if (!$this->isCallableType($callableType)) {
                 throw new CompilerException(
                     "ligne {$expression->line} : appel sur {$calleeType}, closure attendue",
                 );
             }
 
-            if ($calleeType === 'callable') {
+            if ($callableType === 'callable') {
                 throw new CompilerException(
                     "ligne {$expression->line} : signature de closure inconnue",
                 );
             }
 
-            $signature = $this->callableSignature($calleeType);
+            $signature = $this->callableSignature($callableType);
             $arguments = array_map(
                 fn (Expr $argument): string => $this->analyzeExpr($argument, $scope, $functions),
                 $expression->arguments,
@@ -1682,18 +1742,19 @@ final class SemanticAnalyzer
 
         if ($expression instanceof PropertyAccessExpr) {
             $objectType = $this->analyzeExpr($expression->object, $scope, $functions);
+            $lookupType = $this->unwrapNullable($objectType);
 
-            if (!$this->isObjectType($objectType)) {
+            if (!$this->isObjectType($lookupType)) {
                 throw new CompilerException(
                     "ligne {$expression->line} : accès -> sur {$objectType}, objet attendu",
                 );
             }
 
-            $class = $this->classes[$objectType];
+            $class = $this->classes[$lookupType];
 
             if (!isset($class->properties[$expression->property])) {
                 throw new CompilerException(
-                    "ligne {$expression->line} : propriété inconnue {$objectType}::\${$expression->property}",
+                    "ligne {$expression->line} : propriété inconnue {$lookupType}::\${$expression->property}",
                 );
             }
 
@@ -1705,18 +1766,19 @@ final class SemanticAnalyzer
 
         if ($expression instanceof PropertyAssignExpr) {
             $objectType = $this->analyzeExpr($expression->object, $scope, $functions);
+            $lookupType = $this->unwrapNullable($objectType);
 
-            if (!$this->isObjectType($objectType)) {
+            if (!$this->isObjectType($lookupType)) {
                 throw new CompilerException(
                     "ligne {$expression->line} : affectation -> sur {$objectType}, objet attendu",
                 );
             }
 
-            $class = $this->classes[$objectType];
+            $class = $this->classes[$lookupType];
 
             if (!isset($class->properties[$expression->property])) {
                 throw new CompilerException(
-                    "ligne {$expression->line} : propriété inconnue {$objectType}::\${$expression->property}",
+                    "ligne {$expression->line} : propriété inconnue {$lookupType}::\${$expression->property}",
                 );
             }
 
@@ -1726,7 +1788,7 @@ final class SemanticAnalyzer
                 $valueType,
                 $propertyType,
                 $expression->line,
-                $objectType . '::$' . $expression->property,
+                $lookupType . '::$' . $expression->property,
             );
             $expression->type = $propertyType;
 
@@ -1833,14 +1895,15 @@ final class SemanticAnalyzer
 
         if ($expression instanceof MethodCallExpr) {
             $objectType = $this->analyzeExpr($expression->object, $scope, $functions);
+            $lookupType = $this->unwrapNullable($objectType);
 
-            if (!$this->isObjectType($objectType)) {
+            if (!$this->isObjectType($lookupType)) {
                 throw new CompilerException(
                     "ligne {$expression->line} : appel de méthode sur {$objectType}, objet attendu",
                 );
             }
 
-            $class = $this->classes[$objectType];
+            $class = $this->classes[$lookupType];
 
             if ($expression->method === '__construct') {
                 throw new CompilerException(
@@ -2001,10 +2064,30 @@ final class SemanticAnalyzer
 
             $valueType = $this->analyzeExpr($expression->value, $scope, $functions);
 
-            if ($valueType === 'void' || $valueType === 'null') {
+            if ($valueType === 'void') {
                 throw new CompilerException(
                     "ligne {$expression->line} : valeur non stockable dans \${$expression->name}",
                 );
+            }
+
+            if ($valueType === 'null') {
+                if (!$scope->has($expression->name)) {
+                    throw new CompilerException(
+                        "ligne {$expression->line} : affectation de null à une variable non typée : \${$expression->name}",
+                    );
+                }
+
+                $existing = (string) $scope->typeOf($expression->name);
+
+                if (!$this->isNullableType($existing)) {
+                    throw new CompilerException(
+                        "ligne {$expression->line} : \${$expression->name} n’est pas nullable",
+                    );
+                }
+
+                $expression->type = $existing;
+
+                return $existing;
             }
 
             if ($scope->has($expression->name)) {
@@ -2036,7 +2119,7 @@ final class SemanticAnalyzer
             foreach ($expression->elements as $item) {
                 $type = $this->analyzeExpr($item->value, $scope, $functions);
 
-                if ($this->isArrayType($type) || $this->isObjectType($type) || $this->isCallableType($type) || $type === 'void' || $type === 'null') {
+                if ($this->isArrayType($type) || $this->isCallableType($type) || $type === 'void' || $type === 'null') {
                     throw new CompilerException(
                         "ligne {$item->value->line} : élément de tableau non scalaire : {$type}",
                     );
@@ -2119,7 +2202,7 @@ final class SemanticAnalyzer
 
             $valueType = $this->analyzeExpr($expression->value, $scope, $functions);
 
-            if ($this->isArrayType($valueType) || $this->isObjectType($valueType) || $this->isCallableType($valueType) || $valueType === 'void' || $valueType === 'null') {
+            if ($this->isArrayType($valueType) || $this->isCallableType($valueType) || $valueType === 'void' || $valueType === 'null') {
                 throw new CompilerException(
                     "ligne {$expression->line} : valeur de tableau non scalaire : {$valueType}",
                 );
@@ -2144,7 +2227,7 @@ final class SemanticAnalyzer
             $indexType = $this->analyzeExpr($expression->index, $scope, $functions);
             $valueType = $this->analyzeExpr($expression->value, $scope, $functions);
 
-            if ($this->isArrayType($valueType) || $this->isObjectType($valueType) || $this->isCallableType($valueType) || $valueType === 'void' || $valueType === 'null') {
+            if ($this->isArrayType($valueType) || $this->isCallableType($valueType) || $valueType === 'void' || $valueType === 'null') {
                 throw new CompilerException(
                     "ligne {$expression->line} : valeur de tableau non scalaire : {$valueType}",
                 );
@@ -2229,6 +2312,13 @@ final class SemanticAnalyzer
         $left = $this->analyzeExpr($expression->left, $scope, $functions);
         $right = $this->analyzeExpr($expression->right, $scope, $functions);
         $operator = $expression->operator;
+
+        if (in_array($operator, ['===', '!==', '==', '!='], true)
+            && ($left === 'null' || $right === 'null')) {
+            $expression->type = 'bool';
+
+            return 'bool';
+        }
 
         if ($this->isArrayType($left) || $this->isArrayType($right)) {
             throw new CompilerException(
@@ -2923,8 +3013,8 @@ final class SemanticAnalyzer
 
     private function concatenation(string $left, string $right, int $line): string
     {
-        $this->requireScalar($left, $line, '.');
-        $this->requireScalar($right, $line, '.');
+        $this->requireScalar($this->unwrapNullable($left), $line, '.');
+        $this->requireScalar($this->unwrapNullable($right), $line, '.');
 
         return 'string';
     }
@@ -2942,8 +3032,11 @@ final class SemanticAnalyzer
 
     private function equality(string $left, string $right, int $line, string $operator): string
     {
+        $leftValue = $this->unwrapNullable($left);
+        $rightValue = $this->unwrapNullable($right);
+
         if ($operator === '===' || $operator === '!==') {
-            if ($left !== $right) {
+            if ($leftValue !== $rightValue) {
                 throw new CompilerException(
                     "ligne {$line} : {$operator} attend deux types identiques, reçu {$left} et {$right}",
                 );
@@ -2952,7 +3045,8 @@ final class SemanticAnalyzer
             return 'bool';
         }
 
-        if ($left === $right || ($this->isNumeric($left) && $this->isNumeric($right))) {
+        if ($leftValue === $rightValue
+            || ($this->isNumeric($leftValue) && $this->isNumeric($rightValue))) {
             return 'bool';
         }
 
@@ -3024,6 +3118,22 @@ final class SemanticAnalyzer
 
     private function assignType(string $existing, string $valueType, int $line, string $name): string
     {
+        if ($this->isNullableType($existing)) {
+            if ($this->isAssignable($valueType, $existing)) {
+                return $existing;
+            }
+
+            throw new CompilerException(
+                "ligne {$line} : \${$name} est de type {$existing}, valeur {$valueType} refusée",
+            );
+        }
+
+        if ($valueType === 'null') {
+            throw new CompilerException(
+                "ligne {$line} : \${$name} n’est pas nullable",
+            );
+        }
+
         if ($existing === 'callable') {
             if ($this->isCallableType($valueType)) {
                 return 'callable';
@@ -3050,6 +3160,10 @@ final class SemanticAnalyzer
             }
 
             if ($valueType === 'array' && $this->isListType($existing)) {
+                return $existing;
+            }
+
+            if ($this->isAssignable($valueType, $existing)) {
                 return $existing;
             }
 
@@ -3107,6 +3221,16 @@ final class SemanticAnalyzer
             return 'float';
         }
 
+        if (isset($this->classes[$current]) && isset($this->classes[$type])) {
+            if ($this->isAssignable($current, $type)) {
+                return $type;
+            }
+
+            if ($this->isAssignable($type, $current)) {
+                return $current;
+            }
+        }
+
         throw new CompilerException(
             "ligne {$line} : tableau hétérogène : {$current} et {$type}",
         );
@@ -3115,12 +3239,12 @@ final class SemanticAnalyzer
     private function isListType(string $type): bool
     {
         return $type === 'array'
-            || preg_match('/^array<(int|float|bool|string)>$/', $type) === 1;
+            || preg_match('/^array<([^,<>]+)>$/', $type) === 1;
     }
 
     private function isMapType(string $type): bool
     {
-        return preg_match('/^array<string,(int|float|bool|string)>$/', $type) === 1;
+        return preg_match('/^array<string,([^,<>]+)>$/', $type) === 1;
     }
 
     private function isArrayType(string $type): bool
@@ -3130,7 +3254,7 @@ final class SemanticAnalyzer
 
     private function arrayElementType(string $type): ?string
     {
-        if (preg_match('/^array<(int|float|bool|string)>$/', $type, $matches) === 1) {
+        if (preg_match('/^array<([^,<>]+)>$/', $type, $matches) === 1) {
             return $matches[1];
         }
 
@@ -3139,7 +3263,7 @@ final class SemanticAnalyzer
 
     private function mapValueType(string $type): ?string
     {
-        if (preg_match('/^array<string,(int|float|bool|string)>$/', $type, $matches) === 1) {
+        if (preg_match('/^array<string,([^,<>]+)>$/', $type, $matches) === 1) {
             return $matches[1];
         }
 
@@ -3159,6 +3283,21 @@ final class SemanticAnalyzer
     private function isNumeric(string $type): bool
     {
         return $type === 'int' || $type === 'float';
+    }
+
+    private function isNullableType(string $type): bool
+    {
+        return str_starts_with($type, '?');
+    }
+
+    private function nullableInnerType(string $type): string
+    {
+        return $this->isNullableType($type) ? substr($type, 1) : $type;
+    }
+
+    private function unwrapNullable(string $type): string
+    {
+        return $this->nullableInnerType($type);
     }
 
     private function isScalar(string $type): bool
@@ -3213,6 +3352,24 @@ final class SemanticAnalyzer
             return true;
         }
 
+        if ($actual === 'null') {
+            return $this->isNullableType($expected);
+        }
+
+        if ($this->isNullableType($expected)) {
+            $inner = $this->nullableInnerType($expected);
+
+            if ($this->isNullableType($actual)) {
+                return $this->isAssignable($this->nullableInnerType($actual), $inner);
+            }
+
+            return $this->isAssignable($actual, $inner);
+        }
+
+        if ($this->isNullableType($actual)) {
+            return false;
+        }
+
         if ($expected === 'callable' && $this->isCallableType($actual)) {
             return true;
         }
@@ -3222,7 +3379,31 @@ final class SemanticAnalyzer
                 return true;
             }
 
-            return $actual === 'array' && $this->isListType($expected);
+            if ($actual === 'array') {
+                return $this->isListType($expected);
+            }
+
+            if ($this->isListType($actual) !== $this->isListType($expected)) {
+                return false;
+            }
+
+            $actualElement = $this->isMapType($actual)
+                ? $this->mapValueType($actual)
+                : $this->arrayElementType($actual);
+            $expectedElement = $this->isMapType($expected)
+                ? $this->mapValueType($expected)
+                : $this->arrayElementType($expected);
+
+            if ($actualElement === null || $expectedElement === null) {
+                return false;
+            }
+
+            if (in_array($actualElement, ['int', 'float', 'bool', 'string'], true)
+                || in_array($expectedElement, ['int', 'float', 'bool', 'string'], true)) {
+                return $actualElement === $expectedElement;
+            }
+
+            return $this->isAssignable($actualElement, $expectedElement);
         }
 
         if (!isset($this->classes[$actual]) || !isset($this->classes[$expected])) {

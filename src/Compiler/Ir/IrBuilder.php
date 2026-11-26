@@ -587,7 +587,9 @@ final class IrBuilder
 
         if ($expression instanceof CallableCallExpr) {
             $closure = $this->lowerExpr($expression->callee, $function);
-            $signature = $this->callableSignature((string) $expression->callee->type);
+            $signature = $this->callableSignature(
+                $this->unwrapNullableType((string) $expression->callee->type),
+            );
             $arguments = array_map(
                 fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
                 $expression->arguments,
@@ -682,6 +684,7 @@ final class IrBuilder
         }
 
         if ($expression instanceof PropertyAccessExpr) {
+            $nullable = $this->isNullableType((string) $expression->object->type);
             $object = $this->lowerExpr($expression->object, $function);
             $result = $this->newTemporary((string) $expression->type, $function);
             $function->instructions[] = new PropertyGetInstruction(
@@ -690,10 +693,15 @@ final class IrBuilder
                 $result,
             );
 
+            if ($nullable) {
+                $this->appendExceptionCheck($function);
+            }
+
             return $result;
         }
 
         if ($expression instanceof PropertyAssignExpr) {
+            $nullable = $this->isNullableType((string) $expression->object->type);
             $object = $this->lowerExpr($expression->object, $function);
             $value = $this->lowerExpr($expression->value, $function);
             $function->instructions[] = new PropertySetInstruction(
@@ -701,6 +709,10 @@ final class IrBuilder
                 $expression->property,
                 $value,
             );
+
+            if ($nullable) {
+                $this->appendExceptionCheck($function);
+            }
 
             return $value;
         }
@@ -802,7 +814,7 @@ final class IrBuilder
                 fn (Expr $argument): Operand => $this->lowerExpr($argument, $function),
                 $expression->arguments,
             );
-            $className = (string) $expression->object->type;
+            $className = $this->unwrapNullableType((string) $expression->object->type);
 
             if ($expression->type === 'void') {
                 $function->instructions[] = new MethodCallInstruction(
@@ -1129,6 +1141,10 @@ final class IrBuilder
 
     private function defaultOperand(string $type): ?Operand
     {
+        if ($this->isNullableType($type)) {
+            return new ConstantOperand($type, null);
+        }
+
         if (isset($this->analysis->classes[$type]) || $this->isCallableType($type)) {
             return new ConstantOperand($type, null);
         }
@@ -1157,9 +1173,19 @@ final class IrBuilder
         ) === 1;
     }
 
+    private function isNullableType(string $type): bool
+    {
+        return str_starts_with($type, '?');
+    }
+
+    private function unwrapNullableType(string $type): string
+    {
+        return $this->isNullableType($type) ? substr($type, 1) : $type;
+    }
+
     private function arrayElementType(string $type): ?string
     {
-        if (preg_match('/^array<(int|float|bool|string)>$/', $type, $matches) === 1) {
+        if (preg_match('/^array<([^,<>]+)>$/', $type, $matches) === 1) {
             return $matches[1];
         }
 
@@ -1169,17 +1195,17 @@ final class IrBuilder
     private function isListType(string $type): bool
     {
         return $type === 'array'
-            || preg_match('/^array<(int|float|bool|string)>$/', $type) === 1;
+            || preg_match('/^array<([^,<>]+)>$/', $type) === 1;
     }
 
     private function isMapType(string $type): bool
     {
-        return preg_match('/^array<string,(int|float|bool|string)>$/', $type) === 1;
+        return preg_match('/^array<string,([^,<>]+)>$/', $type) === 1;
     }
 
     private function mapValueType(string $type): ?string
     {
-        if (preg_match('/^array<string,(int|float|bool|string)>$/', $type, $matches) === 1) {
+        if (preg_match('/^array<string,([^,<>]+)>$/', $type, $matches) === 1) {
             return $matches[1];
         }
 

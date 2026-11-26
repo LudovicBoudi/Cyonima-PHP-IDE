@@ -200,7 +200,8 @@ typedef enum {
     CY_VALUE_FLOAT,
     CY_VALUE_STRING,
     CY_VALUE_ARRAY,
-    CY_VALUE_MAP
+    CY_VALUE_MAP,
+    CY_VALUE_OBJECT
 } CyValueType;
 
 typedef struct CyArray CyArray;
@@ -215,6 +216,7 @@ typedef struct {
         const char *string;
         CyArray *array;
         CyMap *map;
+        void *object;
     } as;
 } CyValue;
 
@@ -309,6 +311,8 @@ static inline void cy_mark_pointer(void *pointer)
                     cy_mark_pointer(array->items[i].as.array);
                 } else if (array->items[i].type == CY_VALUE_MAP) {
                     cy_mark_pointer(array->items[i].as.map);
+                } else if (array->items[i].type == CY_VALUE_OBJECT) {
+                    cy_mark_pointer(array->items[i].as.object);
                 }
             }
         } else if (allocation->kind == CY_ALLOC_MAP) {
@@ -326,6 +330,8 @@ static inline void cy_mark_pointer(void *pointer)
                     cy_mark_pointer(map->entries[i].value.as.array);
                 } else if (map->entries[i].value.type == CY_VALUE_MAP) {
                     cy_mark_pointer(map->entries[i].value.as.map);
+                } else if (map->entries[i].value.type == CY_VALUE_OBJECT) {
+                    cy_mark_pointer(map->entries[i].value.as.object);
                 }
             }
         } else if (allocation->kind == CY_ALLOC_OBJECT) {
@@ -440,6 +446,15 @@ static inline CyValue cy_value_map(CyMap *value)
     CyValue result;
     result.type = CY_VALUE_MAP;
     result.as.map = value;
+
+    return result;
+}
+
+static inline CyValue cy_value_object(void *value)
+{
+    CyValue result;
+    result.type = CY_VALUE_OBJECT;
+    result.as.object = value;
 
     return result;
 }
@@ -623,6 +638,27 @@ static inline const char *cy_array_get_string(CyArray *array, cy_int index)
 static inline void cy_array_set_string(CyArray *array, cy_int index, const char *value)
 {
     cy_array_set_value(array, index, cy_value_string(value));
+}
+
+static inline void cy_array_push_object(CyArray *array, void *value)
+{
+    cy_array_push_value(array, cy_value_object(value));
+}
+
+static inline void *cy_array_get_object(CyArray *array, cy_int index)
+{
+    CyValue value = cy_array_get_value(array, index);
+
+    if (value.type != CY_VALUE_OBJECT) {
+        cy_array_type_error();
+    }
+
+    return value.as.object;
+}
+
+static inline void cy_array_set_object(CyArray *array, cy_int index, void *value)
+{
+    cy_array_set_value(array, index, cy_value_object(value));
 }
 
 static inline CyMap *cy_map_new(void)
@@ -854,6 +890,33 @@ static inline const char *cy_map_value_string(CyMap *map, cy_int index)
     return value.as.string;
 }
 
+static inline void cy_map_set_string_object(CyMap *map, const char *key, void *value)
+{
+    cy_map_set_value_string(map, key, cy_value_object(value));
+}
+
+static inline void *cy_map_get_string_object(CyMap *map, const char *key)
+{
+    CyValue value = cy_map_get_value_string(map, key);
+
+    if (value.type != CY_VALUE_OBJECT) {
+        cy_map_type_error();
+    }
+
+    return value.as.object;
+}
+
+static inline void *cy_map_value_object(CyMap *map, cy_int index)
+{
+    CyValue value = cy_map_entry_at(map, index).value;
+
+    if (value.type != CY_VALUE_OBJECT) {
+        cy_map_type_error();
+    }
+
+    return value.as.object;
+}
+
 static inline const char *cy_strdup(const char *value)
 {
     size_t length = strlen(value);
@@ -865,6 +928,14 @@ static inline const char *cy_strdup(const char *value)
 
 static inline const char *cy_string_concat(const char *left, const char *right)
 {
+    if (left == NULL) {
+        left = "";
+    }
+
+    if (right == NULL) {
+        right = "";
+    }
+
     size_t leftLength = strlen(left);
     size_t rightLength = strlen(right);
     char *result = (char *) cy_alloc_kind(leftLength + rightLength + 1, CY_ALLOC_STRING);
@@ -876,7 +947,7 @@ static inline const char *cy_string_concat(const char *left, const char *right)
 
 static inline const char *cy_string_from_string(const char *value)
 {
-    return value;
+    return value == NULL ? "" : value;
 }
 
 static inline const char *cy_string_from_int(cy_int value)

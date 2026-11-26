@@ -374,9 +374,10 @@ les classes abstraites, `parent::`, les membres
 `static` (`Classe::méthode()`, `Classe::$propriété`, `self::`), les objets en
 paramètres/retours/propriétés, les closures et arrow functions avec capture
 par référence `use (&$x)`, les tableaux
-indexés homogènes, les tables associatives `string => valeur`, les signatures
-annotées `array<T>` et `array<string,T>` via PHPDoc avec copie à l’appel,
-l’interpolation
+indexés homogènes, les tables associatives `string => valeur`, les collections
+d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
+`?string`, `?Classe`, `?Interface`, `?callable`, les signatures annotées via
+PHPDoc avec copie à l’appel, l’interpolation
 de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
 `floatval`, `strval`, `abs`, `count` et les modules natifs SQLite, libcurl et
 libssh2.

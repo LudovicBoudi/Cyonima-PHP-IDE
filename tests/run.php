@@ -3737,7 +3737,7 @@ PHP, 'elf');
 
 $arraySignatureErrors = [
     ['tableau sans annotation', '<?php function f(array $values): void {}', 'type de tableau incomplet'],
-    ['annotation non scalaire', '<?php /** @param array<Dog> $values */ function f(array $values): void {}', 'type de tableau incomplet'],
+    ['annotation élément inconnu', '<?php /** @param array<Dog> $values */ function f(array $values): void {}', 'type d’élément de tableau non supporté'],
     ['liste vers table', '<?php /** @param array<string,int> $table */ function f(array $table): void {} f([1, 2]);', 'attend array<string,int>, reçu array<int>'],
     ['éléments incompatibles', '<?php /** @param array<int> $values */ function f(array $values): void {} $floats = [1.5, 2.5]; f($floats);', 'attend array<int>, reçu array<float>'],
     ['retour incompatible', '<?php /** @return array<int> */ function f(): array { return ["a" => 1]; }', 'return attend array<int>, reçu array<string,int>'],
@@ -4237,6 +4237,483 @@ if (!$runFlatpakTest || !$hasGcc || !$hasFlatpakBuilder || !$hasGnomeSdk) {
         'flatpak uninstall --user -y ' . escapeshellarg($packageAppId) . ' 2>&1',
     );
     T::same("native flatpak\n", $flatpakOutput, 'packaging : exécution du Flatpak natif');
+}
+
+// ---------------------------------------------------------------------------
+T::section('33. Collections d’objets — array<Classe> et array<string,Classe>');
+
+$objectCollectionSource = <<<'PHP'
+<?php
+class User {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function label(): string {
+        return $this->name;
+    }
+}
+
+interface Named {
+    public function name(): string;
+}
+
+class Person implements Named {
+    public string $value;
+
+    public function __construct(string $value) {
+        $this->value = $value;
+    }
+
+    public function name(): string {
+        return $this->value;
+    }
+}
+
+/**
+ * @return array<User>
+ */
+function makeUsers(): array {
+    return [new User("alice"), new User("bob")];
+}
+
+/**
+ * @param array<User> $users
+ */
+function describe(array $users): string {
+    $result = "";
+    $i = 0;
+
+    while ($i < count($users)) {
+        $result = $result . $users[$i]->label() . ",";
+        $i = $i + 1;
+    }
+
+    return $result;
+}
+
+/**
+ * @return array<string,User>
+ */
+function makeTable(): array {
+    $table = [];
+    $table["a"] = new User("alice");
+    $table["b"] = new User("bob");
+    return $table;
+}
+
+/**
+ * @param array<string,User> $table
+ */
+function describeTable(array $table): string {
+    $result = "";
+
+    foreach ($table as $key => $user) {
+        $result = $result . $key . "=" . $user->label() . ";";
+    }
+
+    return $result;
+}
+
+/**
+ * @param array<Named> $items
+ */
+function joinNames(array $items): string {
+    $result = "";
+
+    foreach ($items as $item) {
+        $result = $result . $item->name() . ",";
+    }
+
+    return $result;
+}
+
+class Bag {
+    /** @var array<User> */
+    public array $users;
+
+    /** @param array<User> $users */
+    public function __construct(array $users) {
+        $this->users = $users;
+    }
+
+    public function size(): int {
+        return count($this->users);
+    }
+}
+
+class Registry {
+    /** @var array<User> */
+    public static array $users;
+}
+
+$users = makeUsers();
+$users[] = new User("carol");
+echo count($users), " ", describe($users), "\n";
+
+$table = makeTable();
+echo count($table), " ", describeTable($table), " ", $table["b"]->label(), "\n";
+
+echo joinNames([new Person("x"), new Person("y")]), "\n";
+
+$bag = new Bag($users);
+echo $bag->size(), "\n";
+
+Registry::$users = $users;
+$copy = Registry::$users;
+$copy[] = new User("extra");
+echo count(Registry::$users), " ", count($copy), "\n";
+
+$first = $users[0];
+$closure = function () use ($first): string {
+    return $first->label();
+};
+echo $closure(), "\n";
+PHP;
+
+$objectCollectionC = $compilePhp('object-collections', $objectCollectionSource, 'c');
+$objectCollectionCSource = (string) file_get_contents($objectCollectionC['cPath']);
+T::ok(str_contains($objectCollectionCSource, 'cy_array_push_object'), 'collections : ajout d’objet');
+T::ok(str_contains($objectCollectionCSource, 'cy_array_get_object'), 'collections : lecture d’objet');
+T::ok(str_contains($objectCollectionCSource, 'cy_map_set_string_object'), 'collections : table d’objets');
+T::ok(str_contains($objectCollectionCSource, 'cy_map_value_object'), 'collections : foreach d’objets');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des collections d’objets non testée');
+} else {
+    $objectCollectionElf = $compilePhp('object-collections', $objectCollectionSource, 'elf');
+    T::same(
+        "3 alice,bob,carol,\n2 a=alice;b=bob; bob\nx,y,\n3\n3 4\nalice\n",
+        shell_exec(escapeshellarg((string) $objectCollectionElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : listes, tables, propriétés statiques et closures d’objets',
+    );
+
+    $objectCollectionGcElf = $compilePhp('object-collections-gc', <<<'PHP'
+<?php
+class User {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function label(): string {
+        return $this->name;
+    }
+}
+
+/**
+ * @return array<User>
+ */
+function makeUsers(int $count): array {
+    $users = [];
+    $i = 0;
+
+    while ($i < $count) {
+        $users[] = new User("u" . strval($i));
+        $i = $i + 1;
+    }
+
+    return $users;
+}
+
+$users = makeUsers(8);
+$i = 0;
+
+while ($i < 2000) {
+    $tmp = makeUsers(3);
+    $i = $i + 1;
+}
+
+echo count($users), " ", $users[7]->label(), "\n";
+PHP, 'elf');
+    T::same(
+        "8 u7\n",
+        shell_exec(escapeshellarg((string) $objectCollectionGcElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : collections d’objets et GC',
+    );
+}
+
+$objectCollectionErrors = [
+    ['élément inconnu', '<?php /** @return array<Missing> */ function f(): array { return []; }', 'type d’élément de tableau non supporté'],
+    ['élément callable', '<?php /** @return array<callable> */ function f(): array { return []; }', 'type d’élément de tableau non supporté'],
+    ['tableau hétérogène', '<?php class A {} class B {} $items = [new A(), new B()];', 'tableau hétérogène'],
+    ['retour incompatible', '<?php class User {} /** @return array<User> */ function f(): array { return [1]; }', 'return attend array<User>, reçu array<int>'],
+    ['tableau imbriqué', '<?php /** @return array<array<int>> */ function f(): array { return []; }', 'type de tableau incomplet'],
+    ['ajout incompatible', '<?php class User {} class Other {} /** @param array<User> $items */ function add(array $items): void { $items[] = new Other(); }', 'attend User, reçu Other'],
+];
+
+foreach ($objectCollectionErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('object-collection-error-' . $index, $source, 'c');
+        T::ok(false, 'collections : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'collections : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('34. Types nullables — ?string, ?Classe, ?Interface, ?callable');
+
+$nullableSource = <<<'PHP'
+<?php
+class User {
+    public string $name;
+
+    public function __construct(string $name) {
+        $this->name = $name;
+    }
+
+    public function label(): string {
+        return $this->name;
+    }
+}
+
+function greet(?string $name): string {
+    if ($name === null) {
+        return "nobody";
+    }
+
+    return "hello " . $name;
+}
+
+function find(bool $present): ?User {
+    if (!$present) {
+        return null;
+    }
+
+    return new User("alice");
+}
+
+class Holder {
+    public ?User $user;
+    public ?string $note;
+
+    public function __construct(?User $user, ?string $note) {
+        $this->user = $user;
+        $this->note = $note;
+    }
+
+    public function label(): string {
+        return $this->user->label();
+    }
+}
+
+class Payload {
+    public string $value;
+
+    public function __construct(string $value) {
+        $this->value = $value;
+    }
+}
+
+class MaybePayload {
+    public ?Payload $payload;
+
+    public function __construct(?Payload $payload) {
+        $this->payload = $payload;
+    }
+}
+
+$found = find(true);
+$missing = find(false);
+
+if ($found !== null) {
+    echo $found->label(), "\n";
+}
+
+if ($missing === null) {
+    echo "missing\n";
+}
+
+echo greet("bob"), " ", greet(null), "\n";
+
+$full = new Holder($found, "ok");
+$empty = new Holder($missing, null);
+echo $full->label(), " ", $full->note, "\n";
+echo $empty->note, "|\n";
+
+try {
+    echo $empty->label(), "\n";
+} catch (string $error) {
+    echo "catch: ", $error, "\n";
+}
+
+$payload = new MaybePayload(new Payload("value"));
+echo $payload->payload->value, "\n";
+
+$noPayload = new MaybePayload(null);
+
+try {
+    echo $noPayload->payload->value, "\n";
+} catch (string $error) {
+    echo "prop: ", $error, "\n";
+}
+PHP;
+
+$nullableC = $compilePhp('nullable-types', $nullableSource, 'c');
+$nullableCSource = (string) file_get_contents($nullableC['cPath']);
+T::ok(str_contains($nullableCSource, 'appel de méthode sur null'), 'nullable : garde de méthode');
+T::ok(str_contains($nullableCSource, 'accès à une propriété sur null'), 'nullable : garde de propriété');
+T::ok(str_contains($nullableCSource, ' == NULL'), 'nullable : comparaisons null');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des types nullables non testée');
+} else {
+    $nullableElf = $compilePhp('nullable-types', $nullableSource, 'elf');
+    T::same(
+        "alice\nmissing\nhello bob nobody\nalice ok\n|\ncatch: appel de méthode sur null\nvalue\nprop: accès à une propriété sur null\n",
+        shell_exec(escapeshellarg((string) $nullableElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : chaînes, objets et propriétés nullables',
+    );
+
+    $nullableCallableElf = $compilePhp('nullable-callable', <<<'PHP'
+<?php
+class Runner {
+    public ?callable(int):int $hook;
+
+    public function __construct(?callable(int):int $hook) {
+        $this->hook = $hook;
+    }
+
+    public function run(int $value): int {
+        $hook = $this->hook;
+        return $hook($value);
+    }
+}
+
+$double = fn (int $x): int => $x * 2;
+$with = new Runner($double);
+$without = new Runner(null);
+echo $with->run(21), "\n";
+
+if ($without->hook === null) {
+    echo "no hook\n";
+}
+
+try {
+    echo $without->run(1), "\n";
+} catch (string $error) {
+    echo "catch: ", $error, "\n";
+}
+PHP, 'elf');
+    T::same(
+        "42\nno hook\ncatch: appel d’une closure null\n",
+        shell_exec(escapeshellarg((string) $nullableCallableElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : callable nullable',
+    );
+
+    $nullableCovarianceElf = $compilePhp('nullable-covariance', <<<'PHP'
+<?php
+class Animal {
+    public function name(): string { return "animal"; }
+}
+
+class Dog extends Animal {
+    public function name(): string { return "dog"; }
+}
+
+class Base {
+    public function find(): ?Animal { return null; }
+}
+
+class Child extends Base {
+    public function find(): ?Dog { return new Dog(); }
+}
+
+function label(Base $base): string {
+    $value = $base->find();
+
+    if ($value === null) {
+        return "none";
+    }
+
+    return $value->name();
+}
+
+echo label(new Child()), " ", label(new Base()), "\n";
+PHP, 'elf');
+    T::same(
+        "dog none\n",
+        shell_exec(escapeshellarg((string) $nullableCovarianceElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : retour nullable covariant',
+    );
+
+    $nullableGcElf = $compilePhp('nullable-gc', <<<'PHP'
+<?php
+class User {
+    public string $name;
+    public function __construct(string $name) { $this->name = $name; }
+    public function label(): string { return $this->name; }
+}
+
+class Registry {
+    public static ?User $current;
+    public static ?string $label;
+}
+
+Registry::$current = new User("alice");
+Registry::$label = "hello";
+$i = 0;
+
+while ($i < 2000) {
+    $tmp = strval($i);
+    $i = $i + 1;
+}
+
+if (Registry::$current !== null) {
+    echo Registry::$current->label(), " ", Registry::$label, "\n";
+}
+
+$value = Registry::$current;
+$show = function () use (&$value): void {
+    if ($value === null) {
+        echo "null\n";
+    } else {
+        echo $value->label(), "\n";
+    }
+};
+
+$show();
+$value = null;
+$show();
+PHP, 'elf');
+    T::same(
+        "alice hello\nalice\nnull\n",
+        shell_exec(escapeshellarg((string) $nullableGcElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : nullables, propriétés statiques, GC et références',
+    );
+}
+
+$nullableErrors = [
+    ['scalaire nullable', '<?php function f(?int $x): void {}', 'scalaire nullable non supporté'],
+    ['tableau nullable', '<?php function f(?array $x): void {}', 'tableau nullable non supporté'],
+    ['void nullable', '<?php function f(?void $x): void {}', 'type nullable invalide'],
+    ['variable null non typée', '<?php $x = null;', 'affectation de null à une variable non typée'],
+    ['null vers non nullable', '<?php class User {} $user = new User(); $user = null;', 'n’est pas nullable'],
+    ['null en argument', '<?php class User {} function f(User $user): void {} f(null);', 'attend User, reçu null'],
+    ['null en retour', '<?php function f(): string { return null; }', 'return attend string, reçu null'],
+    ['élément nullable', '<?php class User {} /** @return array<?User> */ function f(): array { return []; }', 'type d’élément de tableau non supporté'],
+    ['echo objet nullable', '<?php class User {} function f(?User $user): void { echo $user; }', 'echo ne peut pas afficher une valeur de type ?User'],
+];
+
+foreach ($nullableErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('nullable-error-' . $index, $source, 'c');
+        T::ok(false, 'nullable : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'nullable : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
 }
 
 $removeTree($phpRoot);

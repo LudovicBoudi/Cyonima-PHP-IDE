@@ -588,6 +588,32 @@ Trois écarts assumés par rapport au miroir strict du C :
   Les deux formats ont été validés avec un programme console, SQLite et une
   application GTK4.
 
+57. **Collections d’objets** : `array<Classe>` et
+  `array<string,Classe>` sont supportés dans les littéraux, indexations,
+  ajouts, `foreach`, paramètres, retours, propriétés instance et statiques,
+  closures et signatures PHPDoc. Le runtime ajoute `CY_VALUE_OBJECT` et les
+  opérations `cy_array_*_object` / `cy_map_*_object` ; le GC marque les objets
+  contenus dans les tableaux et tables. Les éléments d’un littéral sont
+  fusionnés vers un ancêtre commun ou une interface commune, et
+  `array<Enfant>` est assignable à `array<Parent>` ou `array<Interface>`.
+  Les éléments `callable`, les tableaux imbriqués et les annotations de
+  closures restent hors périmètre. C’est le premier incrément de la feuille de
+  route « Web-to-Desktop », avant les types nullables, les namespaces et le
+  multi-fichiers.
+
+58. **Types nullables** : `?string`, `?Classe`, `?Interface` et
+  `?callable(signature)` en paramètres, retours, propriétés instance/statiques
+  et captures. Les valeurs nullables sont représentées par le pointeur C
+  (`NULL`), sans wrapper optionnel. `null` est assignable aux types nullables
+  et comparable avec `===`/`!==`/`==`/`!=` ; les chaînes nullables sont
+  concaténées/affichées comme une chaîne vide. L’accès à une propriété, l’appel
+  de méthode et l’invocation d’une closure nullable émettent une garde
+  runtime qui lève une exception `string` si la valeur est `NULL`, suivie
+  d’un contrôle de propagation. Les retours covariants acceptent
+  `T → ?Parent` et `?T → ?Parent`. Les scalaires optionnels (`?int`, etc.),
+  les tableaux nullables, les éléments nullables et les signatures de
+  closures/callables nullables restent hors périmètre.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

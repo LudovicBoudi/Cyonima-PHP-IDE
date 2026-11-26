@@ -473,6 +473,7 @@ final class Lexer
             '.' => TokenType::Dot,
             '=' => TokenType::Assign,
             '&' => TokenType::Ampersand,
+            '?' => TokenType::Question,
             '<' => TokenType::Less,
             '>' => TokenType::Greater,
             '!' => TokenType::Bang,
