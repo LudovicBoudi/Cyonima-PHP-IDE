@@ -448,6 +448,41 @@ final class UserRepository extends Repository {
 `Migrator` exécute des migrations transactionnelles, `Connection::quote()`
 échappe les valeurs. Voir `examples/native-database.php`.
 
+L’ORM léger ajoute des entités et une table gateway :
+
+```php
+final class Todo extends Entity
+{
+    public string $title;
+    public bool $done;
+
+    public function __construct(string $title, bool $done) {
+        parent::__construct();
+        $this->title = $title;
+        $this->done = $done;
+    }
+
+    public function table(): string { return 'todos'; }
+
+    /** @return array<string,string> */
+    public function values(): array { /* colonnes → valeurs */ }
+
+    /** @param array<string,string> $row */
+    public function hydrate(array $row): void { /* row → objet */ }
+}
+
+$todo = new Todo('Compiler l’ORM', false);
+$todo->save($db);
+$todo->done = true;
+$todo->save($db);
+$todo->delete($db);
+```
+
+`Repository::store()` fournit `find`, `findWhere`, `ids`, `count`, `insert`,
+`update` et `delete`. `Connection::transaction(function (): void { ... })`
+encapsule `BEGIN`/`COMMIT`/`ROLLBACK`. Le mapping reste explicite, sans
+réflexion. Voir `examples/native-orm.php`.
+
 La validation typée fournit des règles réutilisables :
 
 ```php
@@ -477,7 +512,8 @@ d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
 `?string`, `?Classe`, `?Interface`, `?callable`, les namespaces, les imports et
 la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, la
 console native `Cyonima\Console` (commandes, arguments, options, aide), la
-couche `Cyonima\Database` (connexion SQLite, repositories, migrations), la
+couche `Cyonima\Database` (connexion SQLite, repositories, migrations), l’ORM
+léger (`Entity`, `Table`, transactions), la
 validation typée `Cyonima\Validation`, les templates `.ui` compilés vers GTK,
 les signatures annotées via PHPDoc avec
 copie à l’appel, l’interpolation
@@ -492,50 +528,65 @@ de classes, la contravariance des paramètres et les tableaux imbriqués restent
 refusés explicitement avec un numéro de ligne.
 
 Une couche UI native expose `ui_init`, `ui_window`, `ui_box`,
-`ui_label`, `ui_button`, `ui_entry`, `ui_append`, `ui_on_click`, `ui_after`,
-`ui_run`, etc. Les callbacks acceptent des noms de fonctions ou des closures.
+`ui_label`, `ui_button`, `ui_entry`, `ui_check_button`, `ui_progress_bar`,
+`ui_separator`, `ui_add_class`, `ui_add_css`, `ui_append`, `ui_on_click`,
+`ui_after`, `ui_run`, etc. Les callbacks acceptent des noms de fonctions ou des
+closures.
 
 La façade objet `Application` / `Widget` / `Window` / `Box` / `Label` /
-`Button` / `Entry` est injectée automatiquement dès qu’un programme instancie
-l’une de ces classes :
+`Button` / `Entry` / `CheckButton` / `ProgressBar` / `Separator` est injectée
+automatiquement dès qu’un programme instancie l’une de ces classes :
 
 ```php
-$box->append($label);
-$window->setChild($box);
+$app = new Application('com.cyonima.demo');
+$app->loadCss('.title { font-weight: bold; } .primary { background: #238636; }');
+
+$label->addClass('title');
 $button->onClicked(fn () => $label->setText('Cliqué !'));
+
+$check = new CheckButton('Activer', true);
+$progress = new ProgressBar();
+$progress->setFraction(0.5);
+$check->onToggled(fn () => $progress->setFraction(0.75));
 ```
 
-Les widgets héritent de `Widget` et se composent directement par objets.
-Voir `examples/native-ui-object.php`.
+`Widget` fournit `setVisible`, `addClass`, `setTooltip` et `setSensitive`.
+`Application::loadCss(string)` charge une feuille CSS globale.
+Voir `examples/native-ui-object.php` et `examples/native-widgets.php`.
 
 Les templates `.ui` sont compilés en classes `Cyonima\Templates\<Nom>` :
 
 ```html
-@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+@params(array<App\Todo> $todos, string $title, float $progress, callable():void $onAdd, callable():void $onToggle)
 
-<window title="{{ $title }}" width="440" height="520">
-    <box vertical="true" spacing="10">
-        <label text="{{ $title }}" />
+<window title="{{ $title }}" width="440" height="520" class="task-window">
+    <box vertical="true" spacing="10" class="task-panel">
+        <label text="{{ $title }}" class="title" />
+        <progress-bar fraction="{{ $progress }}" />
+        <separator />
         @foreach ($todos as $todo)
-            <label>{{ $todo->title }}</label>
+            <check-button
+                label="{{ $todo->title }}"
+                active="{{ $todo->done }}"
+                on-toggled="{{ $onToggle }}"
+            />
         @endforeach
-        <button text="Ajouter" on-click="{{ $onAdd }}" />
+        <button text="Ajouter" on-click="{{ $onAdd }}" class="primary" />
     </box>
 </window>
 ```
 
 ```php
 $application = new Application('com.cyonima.templates.demo');
-$window = TodoList::build($todos, 'Tâches', $onAdd);
+$application->loadCss('.task-panel { padding: 16px; } .title { font-weight: bold; }');
+$window = TodoList::build($todos, 'Tâches', 0.66, $onAdd, $onToggle);
 $window->present();
 $application->run();
 ```
 
-```bash
-bin/cyonima-compile --project=. \
-  --php=examples/native-templates.php \
-  --templates=examples/native-todo-list.ui --emit=elf
-```
+Les balises `check-button`, `progress-bar` et `separator` rejoignent
+`window`, `box`, `label`, `button` et `entry`. Les attributs `class`,
+`tooltip` et `sensitive` sont disponibles partout.
 
 Aucun moteur de template n’est embarqué : les balises et directives sont
 traduites en code PHP puis en C. Voir `examples/native-templates.php`.

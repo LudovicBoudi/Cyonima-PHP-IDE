@@ -55,6 +55,9 @@ final class TemplateCompiler
         $lines[] = 'use Label;';
         $lines[] = 'use Button;';
         $lines[] = 'use Entry;';
+        $lines[] = 'use CheckButton;';
+        $lines[] = 'use ProgressBar;';
+        $lines[] = 'use Separator;';
         $lines[] = '';
         $lines[] = 'final class ' . $this->className;
         $lines[] = '{';
@@ -592,10 +595,13 @@ final class TemplateCompiler
                 $title = $this->stringAttribute($attributes, 'title', 'Template');
                 $width = $this->intAttribute($attributes, 'width', 640);
                 $height = $this->intAttribute($attributes, 'height', 480);
+                $this->rejectUnknown($attributes, [
+                    'title', 'width', 'height', 'class', 'tooltip', 'sensitive',
+                ]);
                 $lines[] = $prefix . '$window = new Window('
                     . $title . ', ' . $width . ', ' . $height . ');';
+                $this->applyCommon($attributes, '$window', $prefix, $lines);
                 $lines[] = $prefix . '$root = new Box(true, 0);';
-                $this->rejectUnknown($attributes, ['title', 'width', 'height']);
                 $this->renderNodes($node['children'], '$root', $indent, $lines);
                 $lines[] = $prefix . '$window->setChild($root);';
                 continue;
@@ -604,12 +610,15 @@ final class TemplateCompiler
             if ($name === 'box') {
                 $vertical = $this->boolAttribute($attributes, 'vertical', true);
                 $spacing = $this->intAttribute($attributes, 'spacing', 0);
-                $this->rejectUnknown($attributes, ['vertical', 'spacing']);
+                $this->rejectUnknown($attributes, [
+                    'vertical', 'spacing', 'class', 'tooltip', 'sensitive',
+                ]);
                 $variable = $this->widget(
                     'Box',
                     $vertical . ', ' . $spacing,
                 );
                 $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
                 $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
                 $this->renderNodes($node['children'], $this->lastWidget, $indent, $lines);
                 continue;
@@ -617,17 +626,23 @@ final class TemplateCompiler
 
             if ($name === 'label') {
                 $text = $this->elementText($node, $attributes);
-                $this->rejectUnknown($attributes, ['text']);
+                $this->rejectUnknown($attributes, [
+                    'text', 'class', 'tooltip', 'sensitive',
+                ]);
                 $lines[] = $prefix . $this->widget('Label', $text) . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
                 $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
                 continue;
             }
 
             if ($name === 'button') {
                 $text = $this->elementText($node, $attributes);
-                $this->rejectUnknown($attributes, ['text', 'onclick']);
+                $this->rejectUnknown($attributes, [
+                    'text', 'onclick', 'class', 'tooltip', 'sensitive',
+                ]);
                 $variable = $this->widget('Button', $text);
                 $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
                 $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
 
                 if (isset($attributes['onclick'])) {
@@ -639,15 +654,65 @@ final class TemplateCompiler
 
             if ($name === 'entry') {
                 $placeholder = $this->stringAttribute($attributes, 'placeholder', '');
-                $this->rejectUnknown($attributes, ['placeholder', 'onactivate']);
+                $this->rejectUnknown($attributes, [
+                    'placeholder', 'onactivate', 'class', 'tooltip', 'sensitive',
+                ]);
                 $variable = $this->widget('Entry', $placeholder);
                 $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
                 $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
 
                 if (isset($attributes['onactivate'])) {
                     $handler = $this->requiredDynamic($attributes['onactivate'], 'on-activate');
                     $lines[] = $prefix . $this->lastWidget . '->onActivate(' . $handler . ');';
                 }
+                continue;
+            }
+
+            if ($name === 'check-button') {
+                $text = isset($attributes['label'])
+                    ? $this->textExpression($attributes['label'])
+                    : $this->elementText($node, $attributes);
+                $this->rejectUnknown($attributes, [
+                    'label', 'text', 'active', 'ontoggled',
+                    'class', 'tooltip', 'sensitive',
+                ]);
+                $active = $this->boolAttribute($attributes, 'active', false);
+                $variable = $this->widget('CheckButton', $text . ', ' . $active);
+                $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+
+                if (isset($attributes['ontoggled'])) {
+                    $handler = $this->requiredDynamic($attributes['ontoggled'], 'on-toggled');
+                    $lines[] = $prefix . $this->lastWidget . '->onToggled(' . $handler . ');';
+                }
+                continue;
+            }
+
+            if ($name === 'progress-bar') {
+                $fraction = $this->floatAttribute($attributes, 'fraction', 0.0);
+                $this->rejectUnknown($attributes, [
+                    'fraction', 'class', 'tooltip', 'sensitive',
+                ]);
+                $variable = $this->widget('ProgressBar', '');
+                $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+                $lines[] = $prefix . $this->lastWidget
+                    . '->setFraction(' . $fraction . ');';
+                continue;
+            }
+
+            if ($name === 'separator') {
+                $vertical = $this->boolAttribute($attributes, 'vertical', false);
+                $this->rejectUnknown($attributes, [
+                    'vertical', 'class', 'tooltip', 'sensitive',
+                ]);
+                $variable = $this->widget('Separator', $vertical);
+                $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
                 continue;
             }
 
@@ -682,6 +747,73 @@ final class TemplateCompiler
                 throw new CompilerException('template : attribut inconnu "' . $name . '"');
             }
         }
+    }
+
+    /**
+     * @param array<string, string> $attributes
+     * @param list<string> $lines
+     */
+    private function applyCommon(
+        array $attributes,
+        string $widget,
+        string $prefix,
+        array &$lines,
+    ): void {
+        if (isset($attributes['class'])) {
+            foreach ($this->classNames($attributes['class']) as $class) {
+                $lines[] = $prefix . $widget . '->addClass(' . $class . ');';
+            }
+        }
+
+        if (isset($attributes['tooltip'])) {
+            $lines[] = $prefix . $widget . '->setTooltip('
+                . $this->textExpression($attributes['tooltip']) . ');';
+        }
+
+        if (isset($attributes['sensitive'])) {
+            $lines[] = $prefix . $widget . '->setSensitive('
+                . $this->boolAttribute($attributes, 'sensitive', true) . ');';
+        }
+    }
+
+    /** @return list<string> */
+    private function classNames(string $value): array
+    {
+        $trimmed = trim($value);
+
+        if (preg_match('/^{{(.+)}}$/s', $trimmed, $matches) === 1) {
+            return ['(' . trim($matches[1]) . ')'];
+        }
+
+        $names = [];
+
+        foreach (preg_split('/\s+/', $trimmed) ?: [] as $name) {
+            if ($name !== '') {
+                $names[] = var_export($name, true);
+            }
+        }
+
+        return $names;
+    }
+
+    /** @param array<string, string> $attributes */
+    private function floatAttribute(array $attributes, string $name, float $default): string
+    {
+        if (!isset($attributes[$name])) {
+            return var_export($default, true);
+        }
+
+        $value = trim($attributes[$name]);
+
+        if (preg_match('/^{{(.+)}}$/s', $value, $matches) === 1) {
+            return 'floatval(' . trim($matches[1]) . ')';
+        }
+
+        if (preg_match('/^-?[0-9]+(\.[0-9]+)?$/', $value) === 1) {
+            return $value;
+        }
+
+        throw new CompilerException('template : nombre attendu pour "' . $name . '"');
     }
 
     /** @param array<string, string> $attributes */

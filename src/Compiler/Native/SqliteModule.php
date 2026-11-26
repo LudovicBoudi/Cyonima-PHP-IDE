@@ -54,6 +54,11 @@ final class SqliteModule implements NativeModule
                 ['handle' => 'int', 'sql' => 'string'],
                 'array<string,string>',
             ),
+            'sqlite_query_column_int' => new NativeFunction(
+                'sqlite_query_column_int',
+                ['handle' => 'int', 'sql' => 'string'],
+                'array<int>',
+            ),
             'sqlite_quote' => new NativeFunction(
                 'sqlite_quote',
                 ['handle' => 'int', 'value' => 'string'],
@@ -283,6 +288,27 @@ final class SqliteModule implements NativeModule
                             value
                         );
                     }
+                }
+
+                sqlite3_finalize(statement);
+
+                return result;
+            }
+
+            static CyArray *fn_sqlite_query_column_int(cy_int handle, const char *sql)
+            {
+                CyArray *result = cy_array_new();
+                sqlite3_stmt *statement = cy_native_sqlite_prepare(handle, sql);
+
+                if (statement == NULL) {
+                    return result;
+                }
+
+                while (sqlite3_step(statement) == SQLITE_ROW) {
+                    cy_array_push_int(
+                        result,
+                        (cy_int) sqlite3_column_int64(statement, 0)
+                    );
                 }
 
                 sqlite3_finalize(statement);

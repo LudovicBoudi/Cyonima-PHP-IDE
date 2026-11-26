@@ -1,21 +1,28 @@
-@params(array<App\Todo> $todos, string $title, callable():void $onAdd)
+@params(array<App\Todo> $todos, string $title, float $progress, callable():void $onAdd, callable():void $onToggle)
 
-<window title="{{ $title }}" width="440" height="520">
-    <box vertical="true" spacing="10">
-        <label text="{{ $title }}" />
+<window title="{{ $title }}" width="460" height="560" class="task-window" tooltip="Démo templates enrichis">
+    <box vertical="true" spacing="10" class="task-panel">
+        <label text="{{ $title }}" class="title" />
+        <progress-bar fraction="{{ $progress }}" class="progress" />
+        <label class="hint">Progression globale</label>
+        <separator />
 
         @if (count($todos) === 0)
-            <label>Aucune tâche pour le moment.</label>
+            <label class="empty">Aucune tâche pour le moment.</label>
         @endif
 
         @foreach ($todos as $todo)
-            <box vertical="false" spacing="8">
-                <label>{{ $todo->title }}</label>
-                <label>{{ $todo->status }}</label>
+            <box vertical="false" spacing="8" class="task-row">
+                <check-button
+                    label="{{ $todo->title }}"
+                    active="{{ $todo->done }}"
+                    on-toggled="{{ $onToggle }}"
+                />
+                <label class="status">{{ $todo->status }}</label>
             </box>
         @endforeach
 
-        <entry placeholder="Nouvelle tâche" />
-        <button text="Ajouter" on-click="{{ $onAdd }}" />
+        <entry placeholder="Nouvelle tâche" class="new-task" />
+        <button text="Ajouter" on-click="{{ $onAdd }}" class="primary" />
     </box>
 </window>

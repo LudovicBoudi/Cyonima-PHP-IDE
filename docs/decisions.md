@@ -701,6 +701,31 @@ Trois écarts assumés par rapport au miroir strict du C :
   pas de balises imbriquées dans `label`/`button`, pas de CSS ni d’identifiants,
   recompilation à chaque build.
 
+66. **ORM léger** : couche data mapper explicite au-dessus de SQLite, sans
+  réflexion. `Entity` porte `id` (`0` = non persisté), `table()`, `values()`,
+  `hydrate()`, `save()` et `delete()`. `Table` construit les `INSERT`/`UPDATE`
+  avec quoting, fournit `find`, `findWhere`, `delete`, `exists`, `count`,
+  `ids`. `Repository::store()` expose la table ; `Connection::transaction()`
+  encapsule `BEGIN`/`COMMIT`/`ROLLBACK`. Ajout de
+  `sqlite_query_column_int` et `Connection::columnInt`. Les repositories
+  typés restent écrits à la main (`findOrFail`, `all(): array<Todo>`) car le
+  sous-ensemble n’a ni génériques, ni réflexion, ni `static` de retour.
+  Les identifiants SQL sont validés. Limitations : clé entière `id`, pas de
+  relations, lazy loading, identity map, cascade, query builder, timestamps,
+  soft delete ni transactions imbriquées ; `all()` fait N+1 requêtes.
+
+67. **Widgets enrichis et CSS** : ajout de `CheckButton` (label, `active`,
+  `setActive`, `onToggled`), `ProgressBar` (`fraction`, `setFraction`),
+  `Separator`, et de méthodes communes `Widget::addClass`, `setTooltip`,
+  `setSensitive`. `Application::loadCss()` installe une feuille globale via
+  `GtkCssProvider`. Nouvelles primitives natives `cy_ui_check_button`,
+  `cy_ui_progress_*`, `cy_ui_separator`, `cy_ui_add_class`, `cy_ui_add_css`,
+  `cy_ui_set_tooltip`, `cy_ui_set_sensitive`, `cy_ui_on_toggle_closure`.
+  Les templates gagnent `<check-button>`, `<progress-bar>`, `<separator>` et
+  les attributs communs `class`, `tooltip`, `sensitive` ; `class` accepte
+  plusieurs noms ou une classe dynamique. Limitations : CSS global seulement,
+  pas d’identifiants de widgets, callbacks toujours `callable():void`.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

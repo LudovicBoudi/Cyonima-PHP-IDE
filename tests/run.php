@@ -5808,6 +5808,583 @@ if (!$hasGcc || !$templateGtk) {
     );
 }
 
+// ---------------------------------------------------------------------------
+T::section('42. Cyonima\\Database — ORM léger (Entity, Table, transactions)');
+
+$ormSource = <<<'PHP'
+<?php
+namespace App;
+
+use Cyonima\Database\Connection;
+use Cyonima\Database\Entity;
+use Cyonima\Database\Migration;
+use Cyonima\Database\Migrator;
+use Cyonima\Database\Repository;
+use Cyonima\Database\Table;
+use RuntimeException;
+
+final class CreateTodos extends Migration
+{
+    public function version(): int
+    {
+        return 1;
+    }
+
+    public function up(Connection $connection): void
+    {
+        $connection->exec(
+            'CREATE TABLE todos (id INTEGER PRIMARY KEY, title TEXT, done TEXT)'
+        );
+    }
+}
+
+final class Todo extends Entity
+{
+    public string $title;
+    public bool $done;
+
+    public function __construct(string $title, bool $done)
+    {
+        parent::__construct();
+        $this->title = $title;
+        $this->done = $done;
+    }
+
+    public function table(): string
+    {
+        return 'todos';
+    }
+
+    /** @return array<string,string> */
+    public function values(): array
+    {
+        $values = [];
+        $values['title'] = $this->title;
+
+        if ($this->done) {
+            $values['done'] = '1';
+        } else {
+            $values['done'] = '0';
+        }
+
+        return $values;
+    }
+
+    /** @param array<string,string> $row */
+    public function hydrate(array $row): void
+    {
+        $this->id = intval($row['id']);
+        $this->title = $row['title'];
+        $this->done = $row['done'] === '1';
+    }
+}
+
+final class TodoRepository extends Repository
+{
+    public function __construct(Connection $connection)
+    {
+        parent::__construct($connection, 'todos');
+    }
+
+    public function find(int $id): ?Todo
+    {
+        $row = $this->store()->find($id);
+
+        if (count($row) === 0) {
+            return null;
+        }
+
+        $todo = new Todo('', false);
+        $todo->hydrate($row);
+
+        return $todo;
+    }
+
+    public function findOrFail(int $id): Todo
+    {
+        $row = $this->store()->find($id);
+
+        if (count($row) === 0) {
+            throw new RuntimeException('todo introuvable : ' . strval($id));
+        }
+
+        $todo = new Todo('', false);
+        $todo->hydrate($row);
+
+        return $todo;
+    }
+
+    /** @return array<Todo> */
+    public function all(): array
+    {
+        $todos = [];
+        $ids = $this->store()->ids();
+
+        foreach ($ids as $id) {
+            $row = $this->store()->find($id);
+
+            if (count($row) > 0) {
+                $todo = new Todo('', false);
+                $todo->hydrate($row);
+                $todos[] = $todo;
+            }
+        }
+
+        return $todos;
+    }
+
+    public function findByTitle(string $title): ?Todo
+    {
+        $row = $this->store()->findWhere('title', $title);
+
+        if (count($row) === 0) {
+            return null;
+        }
+
+        $todo = new Todo('', false);
+        $todo->hydrate($row);
+
+        return $todo;
+    }
+
+    public function save(Todo $todo): int
+    {
+        return $todo->save($this->connection);
+    }
+}
+
+$db = new Connection(':memory:');
+$migrator = new Migrator($db);
+$migrator->add(new CreateTodos());
+echo 'migrations: ', $migrator->run(), "\n";
+
+$todos = new TodoRepository($db);
+$first = new Todo('Compiler l’ORM', false);
+$firstId = $todos->save($first);
+echo 'insert: ', $firstId, "\n";
+
+if ($first->isNew()) {
+    echo "state: new\n";
+} else {
+    echo "state: persisted\n";
+}
+
+$todos->save(new Todo('Tester les transactions', true));
+
+$found = $todos->find($firstId);
+
+if ($found !== null) {
+    echo 'find: ', $found->title, "\n";
+
+    if ($found->done) {
+        echo "done: yes\n";
+    } else {
+        echo "done: no\n";
+    }
+
+    $found->done = true;
+    $found->save($db);
+}
+
+$updated = $todos->findOrFail($firstId);
+
+if ($updated->done) {
+    echo "update: yes\n";
+} else {
+    echo "update: no\n";
+}
+
+$byTitle = $todos->findByTitle('Tester les transactions');
+
+if ($byTitle !== null) {
+    echo 'where: ', $byTitle->id, ' ', $byTitle->title, "\n";
+}
+
+$db->transaction(function () use ($todos): void {
+    $todos->save(new Todo('Transaction', false));
+});
+echo 'after commit: ', $todos->store()->count(), "\n";
+
+try {
+    $db->transaction(function () use ($todos): void {
+        $todos->save(new Todo('Annulé', false));
+        throw new RuntimeException('rollback demandé');
+    });
+} catch (RuntimeException $error) {
+    echo 'rollback: ', $error->getMessage(), "\n";
+}
+echo 'after rollback: ', $todos->store()->count(), "\n";
+
+$all = $todos->all();
+echo 'all: ', count($all), "\n";
+
+foreach ($all as $todo) {
+    echo '- ', $todo->title, "\n";
+}
+
+try {
+    $table = new Table($db, 'todos; DROP TABLE todos');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'guard: ', $error->getMessage(), "\n";
+}
+
+try {
+    $table = new Table($db, '');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'guard empty: ', $error->getMessage(), "\n";
+}
+$new = new Todo('Jamais enregistré', false);
+
+if ($new->delete($db)) {
+    echo "delete new: accepted\n";
+} else {
+    echo "delete new: refused\n";
+}
+
+if ($todos->findOrFail($firstId)->delete($db)) {
+    echo "delete: done\n";
+}
+
+if ($todos->store()->exists($firstId)) {
+    echo "after delete: exists\n";
+} else {
+    echo "after delete: missing\n";
+}
+
+$db->close();
+PHP;
+
+$ormC = $compilePhp('orm-app', $ormSource, 'c');
+$ormCSource = (string) file_get_contents($ormC['cPath']);
+T::ok(str_contains($ormCSource, 'CyObj_Cyonima__Database__Entity'), 'ORM : Entity');
+T::ok(str_contains($ormCSource, 'CyObj_Cyonima__Database__Table'), 'ORM : Table');
+T::ok(str_contains($ormCSource, 'fn_sqlite_query_column_int'), 'ORM : colonne d’identifiants');
+T::ok(str_contains($ormCSource, 'fn_sqlite_query_row_string'), 'ORM : hydratation par row map');
+T::ok(str_contains($ormCSource, 'fn_sqlite_quote'), 'ORM : quoting des valeurs');
+
+$exampleOrmC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-orm.php',
+    null,
+    'c',
+);
+$exampleOrmSource = (string) file_get_contents($exampleOrmC['cPath']);
+T::ok(
+    str_contains($exampleOrmSource, 'CyObj_Cyonima__Database__Entity'),
+    'ORM : exemple du dépôt',
+);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution de l’ORM non testée');
+} else {
+    $ormElf = $compilePhp('orm-app', $ormSource, 'elf');
+    $ormExpected = <<<'TXT'
+migrations: 1
+insert: 1
+state: persisted
+find: Compiler l’ORM
+done: no
+update: yes
+where: 2 Tester les transactions
+after commit: 3
+rollback: rollback demandé
+after rollback: 3
+all: 3
+- Compiler l’ORM
+- Tester les transactions
+- Transaction
+guard: identifiant SQL invalide : todos; DROP TABLE todos
+guard empty: identifiant SQL vide
+delete new: refused
+delete: done
+after delete: missing
+
+TXT;
+    T::same(
+        $ormExpected,
+        shell_exec(escapeshellarg((string) $ormElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : entités, repositories, transactions et gardes SQL',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('43. UI — widgets enrichis, classes CSS et templates');
+
+$uiRoot = sys_get_temp_dir() . '/cyonima_ui_enrich_' . getmypid();
+$removeTree($uiRoot);
+mkdir($uiRoot . '/src', 0775, true);
+mkdir($uiRoot . '/templates', 0775, true);
+
+$richTemplateSource = <<<'UI'
+@params(array<App\Todo> $todos, float $progress, bool $enabled, callable():void $onToggle)
+
+<window title="Enrichi" width="420" height="520" class="app-window" tooltip="Démo">
+    <box vertical="true" spacing="8" class="panel">
+        <label text="Progression" class="title" />
+        <progress-bar fraction="{{ $progress }}" class="bar" />
+        <separator />
+        <label class="hint" sensitive="{{ $enabled }}">Détail</label>
+
+        @foreach ($todos as $todo)
+            <check-button
+                label="{{ $todo->title }}"
+                active="{{ $todo->done }}"
+                on-toggled="{{ $onToggle }}"
+                class="item"
+            />
+        @endforeach
+
+        <entry placeholder="Nouvelle tâche" tooltip="Saisie" class="new-task" />
+        <button text="Fermer" class="primary" />
+    </box>
+</window>
+UI;
+
+$richAppSource = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Rich;
+
+final class Todo
+{
+    public string $title;
+    public bool $done;
+
+    public function __construct(string $title, bool $done)
+    {
+        $this->title = $title;
+        $this->done = $done;
+    }
+}
+
+$todos = [];
+$todos[] = new Todo('Structure', true);
+$todos[] = new Todo('Widgets', false);
+
+$onToggle = function (): void {
+    echo "toggle\n";
+};
+
+$application = new Application('com.cyonima.ui.rich');
+$application->loadCss(
+    '.panel { padding: 12px; } .title { font-weight: bold; }'
+);
+$window = Rich::build($todos, 0.5, true, $onToggle);
+$window->addClass('root');
+$window->setTooltip('Fenêtre enrichie');
+$window->setSensitive(true);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$richGenerated = (new TemplateCompiler('Rich'))->compile($richTemplateSource);
+T::ok(
+    str_contains($richGenerated, 'new CheckButton'),
+    'template enrichi : check-button',
+);
+T::ok(
+    str_contains($richGenerated, 'new ProgressBar'),
+    'template enrichi : progress-bar',
+);
+T::ok(
+    str_contains($richGenerated, 'new Separator(false)'),
+    'template enrichi : separator',
+);
+T::ok(
+    str_contains($richGenerated, "->addClass('panel')"),
+    'template enrichi : classe CSS',
+);
+T::ok(
+    str_contains($richGenerated, "->setTooltip('Démo')"),
+    'template enrichi : tooltip',
+);
+T::ok(
+    str_contains($richGenerated, '->setSensitive(($enabled))'),
+    'template enrichi : sensitive',
+);
+T::ok(
+    str_contains($richGenerated, '->onToggled(($onToggle))'),
+    'template enrichi : on-toggled',
+);
+
+file_put_contents($uiRoot . '/templates/rich.ui', $richTemplateSource);
+file_put_contents($uiRoot . '/src/app.php', $richAppSource);
+
+$richC = (new PhpCompiler($uiRoot))->compile($uiRoot . '/src/app.php', null, 'c');
+$richCSource = (string) file_get_contents($richC['cPath']);
+T::ok(str_contains($richCSource, 'cy_ui_check_button'), 'UI enrichie : case à cocher');
+T::ok(str_contains($richCSource, 'cy_ui_progress_bar'), 'UI enrichie : barre de progression');
+T::ok(str_contains($richCSource, 'cy_ui_separator'), 'UI enrichie : séparateur');
+T::ok(str_contains($richCSource, 'cy_ui_add_class'), 'UI enrichie : classes CSS');
+T::ok(str_contains($richCSource, 'cy_ui_add_css'), 'UI enrichie : feuille CSS');
+T::ok(str_contains($richCSource, 'cy_ui_on_toggle_closure'), 'UI enrichie : signal toggled');
+T::ok(str_contains($richCSource, 'cy_ui_set_tooltip'), 'UI enrichie : tooltip');
+T::ok(str_contains($richCSource, 'cy_ui_set_sensitive'), 'UI enrichie : sensibilité');
+
+$facadeSource = <<<'PHP'
+<?php
+use Application;
+use Box;
+use CheckButton;
+use Entry;
+use Label;
+use ProgressBar;
+use Separator;
+use Window;
+
+$app = new Application('com.cyonima.widgets.facade');
+$app->loadCss('.panel { padding: 8px; }');
+$window = new Window('Widgets', 360, 240);
+$box = new Box(true, 6);
+$box->addClass('panel');
+$label = new Label('Prêt');
+$label->setTooltip('État');
+$check = new CheckButton('Activer', true);
+$bar = new ProgressBar();
+$bar->setFraction(0.5);
+$bar->addClass('bar');
+$separator = new Separator(false);
+$entry = new Entry('Nom');
+$entry->setSensitive(false);
+$box->append($label);
+$box->append($check);
+$box->append($bar);
+$box->append($separator);
+$box->append($entry);
+$window->setChild($box);
+$window->present();
+PHP;
+
+$facadeC = $compilePhp('ui-rich-facade', $facadeSource, 'c');
+$facadeCSource = (string) file_get_contents($facadeC['cPath']);
+T::ok(str_contains($facadeCSource, 'cy_ui_check_button'), 'façade : CheckButton');
+T::ok(str_contains($facadeCSource, 'cy_ui_progress_bar'), 'façade : ProgressBar');
+T::ok(str_contains($facadeCSource, 'cy_ui_separator'), 'façade : Separator');
+T::ok(str_contains($facadeCSource, 'cy_ui_add_css'), 'façade : Application::loadCss');
+
+$exampleWidgetsC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-widgets.php',
+    null,
+    'c',
+);
+$exampleWidgetsSource = (string) file_get_contents($exampleWidgetsC['cPath']);
+T::ok(
+    str_contains($exampleWidgetsSource, 'cy_ui_check_button')
+        && str_contains($exampleWidgetsSource, 'cy_ui_progress_bar'),
+    'UI enrichie : exemple du dépôt',
+);
+
+$richErrors = [
+    ['fraction invalide', '<window><progress-bar fraction="moitié" /></window>', 'nombre attendu pour "fraction"'],
+    ['check-button sans texte', '<window><check-button /></window>', 'texte manquant pour <check-button>'],
+    ['sensitive invalide', '<window><label sensitive="peut-être">x</label></window>', 'booléen attendu pour "sensitive"'],
+];
+
+foreach ($richErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('RichBroken' . $index))->compile($source);
+        T::ok(false, 'template enrichi : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'template enrichi : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$richGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$richDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$richGtk) {
+    T::skip('GTK4 dev absent : exécution des widgets enrichis non testée');
+} elseif (!$richDisplay) {
+    T::skip('DISPLAY absent : exécution des widgets enrichis non testée');
+} else {
+    $richElf = (new PhpCompiler($uiRoot))->compile($uiRoot . '/src/app.php', null, 'elf');
+    $richRunner = 'timeout 8 ' . escapeshellarg((string) $richElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $richRunner = 'dbus-run-session -- ' . $richRunner;
+    }
+
+    $richOut = [];
+    $richStatus = 0;
+    exec($richRunner . ' 2>&1', $richOut, $richStatus);
+    T::ok(
+        $richStatus === 0,
+        'UI enrichie : template GTK exécuté',
+        implode("\n", $richOut),
+    );
+
+    $widgetSource = <<<'PHP'
+<?php
+use Application;
+use CheckButton;
+use ProgressBar;
+use Separator;
+
+$app = new Application('com.cyonima.widgets.values');
+$check = new CheckButton('Activer', true);
+$bar = new ProgressBar();
+$bar->setFraction(0.25);
+$separator = new Separator(true);
+$separator->setSensitive(false);
+
+if ($check->active()) {
+    echo "active=yes\n";
+}
+
+if ($bar->fraction() > 0.2 && $bar->fraction() < 0.3) {
+    echo "fraction=ok\n";
+}
+
+$check->setActive(false);
+
+if (!$check->active()) {
+    echo "inactive=yes\n";
+}
+PHP;
+
+    $widgetElf = $compilePhp('ui-rich-values', $widgetSource, 'elf');
+    $widgetRunner = 'timeout 8 ' . escapeshellarg((string) $widgetElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $widgetRunner = 'dbus-run-session -- ' . $widgetRunner;
+    }
+
+    $widgetOut = [];
+    $widgetStatus = 0;
+    exec($widgetRunner . ' 2>&1', $widgetOut, $widgetStatus);
+    $widgetOutputText = implode("\n", $widgetOut);
+    T::ok(
+        str_contains($widgetOutputText, 'active=yes'),
+        'UI enrichie : CheckButton actif',
+        $widgetOutputText,
+    );
+    T::ok(
+        str_contains($widgetOutputText, 'fraction=ok'),
+        'UI enrichie : fraction conservée',
+        $widgetOutputText,
+    );
+    T::ok(
+        str_contains($widgetOutputText, 'inactive=yes'),
+        'UI enrichie : CheckButton désactivé',
+        $widgetOutputText,
+    );
+    T::ok($widgetStatus === 0, 'UI enrichie : widgets exécutés');
+}
+
+$removeTree($uiRoot);
+
 $removeTree($templateRoot);
 
 $removeTree($phpRoot);

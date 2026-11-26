@@ -24,6 +24,21 @@ class Widget
     {
         ui_set_visible($this->handle, $visible);
     }
+
+    public function addClass(string $class): void
+    {
+        ui_add_class($this->handle, $class);
+    }
+
+    public function setTooltip(string $text): void
+    {
+        ui_set_tooltip($this->handle, $text);
+    }
+
+    public function setSensitive(bool $sensitive): void
+    {
+        ui_set_sensitive($this->handle, $sensitive);
+    }
 }
 
 class Application
@@ -44,6 +59,11 @@ class Application
     public function quit(): void
     {
         ui_quit();
+    }
+
+    public function loadCss(string $css): void
+    {
+        ui_add_css($css);
     }
 
     public function after(int $milliseconds, callable():void $callback): void
@@ -129,6 +149,56 @@ class Entry extends Widget
     public function onActivate(callable():void $callback): void
     {
         ui_on_activate_closure($this->handle, $callback);
+    }
+}
+
+class CheckButton extends Widget
+{
+    public function __construct(string $label, bool $active)
+    {
+        $this->handle = ui_check_button($label);
+        ui_set_check_active($this->handle, $active);
+    }
+
+    public function active(): bool
+    {
+        return ui_check_active($this->handle);
+    }
+
+    public function setActive(bool $active): void
+    {
+        ui_set_check_active($this->handle, $active);
+    }
+
+    public function onToggled(callable():void $callback): void
+    {
+        ui_on_toggle_closure($this->handle, $callback);
+    }
+}
+
+class ProgressBar extends Widget
+{
+    public function __construct()
+    {
+        $this->handle = ui_progress_bar();
+    }
+
+    public function fraction(): float
+    {
+        return ui_progress_fraction($this->handle);
+    }
+
+    public function setFraction(float $fraction): void
+    {
+        ui_set_progress_fraction($this->handle, $fraction);
+    }
+}
+
+class Separator extends Widget
+{
+    public function __construct(bool $vertical)
+    {
+        $this->handle = ui_separator($vertical);
     }
 }
 PHP;

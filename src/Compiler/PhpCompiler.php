@@ -660,7 +660,18 @@ final class PhpCompiler
     /** @param list<\Cyonima\Compiler\Lexer\Token> $tokens */
     private function usesUiClasses(array $tokens, bool $console = false): bool
     {
-        $classes = ['Application', 'Widget', 'Window', 'Box', 'Label', 'Button', 'Entry'];
+        $classes = [
+            'Application',
+            'Widget',
+            'Window',
+            'Box',
+            'Label',
+            'Button',
+            'Entry',
+            'CheckButton',
+            'ProgressBar',
+            'Separator',
+        ];
         $count = count($tokens);
 
         for ($index = 0; $index < $count - 1; $index++) {

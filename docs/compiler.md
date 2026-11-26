@@ -143,7 +143,9 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`, JSON typé, CLI/chaînes |
 | Console | `Cyonima\Console\Application`, `Command`, `Input`, `Output` |
 | Base de données | `Cyonima\Database\Connection`, `Repository`, `Migration`, `Migrator` |
+| ORM léger | `Cyonima\Database\Entity`, `Table`, `Repository::store()`, transactions |
 | Validation | `Cyonima\Validation\Validator`, règles typées |
+| UI native | `Application`, `Window`, `Box`, `Label`, `Button`, `Entry`, `CheckButton`, `ProgressBar`, `Separator`, CSS |
 | Templates | `.ui` compilés en `Cyonima\Templates\<Nom>::build()` |
 | Modules natifs | SQLite, libcurl et libssh2 (`sqlite_*`, `curl_*`, `ssh2_*`) |
 | Packaging natif | `--package=appimage\|flatpak` |
@@ -1049,15 +1051,15 @@ echo $migrator->run();
 `Connection` :
 
 ```text
-exec, queryInt, queryFloat, queryBool, queryString, row
+exec, queryInt, queryFloat, queryBool, queryString, row, columnInt
 quote, lastInsertId, changes, error
-begin, commit, rollback, close
+begin, commit, rollback, transaction(callable), close
 ```
 
 `Repository` :
 
 ```text
-tableName, count, exists(id), delete(id), row, execute, lastId, changes
+tableName, count, exists(id), delete(id), row, execute, lastId, changes, store
 ```
 
 `Migrator` :
@@ -1071,14 +1073,14 @@ tableName, count, exists(id), delete(id), row, execute, lastId, changes
 Nouvelles fonctions du module SQLite :
 
 ```text
-sqlite_query_row_string  → array<string,string>
-sqlite_quote             → échappement SQL (%Q)
+sqlite_query_row_string    → array<string,string>
+sqlite_query_column_int    → array<int>
+sqlite_quote               → échappement SQL (%Q)
 ```
 
 Limites actuelles :
 
 - helpers `exists`/`delete` supposent une clé primaire entière `id` ;
-- pas d’ORM, de relations, de lazy loading ni de collections d’entités ;
 - pas de requêtes préparées : `quote()` est fourni pour les valeurs ;
 - les row maps sont des `array<string,string>` (caster avec `intval`,
   `floatval`, etc.) ;
@@ -1086,6 +1088,148 @@ Limites actuelles :
 
 Un exemple complet est fourni dans
 [`examples/native-database.php`](../examples/native-database.php).
+
+### ORM léger
+
+`Cyonima\Database` fournit une couche « data mapper » explicite : aucune
+réflexion, le mapping est écrit dans l’entité.
+
+```php
+use Cyonima\Database\Entity;
+
+final class Todo extends Entity
+{
+    public string $title;
+    public bool $done;
+
+    public function __construct(string $title, bool $done)
+    {
+        parent::__construct();
+        $this->title = $title;
+        $this->done = $done;
+    }
+
+    public function table(): string
+    {
+        return 'todos';
+    }
+
+    /** @return array<string,string> */
+    public function values(): array
+    {
+        $values = [];
+        $values['title'] = $this->title;
+
+        if ($this->done) {
+            $values['done'] = '1';
+        } else {
+            $values['done'] = '0';
+        }
+
+        return $values;
+    }
+
+    /** @param array<string,string> $row */
+    public function hydrate(array $row): void
+    {
+        $this->id = intval($row['id']);
+        $this->title = $row['title'];
+        $this->done = $row['done'] === '1';
+    }
+}
+```
+
+`Entity` :
+
+```text
+id (int, 0 = non persisté)
+isNew(), assignId(id)
+table(), values(), hydrate(row)
+save(connection) → id
+delete(connection) → bool
+```
+
+`save()` insère quand `id === 0`, sinon met à jour. `delete()` repasse `id` à
+0. Le repository typé reste explicite :
+
+```php
+final class TodoRepository extends Repository
+{
+    public function __construct(Connection $connection)
+    {
+        parent::__construct($connection, 'todos');
+    }
+
+    public function findOrFail(int $id): Todo
+    {
+        $row = $this->store()->find($id);
+
+        if (count($row) === 0) {
+            throw new RuntimeException('todo introuvable : ' . strval($id));
+        }
+
+        $todo = new Todo('', false);
+        $todo->hydrate($row);
+
+        return $todo;
+    }
+
+    /** @return array<Todo> */
+    public function all(): array
+    {
+        $todos = [];
+        $ids = $this->store()->ids();
+
+        foreach ($ids as $id) {
+            $row = $this->store()->find($id);
+
+            if (count($row) > 0) {
+                $todo = new Todo('', false);
+                $todo->hydrate($row);
+                $todos[] = $todo;
+            }
+        }
+
+        return $todos;
+    }
+}
+```
+
+`Table`, accessible via `Repository::store()` :
+
+```text
+insert(array<string,string>) → id
+update(id, array<string,string>) → bool
+find(id) / findWhere(column, value) → array<string,string>
+delete(id), exists(id), count(), ids() → array<int>
+```
+
+Transactions :
+
+```php
+$db->transaction(function () use ($todos): void {
+    $todos->save(new Todo('Nouvelle tâche', false));
+});
+```
+
+`transaction()` exécute `BEGIN`, `COMMIT`, et `ROLLBACK` avec propagation de
+l’exception.
+
+Les noms de tables et de colonnes passés à `Table` sont validés : espaces,
+quotes, `;`, `--`, parenthèses, virgules, `*` et `=` sont refusés.
+
+Limites de l’ORM :
+
+- mapping et hydratation écrits à la main, sans réflexion ;
+- clé primaire entière `id` et `lastInsertId()` (rowid SQLite) ;
+- pas de relations, de lazy loading, d’identity map, de cascade ni de détection
+  automatique des changements ;
+- `all()` fait une requête par identifiant ;
+- pas de requêtes préparées ni de query builder ;
+- pas de timestamps automatiques, de soft delete ni de transactions imbriquées.
+
+Un exemple complet est fourni dans
+[`examples/native-orm.php`](../examples/native-orm.php).
 
 ### Validation typée
 
@@ -1255,34 +1399,54 @@ Un exemple prêt à compiler est fourni dans
 
 ### Façade objet
 
-La façade `Application` / `Window` / `Box` / `Label` / `Button` / `Entry` est
-injectée automatiquement lorsqu’un programme utilise `new` sur l’une de ces
-classes. Elle encapsule les handles et les appels `ui_*`.
+La façade `Application` / `Window` / `Box` / `Label` / `Button` / `Entry` /
+`CheckButton` / `ProgressBar` / `Separator` est injectée automatiquement
+lorsqu’un programme utilise `new` sur l’une de ces classes. Elle encapsule les
+handles et les appels `ui_*`.
 
 ```php
 $app = new Application('com.cyonima.nativeui.object');
-$window = new Window('Cyonima objet', 400, 200);
+$app->loadCss('.title { font-weight: bold; } .primary { background: #238636; }');
+
+$window = new Window('Cyonima objet', 400, 240);
 $box = new Box(true, 12);
 $label = new Label('Bonjour');
+$label->addClass('title');
+$check = new CheckButton('Activer', true);
+$progress = new ProgressBar();
+$progress->setFraction(0.5);
+$separator = new Separator(false);
 $button = new Button('Cliquer');
 
 $box->append($label);
+$box->append($check);
+$box->append($progress);
+$box->append($separator);
 $box->append($button);
 $window->setChild($box);
 
 $button->onClicked(fn () => $label->setText('Cliqué !'));
+$check->onToggled(fn () => $progress->setFraction(0.75));
 
 $window->present();
 $app->run();
 ```
 
-- `Widget` est la classe de base des widgets, avec le handle et
-  `setVisible(bool)` ;
+- `Widget` est la classe de base des widgets, avec le handle,
+  `setVisible(bool)`, `addClass(string)`, `setTooltip(string)` et
+  `setSensitive(bool)` ;
+- `Application::loadCss(string)` charge une feuille CSS globale via un
+  `GtkCssProvider` ;
+- `CheckButton` expose `active()`, `setActive(bool)`, `onToggled(callable)` ;
+- `ProgressBar` expose `fraction()` et `setFraction(float)` ;
+- `Separator(bool $vertical)` ;
 - les callbacks sont des closures `callable():void` enregistrées via
-  `ui_on_click_closure` et maintenues en vie par les racines GC ;
+  `ui_on_click_closure`, `ui_on_toggle_closure` et maintenues en vie par les
+  racines GC ;
 - fermer la fenêtre arrête la boucle ;
 - un exemple complet est fourni dans
-  [`examples/native-ui-object.php`](../examples/native-ui-object.php).
+  [`examples/native-ui-object.php`](../examples/native-ui-object.php) et
+  [`examples/native-widgets.php`](../examples/native-widgets.php).
 
 ### Templates `.ui` compilés
 
@@ -1375,6 +1539,10 @@ Deux fichiers produisant la même classe sont refusés.
 | `<label text>` | libellé ; texte direct accepté |
 | `<button text on-click>` | bouton et callback |
 | `<entry placeholder on-activate>` | champ de saisie |
+| `<check-button label active on-toggled>` | case à cocher |
+| `<progress-bar fraction>` | barre de progression |
+| `<separator vertical>` | séparateur |
+| `class` / `tooltip` / `sensitive` | attributs communs à tous les widgets |
 | `{{ expression }}` | interpolation dans un texte ou un attribut |
 | `@if` / `@elseif` / `@else` / `@endif` | conditions |
 | `@foreach` / `@endforeach` | boucles |
@@ -1387,29 +1555,47 @@ Les types de `@params` suivent la syntaxe du compilateur : scalaires,
 Attributs :
 
 - `width`, `height`, `spacing` : entiers ou `{{ expression }}` ;
-- `vertical` : `true`, `false` ou `{{ expression }}` ;
-- `title`, `text`, `placeholder` : texte avec interpolation ;
-- `on-click`, `on-activate` : obligatoirement `{{ $callable }}`.
+- `fraction` : nombre ou `{{ expression }}` ;
+- `vertical`, `active`, `sensitive` : `true`, `false` ou `{{ expression }}` ;
+- `title`, `text`, `label`, `placeholder`, `tooltip` : texte avec
+  interpolation ;
+- `class` : une ou plusieurs classes séparées par des espaces, ou
+  `{{ expression }}` pour une classe dynamique ;
+- `on-click`, `on-activate`, `on-toggled` : obligatoirement
+  `{{ $callable }}`.
 
 Un exemple complet est fourni dans
 [`examples/native-templates.php`](../examples/native-templates.php) et
 [`examples/native-todo-list.ui`](../examples/native-todo-list.ui).
 
+Le thème est chargé par l’application, pas par le template :
+
+```php
+$application->loadCss(
+    '.task-panel { padding: 16px; }'
+    . '.title { font-size: 22px; font-weight: bold; }'
+    . '.status { color: #3ddc97; }'
+);
+```
+
 Limites :
 
 - un seul `<window>` racine, pas de fragments ni d’inclusion ;
 - `<label>` et `<button>` n’acceptent pas de balises imbriquées ;
-- pas encore de CSS, d’identifiants, de listes GTK ni de liaison de données ;
+- CSS global uniquement, pas de feuille propre à un template ;
+- pas d’identifiants de widgets, de listes GTK ni de liaison de données ;
 - pas de cache de templates : ils sont recompilés à chaque compilation ;
 - les expressions restent du PHP du sous-ensemble, analysé statiquement.
 
 ### Limites de cette première couche
 
 - façade objet et composition par objets disponibles ; widgets limités à la
-  fenêtre, la boîte, le libellé, le bouton et l’entrée ;
+  fenêtre, la boîte, le libellé, le bouton, l’entrée, la case à cocher, la
+  barre de progression et le séparateur ;
 - callbacks UI limités à `callable():void` ;
 - une seule boucle GTK par programme, 256 widgets maximum ;
-- pas encore de CSS, de menus, de listes ni de modèles de données ;
+- CSS global seulement : pas de thème par widget, de menus, de listes ni de
+  modèles de données ;
 - la compilation ELF d’une application UI exige `libgtk-4-dev`.
 
 La façade objet `Cyonima\UI` (`new Button(...)`, `onClicked(...)`) sera
@@ -1578,6 +1764,8 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 4 | modules natifs : SQLite, `libcurl`, `libssh2` | livré |
 | 5 | packaging : `--package=appimage` et `--package=flatpak` | livré |
 | 6 | templates `.ui` compilés vers la façade GTK | livré |
+| 7 | ORM léger : entités, table gateway, transactions | livré |
+| 8 | widgets enrichis, CSS global et templates | livré |
 
 La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la

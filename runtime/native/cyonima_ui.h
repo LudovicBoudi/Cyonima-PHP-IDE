@@ -123,6 +123,105 @@ static inline cy_int cy_ui_entry(const char *placeholder)
     return cy_ui_register(entry);
 }
 
+static inline cy_int cy_ui_check_button(const char *label)
+{
+    return cy_ui_register(gtk_check_button_new_with_label(label));
+}
+
+static inline bool cy_ui_check_active(cy_int handle)
+{
+    return gtk_check_button_get_active(GTK_CHECK_BUTTON(cy_ui_widget(handle)));
+}
+
+static inline void cy_ui_set_check_active(cy_int handle, bool active)
+{
+    gtk_check_button_set_active(
+        GTK_CHECK_BUTTON(cy_ui_widget(handle)),
+        active
+    );
+}
+
+static inline cy_int cy_ui_progress_bar(void)
+{
+    return cy_ui_register(gtk_progress_bar_new());
+}
+
+static inline cy_float cy_ui_progress_fraction(cy_int handle)
+{
+    return (cy_float) gtk_progress_bar_get_fraction(
+        GTK_PROGRESS_BAR(cy_ui_widget(handle))
+    );
+}
+
+static inline void cy_ui_set_progress_fraction(cy_int handle, cy_float fraction)
+{
+    gtk_progress_bar_set_fraction(
+        GTK_PROGRESS_BAR(cy_ui_widget(handle)),
+        (double) fraction
+    );
+}
+
+static inline cy_int cy_ui_separator(cy_int vertical)
+{
+    return cy_ui_register(
+        gtk_separator_new(
+            vertical ? GTK_ORIENTATION_VERTICAL : GTK_ORIENTATION_HORIZONTAL
+        )
+    );
+}
+
+static inline void cy_ui_add_class(cy_int handle, const char *name)
+{
+    if (name == NULL || name[0] == '\0') {
+        return;
+    }
+
+    gtk_widget_add_css_class(cy_ui_widget(handle), name);
+}
+
+static inline void cy_ui_set_tooltip(cy_int handle, const char *text)
+{
+    gtk_widget_set_tooltip_text(cy_ui_widget(handle), text);
+}
+
+static inline void cy_ui_set_sensitive(cy_int handle, bool sensitive)
+{
+    gtk_widget_set_sensitive(cy_ui_widget(handle), sensitive);
+}
+
+static inline void cy_ui_add_css(const char *css)
+{
+    if (!cy_ui_initialized) {
+        cy_ui_error("appelez ui_init() avant ui_add_css()");
+    }
+
+    if (css == NULL || css[0] == '\0') {
+        return;
+    }
+
+    GdkDisplay *display = gdk_display_get_default();
+
+    if (display == NULL) {
+        return;
+    }
+
+    GtkCssProvider *provider = gtk_css_provider_new();
+
+#if GTK_CHECK_VERSION(4, 12, 0)
+    gtk_css_provider_load_from_string(provider, css);
+#else
+    gtk_css_provider_load_from_data(provider, css, -1);
+#endif
+
+    gtk_style_context_add_provider_for_display(
+        display,
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION
+    );
+
+    g_object_unref(provider);
+}
+
 static inline void cy_ui_append(cy_int parent, cy_int child)
 {
     gtk_box_append(GTK_BOX(cy_ui_widget(parent)), cy_ui_widget(child));
@@ -202,6 +301,17 @@ static inline void cy_ui_on_activate_closure(cy_int entry, CyClosure *closure)
     g_signal_connect(
         cy_ui_widget(entry),
         "activate",
+        G_CALLBACK(cy_ui_closure_click),
+        closure
+    );
+}
+
+static inline void cy_ui_on_toggle_closure(cy_int handle, CyClosure *closure)
+{
+    cy_add_root(closure);
+    g_signal_connect(
+        cy_ui_widget(handle),
+        "toggled",
         G_CALLBACK(cy_ui_closure_click),
         closure
     );
