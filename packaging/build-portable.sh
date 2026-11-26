@@ -21,6 +21,7 @@ cp -r \
     "$ROOT/runtime" \
     "$ROOT/examples" \
     "$ROOT/spec" \
+    "$ROOT/packaging" \
     "$ROOT/composer.json" \
     "$ROOT/README.md" \
     "$ROOT/LICENSE" \

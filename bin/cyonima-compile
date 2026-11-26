@@ -14,6 +14,8 @@ $form = 'main-form';
 $php = null;
 $output = null;
 $emit = 'elf';
+$modules = [];
+$package = null;
 
 foreach ($arguments as $argument) {
     if ($argument === '--help' || $argument === '-h') {
@@ -31,6 +33,9 @@ foreach ($arguments as $argument) {
           --project=DIR   projet de sortie (défaut : répertoire courant)
           --emit=c|elf    code C seulement, ou binaire natif (défaut : elf)
           --output=PATH   sortie du binaire
+          --module=NAME   active un module natif (sqlite, curl, ssh2) ; répétable
+          --package=appimage|flatpak
+                          compile puis empaquette directement l’application
           --help          affiche cette aide
 
         Un formulaire produit un binaire GTK4. Un fichier PHP produit un binaire
@@ -58,19 +63,34 @@ foreach ($arguments as $argument) {
     }
     if (str_starts_with($argument, '--output=')) {
         $output = substr($argument, strlen('--output='));
+        continue;
+    }
+    if (str_starts_with($argument, '--module=')) {
+        $modules[] = substr($argument, strlen('--module='));
+        continue;
+    }
+    if (str_starts_with($argument, '--package=')) {
+        $package = substr($argument, strlen('--package='));
     }
 }
 
 try {
+    if ($php === null && $package !== null) {
+        throw new RuntimeException('--package nécessite --php=FILE.');
+    }
+
     $compiler = $php === null
         ? new FormCompiler($project)
-        : new PhpCompiler($project);
+        : new PhpCompiler($project, $modules);
     $result = $php === null
         ? $compiler->compile($form, $output, $emit)
-        : $compiler->compile($php, $output, $emit);
+        : $compiler->compile($php, $output, $emit, $package);
     echo $result['message'], "\n";
     if ($result['binaryPath'] !== null) {
         echo "C : ", $result['cPath'], "\n";
+    }
+    if ($php !== null && ($result['linkFlags'] ?? '') !== '') {
+        echo "Link : ", $result['linkFlags'], "\n";
     }
 } catch (Throwable $exception) {
     fwrite(STDERR, '[cyonima-compile] ' . $exception->getMessage() . "\n");

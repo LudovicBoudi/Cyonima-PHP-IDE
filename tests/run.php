@@ -2743,7 +2743,7 @@ PHP, 'elf');
         'elf',
     );
     T::same(
-        "12 7\n",
+        "12 7 2\n",
         shell_exec(escapeshellarg((string) $exampleClosureElf['binaryPath']) . ' 2>&1'),
         'compilateur PHP : exemple closures',
     );
@@ -3731,6 +3731,488 @@ foreach ($arraySignatureErrors as $index => [$label, $source, $needle]) {
             $exception->getMessage(),
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+T::section('29. Compilateur PHP — capture par référence');
+
+$byRefSource = <<<'PHP'
+<?php
+$count = 0;
+$inc = function () use (&$count): void {
+    $count = $count + 1;
+};
+
+$inc();
+$inc();
+echo $count, "\n";
+$count = 10;
+$inc();
+echo $count, "\n";
+PHP;
+
+$byRefC = $compilePhp('capture-by-ref', $byRefSource, 'c');
+$byRefCSource = (string) file_get_contents($byRefC['cPath']);
+T::ok(str_contains($byRefCSource, 'vc_count'), 'référence : cellule de variable');
+T::ok(str_contains($byRefCSource, 'cap_count'), 'référence : champ de closure');
+T::ok(str_contains($byRefCSource, 'cy_object_new'), 'référence : cellule GC');
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des captures par référence non testée');
+} else {
+    $byRefElf = $compilePhp('capture-by-ref', $byRefSource, 'elf');
+    T::same(
+        "2\n11\n",
+        shell_exec(escapeshellarg((string) $byRefElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : capture scalaire par référence',
+    );
+
+    $byRefEscapeElf = $compilePhp('capture-by-ref-escape', <<<'PHP'
+<?php
+function makeCounter(): callable():int {
+    $n = 0;
+    return function () use (&$n): int {
+        $n = $n + 1;
+        return $n;
+    };
+}
+
+$counter = makeCounter();
+echo $counter(), " ", $counter(), " ", $counter(), "\n";
+$i = 0;
+
+while ($i < 2000) {
+    $tmp = strval($i);
+    $i = $i + 1;
+}
+
+echo $counter(), "\n";
+PHP, 'elf');
+    T::same(
+        "1 2 3\n4\n",
+        shell_exec(escapeshellarg((string) $byRefEscapeElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : cellule capturée survivant à la GC',
+    );
+
+    $byRefContainersElf = $compilePhp('capture-by-ref-containers', <<<'PHP'
+<?php
+$list = [1];
+$push = function () use (&$list): void {
+    $list[] = 2;
+    $list[] = 3;
+};
+$push();
+echo count($list), "\n";
+
+class Packet {
+    public int $value;
+    public function __construct(int $value) { $this->value = $value; }
+}
+
+$packet = new Packet(1);
+$replace = function () use (&$packet): void {
+    $packet = new Packet(7);
+};
+$replace();
+echo $packet->value, "\n";
+
+$fn = fn (int $x): int => $x + 1;
+$swap = function () use (&$fn): void {
+    $fn = fn (int $x): int => $x * 2;
+};
+$swap();
+echo $fn(3), "\n";
+PHP, 'elf');
+    T::same(
+        "3\n7\n6\n",
+        shell_exec(escapeshellarg((string) $byRefContainersElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : références vers tableau, objet et closure',
+    );
+
+    $byRefNestedElf = $compilePhp('capture-by-ref-nested', <<<'PHP'
+<?php
+$count = 0;
+$outer = function () use (&$count): void {
+    $inner = function () use (&$count): void {
+        $count = $count + 1;
+    };
+    $inner();
+    $inner();
+};
+$outer();
+echo $count, "\n";
+
+$run = function (): int {
+    $n = 0;
+    $inner = function () use (&$n): void {
+        $n = $n + 1;
+    };
+    $inner();
+    $inner();
+    return $n;
+};
+echo $run(), "\n";
+PHP, 'elf');
+    T::same(
+        "2\n2\n",
+        shell_exec(escapeshellarg((string) $byRefNestedElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : références dans closures imbriquées',
+    );
+
+    $byRefMethodElf = $compilePhp('capture-by-ref-method', <<<'PHP'
+<?php
+class Counter {
+    public function run(): int {
+        $n = 0;
+        $bump = function () use (&$n): void {
+            $n = $n + 2;
+        };
+        $bump();
+        $bump();
+        return $n;
+    }
+
+    public static function staticRun(int $start): int {
+        $value = $start;
+        $add = function () use (&$value): void {
+            $value = $value + 3;
+        };
+        $add();
+        return $value;
+    }
+}
+
+echo (new Counter())->run(), " ", Counter::staticRun(1), "\n";
+PHP, 'elf');
+    T::same(
+        "4 4\n",
+        shell_exec(escapeshellarg((string) $byRefMethodElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : référence dans méthodes instance et statique',
+    );
+}
+
+$byRefErrors = [
+    ['this', '<?php class A { public function f(): void { $c = function () use (&$this): void {}; } }', 'capture de $this non supportée'],
+    ['variable inconnue', '<?php $c = function () use (&$missing): void {};', 'variable capturée non définie'],
+    ['capture dupliquée', '<?php $x = 1; $c = function () use ($x, &$x): void {};', 'capture dupliquée'],
+    ['variable non affectée', '<?php if (true) { $x = 1; } $c = function () use (&$x): void {};', 'capturée mais peut ne pas être affectée'],
+];
+
+foreach ($byRefErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('capture-by-ref-error-' . $index, $source, 'c');
+        T::ok(false, 'référence : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'référence : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('30. Modules natifs — SQLite');
+
+$sqliteSource = <<<'PHP'
+<?php
+$db = sqlite_open(":memory:");
+
+if ($db === 0) {
+    throw "ouverture impossible";
+}
+
+sqlite_exec($db, "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, price REAL)");
+sqlite_exec($db, "INSERT INTO items (name, price) VALUES ('alpha', 1.5)");
+sqlite_exec($db, "INSERT INTO items (name, price) VALUES ('beta', 2.5)");
+
+echo sqlite_query_int($db, "SELECT count(*) FROM items"), "\n";
+echo sqlite_query_string($db, "SELECT name FROM items WHERE id = 1"), "\n";
+echo sqlite_query_float($db, "SELECT price FROM items WHERE id = 2"), "\n";
+echo sqlite_query_bool($db, "SELECT count(*) > 1 FROM items"), "\n";
+echo sqlite_last_id($db), "\n";
+
+sqlite_exec($db, "UPDATE items SET price = 3.0 WHERE id = 1");
+echo sqlite_changes($db), "\n";
+
+if (!sqlite_exec($db, "SELECT * FROM missing")) {
+    echo "erreur: ", sqlite_error($db), "\n";
+}
+
+if (sqlite_close($db)) {
+    echo "ferme\n";
+} else {
+    echo "echec\n";
+}
+PHP;
+
+$sqliteC = $compilePhp('sqlite-basic', $sqliteSource, 'c');
+$sqliteCSource = (string) file_get_contents($sqliteC['cPath']);
+T::ok(str_contains($sqliteCSource, '#include <sqlite3.h>'), 'SQLite : include natif');
+T::ok(str_contains($sqliteCSource, 'sqlite3_open_v2'), 'SQLite : shim C');
+T::ok(str_contains($sqliteCSource, 'fn_sqlite_query_int'), 'SQLite : fonction native');
+
+exec('pkg-config --exists sqlite3 2>/dev/null', $sqliteLines, $sqliteStatus);
+$hasSqlite = $sqliteStatus === 0;
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou sqlite3 de développement absent : exécution SQLite non testée');
+} else {
+    $sqliteElf = $compilePhp('sqlite-basic', $sqliteSource, 'elf');
+    T::same(
+        "2\nalpha\n2.5\n1\n2\n1\nerreur: no such table: missing\nferme\n",
+        shell_exec(escapeshellarg((string) $sqliteElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : module natif SQLite',
+    );
+
+    $sqliteOopElf = $compilePhp('sqlite-oop', <<<'PHP'
+<?php
+class Database {
+    public int $handle;
+
+    public function __construct(string $path) {
+        $this->handle = sqlite_open($path);
+    }
+
+    public function setup(): void {
+        sqlite_exec($this->handle, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)");
+    }
+
+    public function add(string $name): int {
+        $sql = "INSERT INTO t (name) VALUES ('" . $name . "')";
+        sqlite_exec($this->handle, $sql);
+        return sqlite_last_id($this->handle);
+    }
+
+    public function count(): int {
+        return sqlite_query_int($this->handle, "SELECT count(*) FROM t");
+    }
+}
+
+$db = new Database(":memory:");
+$db->setup();
+$db->add("a");
+$db->add("b");
+
+$reader = function () use ($db): int {
+    return $db->count();
+};
+
+echo $reader(), "\n";
+PHP, 'elf');
+    T::same(
+        "2\n",
+        shell_exec(escapeshellarg((string) $sqliteOopElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : SQLite via objet et closure',
+    );
+}
+
+try {
+    $compilePhp('sqlite-collision', '<?php function sqlite_open(string $path): int { return 1; } echo sqlite_open("x");', 'c');
+    T::ok(false, 'SQLite : conflit de fonction native');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'conflit de fonction native'),
+        'SQLite : conflit de fonction native',
+        $exception->getMessage(),
+    );
+}
+
+try {
+    $unknownPath = $phpRoot . '/src/sqlite-unknown-module.php';
+    file_put_contents($unknownPath, '<?php echo 1;');
+    (new PhpCompiler($phpRoot, ['missing']))->compile($unknownPath, null, 'c');
+    T::ok(false, 'modules natifs : module inconnu');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'module natif inconnu'),
+        'modules natifs : module inconnu',
+        $exception->getMessage(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('31. Modules natifs — curl et ssh2');
+
+$curlSource = <<<'PHP'
+<?php
+$handle = curl_init("__URL__");
+
+if ($handle === 0) {
+    throw "initialisation curl impossible";
+}
+
+curl_set_header($handle, "X-Cyonima: 1");
+
+if (!curl_perform($handle)) {
+    echo "erreur: ", curl_error($handle), "\n";
+} else {
+    echo curl_body($handle);
+}
+
+curl_close($handle);
+PHP;
+
+$curlC = $compilePhp('curl-module', $curlSource, 'c');
+$curlCSource = (string) file_get_contents($curlC['cPath']);
+T::ok(str_contains($curlCSource, '#include <curl/curl.h>'), 'curl : include natif');
+T::ok(str_contains($curlCSource, 'fn_curl_perform'), 'curl : shim C');
+T::ok(str_contains((string) $curlC['linkFlags'], 'lcurl'), 'curl : option de liaison');
+
+$sshSource = <<<'PHP'
+<?php
+$handle = ssh2_connect("127.0.0.1", 1);
+
+if ($handle === 0) {
+    echo "connexion refusee: ", ssh2_error(0), "\n";
+} else {
+    echo "inattendu\n";
+    ssh2_disconnect($handle);
+}
+PHP;
+
+$sshC = $compilePhp('ssh2-module', $sshSource, 'c');
+$sshCSource = (string) file_get_contents($sshC['cPath']);
+T::ok(str_contains($sshCSource, '#include <libssh2.h>'), 'ssh2 : include natif');
+T::ok(str_contains($sshCSource, 'fn_ssh2_connect'), 'ssh2 : shim C');
+T::ok(str_contains((string) $sshC['linkFlags'], 'lssh2'), 'ssh2 : option de liaison');
+
+exec('pkg-config --exists libcurl 2>/dev/null', $curlLines, $curlStatus);
+exec('pkg-config --exists libssh2 2>/dev/null', $sshLines, $sshStatus);
+$hasCurl = $curlStatus === 0;
+$hasSsh2 = $sshStatus === 0;
+
+if (!$hasGcc || !$hasCurl) {
+    T::skip('gcc ou libcurl de développement absent : exécution curl non testée');
+} else {
+    $payload = $phpRoot . '/src/curl-payload.txt';
+    file_put_contents($payload, "bonjour curl\n");
+    $curlProgram = str_replace('__URL__', 'file://' . $payload, $curlSource);
+    $curlElf = $compilePhp('curl-runtime', $curlProgram, 'elf');
+    T::same(
+        "bonjour curl\n",
+        shell_exec(escapeshellarg((string) $curlElf['binaryPath']) . ' 2>&1'),
+        'compilateur PHP : module curl sur fichier local',
+    );
+}
+
+if (!$hasGcc || !$hasSsh2) {
+    T::skip('gcc ou libssh2 de développement absent : exécution ssh2 non testée');
+} else {
+    $sshElf = $compilePhp('ssh-runtime', $sshSource, 'elf');
+    $sshOutput = (string) shell_exec(
+        escapeshellarg((string) $sshElf['binaryPath']) . ' 2>&1',
+    );
+    T::ok(
+        str_contains($sshOutput, 'connexion refusee:') && str_contains($sshOutput, 'impossible'),
+        'compilateur PHP : module ssh2 et erreur de connexion',
+        $sshOutput,
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('32. Packaging natif — AppImage et Flatpak');
+
+$packageRoot = $phpRoot . '/native-package-project';
+$packageSource = $packageRoot . '/src/main.php';
+$packageAppId = 'com.example.cyonimanative';
+mkdir($packageRoot . '/.cyonima', 0775, true);
+mkdir($packageRoot . '/src', 0775, true);
+mkdir($packageRoot . '/assets', 0775, true);
+file_put_contents($packageRoot . '/.cyonima/project.json', json_encode([
+    'name' => 'Native Package',
+    'appId' => $packageAppId,
+    'version' => '0.1.0',
+    'entry' => 'src/main.php',
+], JSON_PRETTY_PRINT));
+file_put_contents($packageSource, "<?php\necho \"native package\\n\";\n");
+
+$repositoryRoot = dirname(__DIR__);
+$hasAppImageTool = is_file($repositoryRoot . '/.tools/appimagetool')
+    || is_file($repositoryRoot . '/tools/appimagetool')
+    || trim((string) shell_exec('command -v appimagetool 2>/dev/null')) !== '';
+
+if (!$hasGcc || !$hasAppImageTool) {
+    T::skip('gcc ou appimagetool absent : packaging AppImage non testé');
+} else {
+    $appImageResult = (new PhpCompiler($packageRoot))->compile(
+        $packageSource,
+        null,
+        'elf',
+        'appimage',
+    );
+    T::ok(
+        isset($appImageResult['packagePath']) && is_file((string) $appImageResult['packagePath']),
+        'packaging : AppImage native générée',
+    );
+    T::same(
+        "native package\n",
+        shell_exec(
+            'APPIMAGE_EXTRACT_AND_RUN=1 '
+            . escapeshellarg((string) $appImageResult['packagePath'])
+            . ' 2>&1',
+        ),
+        'packaging : exécution de l’AppImage native',
+    );
+}
+
+if (!$hasGcc || !$hasAppImageTool || !$hasSqlite) {
+    T::skip('SQLite absent : AppImage avec module natif non testée');
+} else {
+    file_put_contents($packageSource, <<<'PHP'
+<?php
+$db = sqlite_open(":memory:");
+sqlite_exec($db, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)");
+sqlite_exec($db, "INSERT INTO t (name) VALUES ('packaged')");
+echo sqlite_query_string($db, "SELECT name FROM t WHERE id = 1"), "\n";
+sqlite_close($db);
+PHP);
+    $sqliteAppImage = (new PhpCompiler($packageRoot))->compile(
+        $packageSource,
+        null,
+        'elf',
+        'appimage',
+    );
+    T::same(
+        "packaged\n",
+        shell_exec(
+            'APPIMAGE_EXTRACT_AND_RUN=1 '
+            . escapeshellarg((string) $sqliteAppImage['packagePath'])
+            . ' 2>&1',
+        ),
+        'packaging : bibliothèque SQLite embarquée',
+    );
+}
+
+$hasFlatpakBuilder = trim((string) shell_exec('command -v flatpak-builder 2>/dev/null')) !== '';
+$hasGnomeSdk = trim((string) shell_exec(
+    'flatpak info org.gnome.Sdk//49 >/dev/null 2>&1; echo $?',
+)) === '0';
+$runFlatpakTest = getenv('CYONIMA_TEST_FLATPAK') === '1';
+
+if (!$runFlatpakTest || !$hasGcc || !$hasFlatpakBuilder || !$hasGnomeSdk) {
+    T::skip('Flatpak natif non testé (CYONIMA_TEST_FLATPAK=1, SDK GNOME requis)');
+} else {
+    file_put_contents($packageSource, "<?php\necho \"native flatpak\\n\";\n");
+    $flatpakResult = (new PhpCompiler($packageRoot))->compile(
+        $packageSource,
+        null,
+        'elf',
+        'flatpak',
+    );
+    $bundle = (string) ($flatpakResult['packagePath'] ?? '');
+    T::ok($bundle !== '' && is_file($bundle), 'packaging : Flatpak natif généré');
+
+    shell_exec(
+        'flatpak install --user --noninteractive ' . escapeshellarg($bundle) . ' 2>&1',
+    );
+    $flatpakOutput = shell_exec(
+        'flatpak run ' . escapeshellarg($packageAppId) . ' 2>&1',
+    );
+    shell_exec(
+        'flatpak uninstall --user -y ' . escapeshellarg($packageAppId) . ' 2>&1',
+    );
+    T::same("native flatpak\n", $flatpakOutput, 'packaging : exécution du Flatpak natif');
 }
 
 $removeTree($phpRoot);

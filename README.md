@@ -359,6 +359,10 @@ bin/cyonima-compile --project=./mon-projet --php=src/programme.php --emit=elf
 
 # Application GTK4 native (ui_*)
 bin/cyonima-compile --project=./mon-projet --php=examples/native-ui.php --emit=elf
+
+# Empaquetage direct d’un projet compilé
+bin/cyonima-compile --project=./mon-projet --php=src/main.php --package=appimage
+bin/cyonima-compile --project=./mon-projet --php=src/main.php --package=flatpak
 ```
 
 Le sous-ensemble PHP actuel couvre les types scalaires, variables, fonctions
@@ -368,18 +372,20 @@ typées, `if`/`elseif`/`else`, `while`, `for`, `foreach`, `switch`, `match`,
 dynamique, la covariance des retours, les interfaces avec héritage multiple,
 les classes abstraites, `parent::`, les membres
 `static` (`Classe::méthode()`, `Classe::$propriété`, `self::`), les objets en
-paramètres/retours/propriétés, les closures et arrow functions, les tableaux
+paramètres/retours/propriétés, les closures et arrow functions avec capture
+par référence `use (&$x)`, les tableaux
 indexés homogènes, les tables associatives `string => valeur`, les signatures
 annotées `array<T>` et `array<string,T>` via PHPDoc avec copie à l’appel,
 l’interpolation
-de chaînes, `echo`, les opérateurs usuels et les natives `strlen`, `intval`,
-`floatval`, `strval`, `abs`, `count`.
+de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
+`floatval`, `strval`, `abs`, `count` et les modules natifs SQLite, libcurl et
+libssh2.
 
 L’analyse vérifie les types, l’affectation définie sur tous les chemins et les
 retours exhaustifs. Les clés associatives entières, `static::`, `parent::`
 statique, les méthodes statiques abstraites ou d’interface, l’héritage multiple
-de classes, la contravariance des paramètres, les tableaux imbriqués et les
-captures par référence restent refusés explicitement avec un numéro de ligne.
+de classes, la contravariance des paramètres et les tableaux imbriqués restent
+refusés explicitement avec un numéro de ligne.
 
 Une couche UI native expose `ui_init`, `ui_window`, `ui_box`,
 `ui_label`, `ui_button`, `ui_entry`, `ui_append`, `ui_on_click`, `ui_after`,
@@ -397,6 +403,63 @@ $button->onClicked(fn () => $label->setText('Cliqué !'));
 
 Les widgets héritent de `Widget` et se composent directement par objets.
 Voir `examples/native-ui-object.php`.
+
+Les modules natifs **SQLite**, **libcurl** et **libssh2** sont disponibles dans
+le code compilé :
+
+```bash
+bin/cyonima-compile --project=./mon-projet \
+  --php=examples/native-sqlite.php --emit=elf --module=sqlite
+```
+
+```php
+$db = sqlite_open(':memory:');
+sqlite_exec($db, 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)');
+sqlite_exec($db, "INSERT INTO t (name) VALUES ('alpha')");
+echo sqlite_query_int($db, 'SELECT count(*) FROM t');
+sqlite_close($db);
+```
+
+```php
+$curl = curl_init('https://example.com');
+
+if (curl_perform($curl)) {
+    echo curl_body($curl);
+} else {
+    echo curl_error($curl);
+}
+
+curl_close($curl);
+```
+
+```php
+$ssh = ssh2_connect('example.org', 22);
+
+if (ssh2_auth_password($ssh, 'demo', 'secret')) {
+    echo ssh2_exec($ssh, 'uname -a');
+}
+
+ssh2_disconnect($ssh);
+```
+
+Les modules sont aussi activés automatiquement dès qu’une fonction du module
+est appelée. Les handles sont des `int`, `0` signale une erreur. Le C généré
+lie les bibliothèques via pkg-config (`sqlite3`, `libcurl`, `libssh2`).
+
+Un projet compilé peut être empaqueté directement en AppImage ou Flatpak :
+
+```bash
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --package=appimage
+
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --package=flatpak
+```
+
+Les métadonnées viennent de `.cyonima/project.json`. L’AppImage embarque le
+binaire, ses bibliothèques non système et GTK4 si nécessaire. Le Flatpak
+utilise `org.gnome.Platform//49` et embarque `libssh2` lorsque le module ssh2
+est utilisé. PHP n’est pas embarqué dans une application native.
 
 Le concepteur d’interface expose aussi **Compiler en natif**. En l’absence de
 GTK4 de développement, l’IDE génère le C et affiche le chemin produit.

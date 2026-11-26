@@ -9,12 +9,16 @@ final class ClosureExpr extends Expr
     /** @var array<string, string> */
     public array $captureTypes = [];
 
+    /** @var array<string, true> */
+    public array $captureByRef = [];
+
     /** @var array<string, string> */
     public array $variables = [];
 
     /**
      * @param list<Param> $params
      * @param list<string> $use
+     * @param list<string> $useByRef
      */
     public function __construct(
         public readonly bool $arrow,
@@ -23,6 +27,7 @@ final class ClosureExpr extends Expr
         public readonly ?Block $body,
         public readonly ?Expr $expression,
         public readonly array $use,
+        public readonly array $useByRef,
         int $line,
     ) {
         parent::__construct($line);

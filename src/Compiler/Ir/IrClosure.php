@@ -9,11 +9,13 @@ final class IrClosure
     /**
      * @param list<IrParam> $params
      * @param array<string, string> $captures
+     * @param array<string, true> $capturesByRef
      */
     public function __construct(
         public readonly int $id,
         public readonly array $params,
         public readonly array $captures,
+        public readonly array $capturesByRef,
         public readonly string $returnType,
         public readonly IrFunction $function,
     ) {

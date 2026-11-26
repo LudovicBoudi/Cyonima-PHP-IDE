@@ -338,6 +338,16 @@ static inline void cy_mark_pointer(void *pointer)
     }
 }
 
+static void cy_cell_mark_string(void *cell)
+{
+    cy_mark_pointer((void *) *(const char **) cell);
+}
+
+static void cy_cell_mark_pointer(void *cell)
+{
+    cy_mark_pointer(*(void **) cell);
+}
+
 static inline void cy_gc_collect(void)
 {
     cy_mark_pointer((void *) cy_current_exception);

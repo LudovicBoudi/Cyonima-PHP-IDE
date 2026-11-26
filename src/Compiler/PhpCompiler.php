@@ -9,6 +9,9 @@ use Cyonima\Compiler\Ast\Program;
 use Cyonima\Compiler\Ir\IrBuilder;
 use Cyonima\Compiler\Lexer\Lexer;
 use Cyonima\Compiler\Lexer\TokenType;
+use Cyonima\Compiler\Native\NativeModule;
+use Cyonima\Compiler\Native\NativeModuleRegistry;
+use Cyonima\Compiler\Packaging\NativePackager;
 use Cyonima\Compiler\Parser\Parser;
 use Cyonima\Compiler\Semantic\SemanticAnalyzer;
 
@@ -21,16 +24,36 @@ use Cyonima\Compiler\Semantic\SemanticAnalyzer;
  */
 final class PhpCompiler
 {
-    public function __construct(private readonly string $projectRoot)
-    {
+    /** @param list<string> $moduleNames */
+    public function __construct(
+        private readonly string $projectRoot,
+        private readonly array $moduleNames = [],
+    ) {
     }
 
-    /** @return array{ok: bool, message: string, cPath: string, binaryPath: null|string} */
+    /**
+     * @return array{
+     *     ok: bool,
+     *     message: string,
+     *     cPath: string,
+     *     binaryPath: null|string,
+     *     linkFlags: string,
+     *     packagePath?: string
+     * }
+     */
     public function compile(
         string $sourcePath,
         ?string $output = null,
         string $emit = 'elf',
+        ?string $package = null,
     ): array {
+        if ($package !== null) {
+            if ($package !== 'appimage' && $package !== 'flatpak') {
+                throw new CompilerException('Format de packaging inconnu : ' . $package);
+            }
+
+            $emit = 'elf';
+        }
         $sourcePath = realpath($sourcePath) ?: $sourcePath;
 
         if (!is_file($sourcePath) || !is_readable($sourcePath)) {
@@ -45,6 +68,9 @@ final class PhpCompiler
 
         $tokens = (new Lexer($source))->tokenize();
         $program = (new Parser($tokens))->parse();
+        $registry = new NativeModuleRegistry();
+        $modules = $registry->activeForTokens($tokens, $this->moduleNames);
+        $nativeFunctions = $registry->functions($modules);
 
         if ($this->usesUiClasses($tokens)) {
             $prelude = (new Parser((new Lexer(UiPrelude::SOURCE))->tokenize()))->parse();
@@ -57,11 +83,11 @@ final class PhpCompiler
             );
         }
 
-        $analysis = (new SemanticAnalyzer())->analyze($program);
+        $analysis = (new SemanticAnalyzer($nativeFunctions))->analyze($program);
         $ir = (new IrBuilder($analysis))->build($program);
         $generator = new PhpCGenerator();
         $ui = $generator->usesUi($ir);
-        $cSource = $generator->generate($ir, $ui, $analysis->classes);
+        $cSource = $generator->generate($ir, $ui, $analysis->classes, $modules);
 
         $project = rtrim($this->projectRoot, '/');
         $nativeDir = $project . '/dist/native';
@@ -77,6 +103,7 @@ final class PhpCompiler
                 'message' => 'Code C généré : ' . $cPath,
                 'cPath' => $cPath,
                 'binaryPath' => null,
+                'linkFlags' => $this->nativeLinkFlags($modules, false),
             ];
         }
 
@@ -84,11 +111,15 @@ final class PhpCompiler
             throw new CompilerException('Sortie inconnue : ' . $emit);
         }
 
-        if ($output === null || $output === '') {
-            $output = $project . '/dist/' . $slug;
+        $linkFlags = $this->nativeLinkFlags($modules);
+
+        $binaryOutput = $package !== null ? null : $output;
+
+        if ($binaryOutput === null || $binaryOutput === '') {
+            $binaryOutput = $project . '/dist/' . $slug;
         }
 
-        $this->ensureDirectory(dirname($output));
+        $this->ensureDirectory(dirname($binaryOutput));
         $gcc = trim((string) shell_exec('command -v gcc 2>/dev/null'));
 
         if ($gcc === '') {
@@ -109,12 +140,13 @@ final class PhpCompiler
         }
 
         $command = sprintf(
-            '%s -std=c11 -O2 -o %s %s -I %s %s -lm 2>&1',
+            '%s -std=c11 -O2 -o %s %s -I %s %s %s -lm 2>&1',
             escapeshellarg($gcc),
-            escapeshellarg($output),
+            escapeshellarg($binaryOutput),
             escapeshellarg($cPath),
             escapeshellarg($runtime),
             $gtkFlags,
+            $linkFlags,
         );
 
         exec($command, $lines, $status);
@@ -123,12 +155,70 @@ final class PhpCompiler
             throw new CompilerException("Échec de la compilation C :\n" . implode("\n", $lines));
         }
 
+        if ($package !== null) {
+            $packager = new NativePackager(
+                $project,
+                dirname(__DIR__, 2),
+            );
+            $packaged = $packager->build($package, $binaryOutput, $modules, $output);
+
+            return [
+                'ok' => true,
+                'message' => $packaged['message'],
+                'cPath' => $cPath,
+                'binaryPath' => $binaryOutput,
+                'linkFlags' => $linkFlags,
+                'packagePath' => $packaged['path'],
+            ];
+        }
+
         return [
             'ok' => true,
-            'message' => 'Binaire natif généré : ' . $output,
+            'message' => 'Binaire natif généré : ' . $binaryOutput,
             'cPath' => $cPath,
-            'binaryPath' => $output,
+            'binaryPath' => $binaryOutput,
+            'linkFlags' => $linkFlags,
         ];
+    }
+
+    /**
+     * @param array<string, NativeModule> $modules
+     */
+    private function nativeLinkFlags(array $modules, bool $validate = true): string
+    {
+        $flags = [];
+
+        foreach ($modules as $module) {
+            $pkgConfig = $module->pkgConfig();
+
+            if ($pkgConfig === null) {
+                $flags[] = $module->linkFlags();
+                continue;
+            }
+
+            if ($validate) {
+                exec(
+                    'pkg-config --exists ' . escapeshellarg($pkgConfig) . ' 2>/dev/null',
+                    $lines,
+                    $status,
+                );
+
+                if ($status !== 0) {
+                    throw new CompilerException(
+                        'module natif indisponible : ' . $module->name()
+                        . ' (pkg-config ' . $pkgConfig . ')',
+                    );
+                }
+            }
+
+            $moduleFlags = trim((string) shell_exec(
+                'pkg-config --libs ' . escapeshellarg($pkgConfig) . ' 2>/dev/null',
+            ));
+
+            $flags[] = $moduleFlags !== '' ? $moduleFlags : $module->linkFlags();
+        }
+
+        return implode(' ', array_filter($flags));
     }
 
     private function write(string $path, string $content): void

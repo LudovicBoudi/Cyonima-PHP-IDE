@@ -78,10 +78,13 @@ install -m 0644 "$ROOT/bin/cyonima.php" "$APPDIR/usr/share/cyonima/bin/cyonima.p
 install -m 0755 "$ROOT/bin/cyonima-compile" "$APPDIR/usr/share/cyonima/bin/cyonima-compile"
 install -m 0755 "$ROOT/packaging/appimage/build-project.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/build-project.sh"
 install -m 0755 "$ROOT/packaging/appimage/build-project-bundle.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/build-project-bundle.sh"
+install -m 0755 "$ROOT/packaging/appimage/build-native-project.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/build-native-project.sh"
 install -m 0755 "$ROOT/packaging/appimage/bundle-gtk.sh" "$APPDIR/usr/share/cyonima/packaging/appimage/bundle-gtk.sh"
 install -m 0644 "$ROOT/packaging/appimage/project-meta.php" "$APPDIR/usr/share/cyonima/packaging/appimage/project-meta.php"
 install -m 0755 "$ROOT/packaging/flatpak/build-project-flatpak.sh" "$APPDIR/usr/share/cyonima/packaging/flatpak/build-project-flatpak.sh"
+install -m 0755 "$ROOT/packaging/flatpak/build-native-project-flatpak.sh" "$APPDIR/usr/share/cyonima/packaging/flatpak/build-native-project-flatpak.sh"
 install -m 0644 "$ROOT/packaging/flatpak/project-manifest.php" "$APPDIR/usr/share/cyonima/packaging/flatpak/project-manifest.php"
+install -m 0644 "$ROOT/packaging/flatpak/native-project-manifest.php" "$APPDIR/usr/share/cyonima/packaging/flatpak/native-project-manifest.php"
 install -m 0644 "$ROOT/packaging/icon/com.cyonima.Ide.svg" "$APPDIR/usr/share/cyonima/packaging/icon/com.cyonima.Ide.svg"
 
 # --- Intégration bureau ----------------------------------------------------

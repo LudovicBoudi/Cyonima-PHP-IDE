@@ -19,6 +19,8 @@ final class IrFunction
         public readonly array $variables,
         public array $temporaries = [],
         public array $instructions = [],
+        /** @var array<string, true> */
+        public array $boxedVariables = [],
     ) {
     }
 }

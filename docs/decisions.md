@@ -536,6 +536,58 @@ Trois écarts assumés par rapport au miroir strict du C :
     contexte typé (argument, retour, affectation). Les tableaux de tableaux,
     les tableaux dans les closures et les callables restent hors périmètre.
 
+53. **Capture par référence** : `function (...) use (&$x)` capture une
+    variable via une cellule GC allouée sur le tas. La variable est « boxée »
+    dans le scope qui la possède : toutes les lectures/écritures passent par
+    la cellule, et les closures stockent un pointeur vers celle-ci. La cellule
+    est un objet GC dont la fonction de marquage protège le contenu (chaîne,
+    tableau/table, objet ou closure) via `cy_cell_mark_string` /
+    `cy_cell_mark_pointer`. Une cellule survit au retour de la fonction et
+    persiste entre callbacks GTK. Les closures imbriquées réutilisent la
+    cellule existante ou boxent une variable locale du scope intermédiaire.
+    Les variables capturées par valeur conservent la sémantique de copie
+    existante. Sont refusés : `use (&$this)`, les captures dupliquées, les
+    variables non définies ou non affectées sur tous les chemins, et les
+    paramètres par référence `&$x`.
+
+54. **Modules natifs** : interface `Cyonima\Compiler\Native\NativeModule`
+    déclarant signatures PHP, includes C, code des shims et options de liaison.
+    Le registre active automatiquement un module lorsqu’une de ses fonctions
+    est appelée, ou via `--module=NAME`. Les fonctions natives sont injectées
+    dans l’analyse sémantique comme des `FunctionInfo` ; elles ne font pas
+    partie de l’AST et le backend les appelle directement sous le nom
+    `fn_<nom>`. Le module `sqlite` fournit des handles `int`, des requêtes
+    scalaires et une copie des textes dans le tas managé ; son code est émis
+    avant les fonctions utilisateur, et les options de `pkg-config` sont
+    ajoutées à l’édition de liens. Un conflit entre fonction utilisateur et
+    fonction native est refusé. `libcurl` et `libssh2` restent à ajouter.
+
+55. **Modules libcurl et libssh2** : `curl_*` expose un handle (URL, méthode,
+  corps, en-têtes), `curl_perform`, le statut HTTP, le corps et l’erreur ;
+  les tampons internes utilisent malloc/realloc et les résultats texte sont
+  copiés avec `cy_strdup`. `ssh2_*` expose la connexion TCP + handshake,
+  l’authentification mot de passe, l’exécution de commande, le statut de
+  sortie, l’erreur et la déconnexion ; l’erreur de connexion sans handle est
+  conservée dans un état global. Les deux modules sont liés via pkg-config
+  (`libcurl`, `libssh2`) et activés automatiquement ou par `--module`.
+  `_POSIX_C_SOURCE=200809L` est défini en tête du C généré pour exposer
+  `getaddrinfo`. Les tests curl utilisent une URL `file://` ; les tests ssh2
+  vérifient le chemin d’échec de connexion, le chemin complet ayant été
+  validé avec un serveur Paramiko local.
+
+56. **Packaging direct natif** : `--package=appimage|flatpak` compile puis
+  assemble l’application dans la foulée. `NativePackager` lit
+  `.cyonima/project.json` (nom, appId, version), force la sortie ELF et appelle
+  un script dédié. L’AppImage installe le binaire dans `/usr/bin`, collecte
+  récursivement ses dépendances non système, ajoute GTK4/Adw, les schémas
+  GSettings, les loaders GdkPixbuf et les icônes si le binaire dépend de GTK,
+  puis génère l’AppImage. Le Flatpak utilise `org.gnome.Platform//49`, installe
+  le binaire, un lanceur avec `LD_LIBRARY_PATH` et les bibliothèques déclarées
+  par les modules natifs (`libssh2.so.1` pour ssh2), puis produit un bundle
+  installable. Aucun interpréteur PHP n’est embarqué dans ces paquets natifs.
+  Les deux formats ont été validés avec un programme console, SQLite et une
+  application GTK4.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

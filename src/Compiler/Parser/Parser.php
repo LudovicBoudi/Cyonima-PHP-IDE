@@ -1215,17 +1215,24 @@ final class Parser
         $params = $this->parseParameters();
         $this->consume(TokenType::RightParen, 'attendu : ) après les paramètres');
         $use = [];
+        $useByRef = [];
 
         if ($this->match(TokenType::UseKeyword)) {
             $this->consume(TokenType::LeftParen, 'attendu : ( après use');
 
             if (!$this->check(TokenType::RightParen)) {
                 do {
+                    $byRef = $this->match(TokenType::Ampersand);
                     $variable = $this->consume(
                         TokenType::Variable,
                         'attendu : variable capturée par use',
                     );
-                    $use[] = (string) $variable->literal;
+
+                    if ($byRef) {
+                        $useByRef[] = (string) $variable->literal;
+                    } else {
+                        $use[] = (string) $variable->literal;
+                    }
                 } while ($this->match(TokenType::Comma));
             }
 
@@ -1248,6 +1255,7 @@ final class Parser
             $body,
             null,
             $use,
+            $useByRef,
             $keyword->line,
         );
     }
@@ -1272,6 +1280,7 @@ final class Parser
             $returnType,
             null,
             $expression,
+            [],
             [],
             $keyword->line,
         );

@@ -136,10 +136,12 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Parent | `parent::__construct(...)`, `parent::méthode(...)` |
 | Statique | `static` propriétés/méthodes, `Classe::méthode()`, `Classe::$propriété`, `self::` |
 | Objets | objets en paramètres, retours et propriétés |
-| Closures | `function (...) use (...)` et `fn (...) => ...`, appels `$fn(...)` |
+| Closures | `function (...) use (...)` / `use (&$x)` et `fn (...) => ...`, appels `$fn(...)` |
 | Fonctions | déclaration typée, paramètres, retour, appels |
 | Sortie | `echo` multi-arguments |
 | Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count` |
+| Modules natifs | SQLite, libcurl et libssh2 (`sqlite_*`, `curl_*`, `ssh2_*`) |
+| Packaging natif | `--package=appimage\|flatpak` |
 | Analyse | types, portée, affectation définie sur tous les chemins, retours exhaustifs |
 
 Les types sont vérifiés : une variable ne change pas de type, un `int` peut
@@ -439,20 +441,155 @@ echo $multiply(4), ' ', $add(4);
 ```
 
 - `function (...) use (...)` capture explicitement des variables par valeur ;
-- `fn (...) => ...` capture automatiquement les variables libres ;
+- `function (...) use (&$x)` capture par **référence** : la closure et le
+  scope extérieur partagent la même variable ;
+- `fn (...) => ...` capture automatiquement les variables libres par valeur ;
 - type interne `callable(int):int`, `callable():void`, etc. ;
 - appels via `$fn(...)` ;
 - captures scalaires, chaînes, tableaux, tables associatives, objets et
-  closures ; les tableaux et tables sont copiés à la création ;
+  closures ; les captures par valeur de tableaux et tables sont copiées à la
+  création ;
+- une capture par référence utilise une **cellule GC** : les écritures de la
+  closure sont visibles à l’extérieur et réciproquement, y compris après
+  retour de la fonction ou entre deux callbacks GTK ;
 - l’état capturé persiste entre les appels d’une même closure ;
 - codegen : structure `CyClosureData_N`, fonction `cy_closure_N`, champ
-  `invoke` et fonction de marquage GC des captures.
+  `invoke`, champ pointeur pour chaque capture par référence et fonction de
+  marquage GC des captures et cellules.
 
 Une closure anonyme doit déclarer son type de retour. Une arrow function peut
 l’omettre : il est inféré depuis l’expression.
 
 Un exemple complet est fourni dans
 [`examples/native-closures.php`](../examples/native-closures.php).
+
+### Modules natifs
+
+Un module natif fournit des fonctions C liées au binaire, avec une signature
+PHP typée. Trois modules sont disponibles : `sqlite`, `curl` et `ssh2`.
+
+- activation automatique dès qu’une fonction du module est appelée ;
+- activation explicite via `--module=sqlite`, `--module=curl`,
+  `--module=ssh2` (répétable) ;
+- handles opaques de type `int`, `0` en cas d’échec ;
+- résultats texte copiés dans le tas managé ;
+- conflit avec une fonction utilisateur refusé ;
+- module indisponible → erreur explicite ;
+- options de liaison via `pkg-config`, affichées en `--emit=c`
+  (`Link : ...`).
+
+#### SQLite
+
+```php
+$db = sqlite_open(':memory:');
+
+if ($db === 0) {
+    throw 'ouverture impossible';
+}
+
+sqlite_exec($db, 'CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)');
+sqlite_exec($db, "INSERT INTO items (name) VALUES ('alpha')");
+
+echo sqlite_query_int($db, 'SELECT count(*) FROM items');
+echo sqlite_query_string($db, 'SELECT name FROM items WHERE id = 1');
+
+sqlite_close($db);
+```
+
+Fonctions : `sqlite_open`, `sqlite_close`, `sqlite_exec`, `sqlite_error`,
+`sqlite_last_id`, `sqlite_changes`, `sqlite_query_int`,
+`sqlite_query_float`, `sqlite_query_string`, `sqlite_query_bool`.
+Liaison : `pkg-config sqlite3`.
+
+#### libcurl
+
+```php
+$curl = curl_init('https://example.com');
+curl_set_method($curl, 'GET');
+curl_set_header($curl, 'Accept: text/html');
+
+if (curl_perform($curl)) {
+    echo curl_status($curl);
+    echo curl_body($curl);
+} else {
+    echo curl_error($curl);
+}
+
+curl_close($curl);
+```
+
+Fonctions : `curl_init`, `curl_set_method`, `curl_set_body`,
+`curl_set_header`, `curl_perform`, `curl_status`, `curl_body`, `curl_error`,
+`curl_close`. Méthodes `GET`, `POST` et méthodes personnalisées. Liaison :
+`pkg-config libcurl`.
+
+#### libssh2
+
+```php
+$ssh = ssh2_connect('example.org', 22);
+
+if ($ssh === 0) {
+    echo ssh2_error(0);
+} else {
+    if (ssh2_auth_password($ssh, 'demo', 'secret')) {
+        echo ssh2_exec($ssh, 'uname -a');
+        echo ssh2_exit_status($ssh);
+    } else {
+        echo ssh2_error($ssh);
+    }
+
+    ssh2_disconnect($ssh);
+}
+```
+
+Fonctions : `ssh2_connect`, `ssh2_auth_password`, `ssh2_exec`,
+`ssh2_exit_status`, `ssh2_error`, `ssh2_disconnect`. Liaison :
+`pkg-config libssh2`.
+
+L’architecture `Cyonima\Compiler\Native\NativeModule` reste extensible : un
+module déclare ses signatures, ses includes, son code C et ses options de
+liaison.
+
+Exemples complets : [`examples/native-sqlite.php`](../examples/native-sqlite.php),
+[`examples/native-curl.php`](../examples/native-curl.php),
+[`examples/native-ssh.php`](../examples/native-ssh.php).
+
+### Packaging direct
+
+Le compilateur peut produire directement une application autonome :
+
+```bash
+# AppImage native
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --package=appimage
+
+# Flatpak natif
+bin/cyonima-compile --project=./mon-projet \
+  --php=src/main.php --package=flatpak
+```
+
+- métadonnées lues dans `.cyonima/project.json` (`name`, `appId`, `version`) ;
+- sortie `dist/<slug>-<version>-x86_64.AppImage` ou `.flatpak` ;
+- `--output=PATH` remplace le chemin du paquet ;
+- l’AppImage embarque le binaire, ses bibliothèques non système et GTK4/Adw
+  lorsqu’il en dépend, avec schémas GSettings, loaders GdkPixbuf et icônes ;
+- le Flatpak utilise `org.gnome.Platform//49` et embarque les bibliothèques
+  absentes du runtime, comme `libssh2` ;
+- aucun interpréteur PHP n’est embarqué : le binaire est déjà natif ;
+- scripts : `packaging/appimage/build-native-project.sh` et
+  `packaging/flatpak/build-native-project-flatpak.sh`.
+
+Vérifications effectuées :
+
+```text
+hello native
+native package
+packaged
+native flatpak
+clicked
+```
+
+Les deux formats ont aussi été validés avec une application GTK4 native.
 
 ### Limites explicites
 
@@ -470,7 +607,7 @@ ligne :
   d’interface, valeurs par défaut de propriétés statiques ;
 - appel explicite à `__construct` hors `parent::`, contravariance des
   paramètres, valeurs par défaut de propriétés, `clone`, `instanceof` ;
-- capture par référence `use (&$x)`, capture de `$this`, closures `static` ;
+- capture de `$this`, closures `static`, paramètres `&$x` ;
 - closures en paramètres, retours, propriétés ou éléments de tableau,
   invocation immédiate `(function () {})()` ;
 - `eval`, réflexion, `include`/`require`, autoload ;
@@ -735,6 +872,8 @@ Options :
 | `--php=FILE` | fichier PHP du sous-ensemble compilable |
 | `--emit=c\|elf` | code C seul, ou binaire natif |
 | `--output=PATH` | sortie du binaire |
+| `--module=NAME` | active un module natif (`sqlite`, `curl`, `ssh2`), répétable |
+| `--package=appimage\|flatpak` | compile puis empaquette directement l’application |
 | `--help` | aide |
 
 Sorties pour un formulaire :
@@ -845,12 +984,12 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | Phase | Contenu | État |
 |---|---|---|
 | 1 | formulaires `.form.json → C GTK4 → ELF` | livré |
-| 2 | lexer, parser, AST, IR et backend C du sous-ensemble PHP | livré pour le noyau scalaires/tableaux/boucles |
-| 3 | runtime natif : mémoire, UI GTK4 | mémoire livrée, UI procédurale livrée, façade objet à venir |
-| 4 | modules natifs : `libcurl`, `libssh2`, SQLite, etc. | à venir |
-| 5 | packaging : `--package=appimage` et `--package=flatpak` | à venir |
+| 2 | lexer, parser, AST, IR et backend C du sous-ensemble PHP | livré |
+| 3 | runtime natif : mémoire, UI GTK4 | livré, façade objet incluse |
+| 4 | modules natifs : SQLite, `libcurl`, `libssh2` | livré |
+| 5 | packaging : `--package=appimage` et `--package=flatpak` | livré |
 
-Le sous-ensemble doit encore couvrir la capture par référence. La façade objet
+La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la
 composition par objets. Le
 compilateur reste extensible : nouveaux types, nouveaux contrôles et nouvelles

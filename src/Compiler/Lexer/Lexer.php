@@ -472,6 +472,7 @@ final class Lexer
             '%' => TokenType::Percent,
             '.' => TokenType::Dot,
             '=' => TokenType::Assign,
+            '&' => TokenType::Ampersand,
             '<' => TokenType::Less,
             '>' => TokenType::Greater,
             '!' => TokenType::Bang,

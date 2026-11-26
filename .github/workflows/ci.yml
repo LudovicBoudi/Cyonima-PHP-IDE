@@ -32,6 +32,7 @@ jobs:
           tools: composer
 
       - name: Installer GTK4 / Adw / GtkSourceView / VTE
+        # Les paquets gir1.2-* fournissent les typelibs lus par le générateur.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -39,7 +40,14 @@ jobs:
             libadwaita-1-0 \
             libgtksourceview-5-0 \
             libvte-2.91-gtk4-0 \
+            gir1.2-adw-1 \
+            gir1.2-gtk-4.0 \
+            gir1.2-gtksource-5 \
+            gir1.2-vte-3.91 \
             libgtk-4-dev \
+            libsqlite3-dev \
+            libcurl4-openssl-dev \
+            libssh2-1-dev \
             build-essential \
             pkg-config \
             xvfb \

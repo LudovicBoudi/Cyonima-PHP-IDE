@@ -67,6 +67,7 @@ enum TokenType: string
     case Dot = 'dot';
 
     case Assign = 'assign';
+    case Ampersand = 'ampersand';
     case Equal = 'equal';
     case NotEqual = 'not-equal';
     case Identical = 'identical';

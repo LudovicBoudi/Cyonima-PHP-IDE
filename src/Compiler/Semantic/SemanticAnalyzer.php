@@ -71,12 +71,27 @@ final class SemanticAnalyzer
 
     private bool $currentStatic = false;
 
+    /** @param array<string, FunctionInfo> $nativeFunctions */
+    public function __construct(private readonly array $nativeFunctions = [])
+    {
+    }
+
     /**
      * @param array<string, FunctionInfo> $functions
      */
     public function analyze(Program $program): Analysis
     {
         $functions = $this->collectFunctions($program);
+
+        foreach ($this->nativeFunctions as $name => $info) {
+            if (isset($functions[$name]) || $this->builtin($name) !== null) {
+                throw new CompilerException(
+                    "ligne {$program->line} : conflit de fonction native : {$name}",
+                );
+            }
+
+            $functions[$name] = $info;
+        }
         $classes = $this->collectClasses($program);
         $this->classes = $classes;
 
@@ -1341,6 +1356,12 @@ final class SemanticAnalyzer
                         );
                     }
 
+                    if (isset($captures[$name])) {
+                        throw new CompilerException(
+                            "ligne {$expression->line} : capture dupliquée : \${$name}",
+                        );
+                    }
+
                     $type = $scope->typeOf($name);
 
                     if ($type === null) {
@@ -1350,6 +1371,31 @@ final class SemanticAnalyzer
                     }
 
                     $captures[$name] = $type;
+                }
+
+                foreach ($expression->useByRef as $name) {
+                    if ($name === 'this') {
+                        throw new CompilerException(
+                            "ligne {$expression->line} : capture de \$this non supportée",
+                        );
+                    }
+
+                    if (isset($captures[$name])) {
+                        throw new CompilerException(
+                            "ligne {$expression->line} : capture dupliquée : \${$name}",
+                        );
+                    }
+
+                    $type = $scope->typeOf($name);
+
+                    if ($type === null) {
+                        throw new CompilerException(
+                            "ligne {$expression->line} : variable capturée non définie : \${$name}",
+                        );
+                    }
+
+                    $captures[$name] = $type;
+                    $expression->captureByRef[$name] = true;
                 }
             }
 

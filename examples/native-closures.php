@@ -17,4 +17,13 @@ $multiply = function (int $value) use ($factor): int {
 
 $add = fn (int $value): int => $value + $factor;
 
-echo $multiply(4), ' ', $add(4), "\n";
+$count = 0;
+
+$increment = function () use (&$count): void {
+    $count = $count + 1;
+};
+
+$increment();
+$increment();
+
+echo $multiply(4), ' ', $add(4), ' ', $count, "\n";

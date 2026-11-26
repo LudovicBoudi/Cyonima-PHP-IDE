@@ -31,8 +31,30 @@ packaging/test-portable.sh
 
 ## Build d'une application projet
 
-Depuis l'environnement de développement, un projet Cyonima peut être transformé
-en AppImage autonome. PHP, GTK, le runtime Cyonima et le projet sont embarqués.
+### Projet compilé en natif
+
+Un projet compilé n'embarque pas PHP. Les scripts natifs regroupent le binaire,
+ses bibliothèques non système et GTK4 si nécessaire :
+
+```bash
+cyonima-compile --project=/chemin/du/projet \
+  --php=src/main.php --package=appimage
+
+cyonima-compile --project=/chemin/du/projet \
+  --php=src/main.php --package=flatpak
+```
+
+Sorties : `dist/<slug>-<version>-x86_64.AppImage` et `.flatpak`. Le Flatpak
+utilise `org.gnome.Platform//49` et embarque les modules absents du runtime
+(par exemple `libssh2`). Les scripts directs sont
+`packaging/appimage/build-native-project.sh` et
+`packaging/flatpak/build-native-project-flatpak.sh`.
+
+### Projet interprété
+
+Depuis l'environnement de développement, un projet Cyonima interprété peut être
+transformé en AppImage autonome. PHP, GTK, le runtime Cyonima et le projet sont
+embarqués.
 
 ```bash
 packaging/appimage/build-php.sh            # une fois

@@ -67,6 +67,9 @@ final class IrBuilder
 
     private ?string $currentClass = null;
 
+    /** @var array<string, true> */
+    private array $currentByRefCaptures = [];
+
     public function __construct(private readonly Analysis $analysis)
     {
     }
@@ -507,10 +510,12 @@ final class IrBuilder
             );
             $savedBreakLabels = $this->breakLabels;
             $savedExceptionLabels = $this->exceptionLabels;
+            $savedByRefCaptures = $this->currentByRefCaptures;
             $exceptionLabel = $this->newLabel();
             $normalEnd = $this->newLabel();
             $this->breakLabels = [];
             $this->exceptionLabels = [$exceptionLabel];
+            $this->currentByRefCaptures = $expression->captureByRef;
 
             if ($expression->arrow) {
                 if ($expression->expression === null) {
@@ -543,10 +548,12 @@ final class IrBuilder
             );
             $this->breakLabels = $savedBreakLabels;
             $this->exceptionLabels = $savedExceptionLabels;
+            $this->currentByRefCaptures = $savedByRefCaptures;
             $closure = new IrClosure(
                 $id,
                 $params,
                 $expression->captureTypes,
+                $expression->captureByRef,
                 $signature['return'],
                 $ir,
             );
@@ -554,6 +561,15 @@ final class IrBuilder
             $captures = [];
 
             foreach ($expression->captureTypes as $name => $type) {
+                if (isset($expression->captureByRef[$name])) {
+                    if (!isset($this->currentByRefCaptures[$name])) {
+                        $function->boxedVariables[$name] = true;
+                    }
+
+                    $captures[] = new CellOperand($name, $type);
+                    continue;
+                }
+
                 $variable = new VariableExpr($name, $expression->line);
                 $variable->type = $type;
                 $captures[] = $this->lowerExpr($variable, $function);

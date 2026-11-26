@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Cyonima\Compiler\Backend\C;
 
 use Cyonima\Compiler\CompilerException;
+use Cyonima\Compiler\Native\NativeModule;
 use Cyonima\Compiler\Semantic\ClassInfo;
 use Cyonima\Compiler\Ir\AppendInstruction;
 use Cyonima\Compiler\Ir\ArrayInstruction;
@@ -12,6 +13,7 @@ use Cyonima\Compiler\Ir\AssignInstruction;
 use Cyonima\Compiler\Ir\BinaryInstruction;
 use Cyonima\Compiler\Ir\CallInstruction;
 use Cyonima\Compiler\Ir\CaptureExceptionInstruction;
+use Cyonima\Compiler\Ir\CellOperand;
 use Cyonima\Compiler\Ir\ClosureCallInstruction;
 use Cyonima\Compiler\Ir\ClosureCreateInstruction;
 use Cyonima\Compiler\Ir\ConstantOperand;
@@ -87,8 +89,17 @@ final class PhpCGenerator
     /** @var array<string, ClassInfo> */
     private array $classes = [];
 
+    /** @var array<string, NativeModule> */
+    private array $nativeModules = [];
+
     /** @var null|array<string, string> */
     private ?array $closureCaptures = null;
+
+    /** @var array<string, string> */
+    private array $closureByRefCaptures = [];
+
+    /** @var array<string, true> */
+    private array $boxedVariables = [];
 
     private ?string $currentReturnType = null;
 
@@ -126,10 +137,16 @@ final class PhpCGenerator
 
     /**
      * @param array<string, ClassInfo> $classes
+     * @param array<string, NativeModule> $nativeModules
      */
-    public function generate(IrProgram $program, ?bool $ui = null, array $classes = []): string
-    {
+    public function generate(
+        IrProgram $program,
+        ?bool $ui = null,
+        array $classes = [],
+        array $nativeModules = [],
+    ): string {
         $this->classes = $classes;
+        $this->nativeModules = $nativeModules;
         $ui ??= $this->usesUi($program);
         $sections = [];
         $sections[] = <<<'C'
@@ -138,12 +155,28 @@ final class PhpCGenerator
              * Sous-ensemble PHP strict — backend C11.
              */
 
+            #ifndef _POSIX_C_SOURCE
+            #define _POSIX_C_SOURCE 200809L
+            #endif
+
             #include "cyonima_runtime.h"
 
             C;
 
         if ($ui) {
             $sections[] = '#include "cyonima_ui.h"';
+        }
+
+        foreach ($this->nativeModules as $module) {
+            foreach ($module->includes() as $include) {
+                $sections[] = $include;
+            }
+
+            $source = trim($module->source());
+
+            if ($source !== '') {
+                $sections[] = $source;
+            }
         }
 
         $sections[] = $this->objectHeaderCode();
@@ -373,7 +406,8 @@ final class PhpCGenerator
         $lines = ['typedef struct {', '    void *invoke;'];
 
         foreach ($closure->captures as $name => $captureType) {
-            $lines[] = '    ' . $this->cType($captureType) . ' cap_'
+            $pointer = isset($closure->capturesByRef[$name]) ? ' *' : '';
+            $lines[] = '    ' . $this->cType($captureType) . $pointer . ' cap_'
                 . $this->identifier($name) . ';';
         }
 
@@ -385,6 +419,13 @@ final class PhpCGenerator
         $hasReference = false;
 
         foreach ($closure->captures as $name => $captureType) {
+            if (isset($closure->capturesByRef[$name])) {
+                $lines[] = '    cy_mark_pointer((void *) data->cap_'
+                    . $this->identifier($name) . ');';
+                $hasReference = true;
+                continue;
+            }
+
             if ($this->isGcReference($captureType)) {
                 $lines[] = '    cy_mark_pointer((void *) data->cap_'
                     . $this->identifier($name) . ');';
@@ -421,8 +462,25 @@ final class PhpCGenerator
         $params = ['void *env'];
 
         foreach ($closure->params as $param) {
-            $params[] = $this->cType($param->type) . ' ' . $this->variable($param->name);
+            $params[] = $this->cType($param->type) . ' ' . $this->parameterVariable($param->name);
         }
+
+        $captures = [];
+        $this->closureByRefCaptures = [];
+
+        foreach ($closure->captures as $name => $_captureType) {
+            $field = $data . '->cap_' . $this->identifier($name);
+
+            if (isset($closure->capturesByRef[$name])) {
+                $this->closureByRefCaptures[$name] = $field;
+            } else {
+                $captures[$name] = $field;
+            }
+        }
+
+        $this->boxedVariables = $closure->function->boxedVariables;
+        $this->closureCaptures = $captures;
+        $this->currentReturnType = $closure->returnType;
 
         $lines = [
             'static ' . $this->cType($closure->returnType) . ' '
@@ -433,20 +491,14 @@ final class PhpCGenerator
         ];
         $this->declarations($closure->function, $lines);
         $this->rootsCode($closure->function, 'closure_' . $closure->id, $lines);
-        $captures = [];
-
-        foreach ($closure->captures as $name => $_captureType) {
-            $captures[$name] = $data . '->cap_' . $this->identifier($name);
-        }
-
-        $this->closureCaptures = $captures;
-        $this->currentReturnType = $closure->returnType;
 
         foreach ($closure->function->instructions as $instruction) {
             $lines[] = $this->instruction($instruction, '    ');
         }
 
         $this->closureCaptures = null;
+        $this->closureByRefCaptures = [];
+        $this->boxedVariables = [];
         $this->currentReturnType = null;
         $lines[] = '}';
 
@@ -561,13 +613,17 @@ final class PhpCGenerator
         $params = [];
 
         foreach ($function->params as $param) {
-            $params[] = $this->cType($param->type) . ' ' . $this->variable($param->name);
+            $params[] = $this->cType($param->type) . ' '
+                . $this->parameterVariable($param->name);
         }
 
         $lines[] = 'static ' . $this->cType($function->returnType) . ' '
             . $this->functionName($function->name)
             . '(' . implode(', ', $params) . ')';
         $lines[] = '{';
+        $this->boxedVariables = $function->boxedVariables;
+        $this->closureCaptures = null;
+        $this->closureByRefCaptures = [];
         $this->declarations($function, $lines);
         $this->rootsCode($function, $function->name, $lines);
         $this->currentReturnType = $function->returnType;
@@ -577,6 +633,7 @@ final class PhpCGenerator
         }
 
         $this->currentReturnType = null;
+        $this->boxedVariables = [];
         $lines[] = '}';
 
         return implode("\n", $lines);
@@ -591,6 +648,9 @@ final class PhpCGenerator
             $lines[] = $staticInit;
         }
 
+        $this->boxedVariables = $main->boxedVariables;
+        $this->closureCaptures = null;
+        $this->closureByRefCaptures = [];
         $this->declarations($main, $lines);
         $this->rootsCode($main, 'main', $lines);
         $this->currentReturnType = 'int';
@@ -600,6 +660,7 @@ final class PhpCGenerator
         }
 
         $this->currentReturnType = null;
+        $this->boxedVariables = [];
         $lines[] = '    return 0;';
         $lines[] = '}';
 
@@ -609,7 +670,29 @@ final class PhpCGenerator
     /** @param list<string> $lines */
     private function declarations(IrFunction $function, array &$lines): void
     {
+        foreach ($function->params as $param) {
+            if (!isset($function->boxedVariables[$param->name])) {
+                continue;
+            }
+
+            $type = $this->cType($param->type);
+            $cell = $this->cellVariable($param->name);
+            $lines[] = '    ' . $type . ' *' . $cell . ' = (' . $type . ' *) '
+                . $this->cellAllocation($param->type) . ';';
+            $lines[] = '    *' . $cell . ' = '
+                . $this->parameterVariable($param->name) . ';';
+        }
+
         foreach ($function->variables as $name => $type) {
+            if (isset($function->boxedVariables[$name])) {
+                $ctype = $this->cType($type);
+                $cell = $this->cellVariable($name);
+                $lines[] = '    ' . $ctype . ' *' . $cell . ' = (' . $ctype . ' *) '
+                    . $this->cellAllocation($type) . ';';
+                $lines[] = '    *' . $cell . ' = ' . $this->defaultValue($type) . ';';
+                continue;
+            }
+
             $lines[] = '    ' . $this->cType($type) . ' ' . $this->variable($name)
                 . ' = ' . $this->defaultValue($type) . ';';
         }
@@ -620,12 +703,42 @@ final class PhpCGenerator
         }
     }
 
+    private function cellAllocation(string $type): string
+    {
+        $ctype = $this->cType($type);
+
+        if ($type === 'string') {
+            return 'cy_object_new(sizeof(' . $ctype . '), cy_cell_mark_string)';
+        }
+
+        if ($this->isGcReference($type)) {
+            return 'cy_object_new(sizeof(' . $ctype . '), cy_cell_mark_pointer)';
+        }
+
+        return 'cy_object_new(sizeof(' . $ctype . '), NULL)';
+    }
+
+    private function cellVariable(string $name): string
+    {
+        return 'vc_' . $this->identifier($name);
+    }
+
+    private function parameterVariable(string $name): string
+    {
+        return 'v_' . $this->identifier($name);
+    }
+
     /** @param list<string> $lines */
     private function rootsCode(IrFunction $function, string $id, array &$lines): void
     {
         $roots = [];
 
         foreach ($function->params as $param) {
+            if (isset($function->boxedVariables[$param->name])) {
+                $roots[] = ['CY_ROOT_OBJECT', '&' . $this->cellVariable($param->name)];
+                continue;
+            }
+
             $kind = $this->rootKind($param->type);
 
             if ($kind !== null) {
@@ -634,6 +747,11 @@ final class PhpCGenerator
         }
 
         foreach ($function->variables as $name => $type) {
+            if (isset($function->boxedVariables[$name])) {
+                $roots[] = ['CY_ROOT_OBJECT', '&' . $this->cellVariable($name)];
+                continue;
+            }
+
             $kind = $this->rootKind($type);
 
             if ($kind !== null) {
@@ -934,19 +1052,18 @@ final class PhpCGenerator
 
             foreach ($captureNames as $index => $name) {
                 $captureType = $closure->captures[$name];
-                $value = $this->operand($instruction->captures[$index] ?? throw new CompilerException(
+                $capture = $instruction->captures[$index] ?? throw new CompilerException(
                     'capture de closure manquante : ' . $name,
-                ));
+                );
 
-                if ($this->isMapType($captureType)) {
-                    $value = 'cy_map_copy(' . $value . ')';
+                if (isset($closure->capturesByRef[$name])) {
+                    $value = $this->operand($capture);
+                } elseif ($this->isMapType($captureType)) {
+                    $value = 'cy_map_copy(' . $this->operand($capture) . ')';
                 } elseif ($this->isListType($captureType)) {
-                    $value = 'cy_array_copy(' . $value . ')';
+                    $value = 'cy_array_copy(' . $this->operand($capture) . ')';
                 } else {
-                    $value = $this->castOperand(
-                        $instruction->captures[$index],
-                        $captureType,
-                    );
+                    $value = $this->castOperand($capture, $captureType);
                 }
 
                 $lines[] = $data . '->cap_' . $this->identifier($name) . ' = ' . $value . ';';
@@ -1375,6 +1492,10 @@ final class PhpCGenerator
 
     private function operand(Operand $operand): string
     {
+        if ($operand instanceof CellOperand) {
+            return $this->rawCell($operand->name);
+        }
+
         if ($operand instanceof ConstantOperand) {
             return $this->constant($operand);
         }
@@ -1626,11 +1747,32 @@ final class PhpCGenerator
 
     private function variable(string $name): string
     {
+        if (isset($this->closureByRefCaptures[$name])) {
+            return '(*' . $this->closureByRefCaptures[$name] . ')';
+        }
+
         if ($this->closureCaptures !== null && isset($this->closureCaptures[$name])) {
             return $this->closureCaptures[$name];
         }
 
+        if (isset($this->boxedVariables[$name])) {
+            return '(*' . $this->cellVariable($name) . ')';
+        }
+
         return 'v_' . $this->identifier($name);
+    }
+
+    private function rawCell(string $name): string
+    {
+        if (isset($this->closureByRefCaptures[$name])) {
+            return $this->closureByRefCaptures[$name];
+        }
+
+        if (isset($this->boxedVariables[$name])) {
+            return $this->cellVariable($name);
+        }
+
+        throw new CompilerException('cellule de capture absente : ' . $name);
     }
 
     private function identifier(string $name): string
