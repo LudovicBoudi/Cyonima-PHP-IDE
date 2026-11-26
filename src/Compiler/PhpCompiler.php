@@ -126,18 +126,109 @@ final class PhpCompiler
             $entryProgram->line,
         );
 
-        $templates = $this->templateFiles();
-        $usesTemplates = $templates !== [];
+        $templatePaths = $this->templateFiles();
+        $usesTemplates = $templatePaths !== [];
 
-        foreach ($templates as $templatePath => $className) {
+        /** @var array<string, string> $templateClasses */
+        $templateClasses = [];
+        /** @var array<string, string> $templateOwners */
+        $templateOwners = [];
+        /** @var list<string> $templateQueue */
+        $templateQueue = [];
+        /** @var array<string, true> $compiledTemplates */
+        $compiledTemplates = [];
+        /** @var array<string, list<array{name: string, type: string}>> $templateParams */
+        $templateParams = [];
+
+        $registerTemplate = function (string $path) use (
+            &$templateClasses,
+            &$templateOwners,
+            &$templateQueue,
+            &$compiledTemplates,
+            &$templateParams,
+        ): string {
+            $path = realpath($path) ?: $path;
+
+            if (isset($templateClasses[$path])) {
+                return $templateClasses[$path];
+            }
+
+            $className = $this->templateClassName($path);
+
+            if (isset($templateOwners[$className])
+                && $templateOwners[$className] !== $path) {
+                throw new CompilerException(
+                    'template : classe ' . $className . ' générée deux fois ('
+                    . $this->relativePath($templateOwners[$className]) . ' et '
+                    . $this->relativePath($path) . ')',
+                );
+            }
+
+            $source = file_get_contents($path);
+
+            if ($source === false) {
+                throw new CompilerException('Lecture impossible : ' . $path);
+            }
+
+            $templateOwners[$className] = $path;
+            $templateClasses[$path] = $className;
+            $templateParams[$path] = TemplateCompiler::parameterDeclarations($source);
+
+            if (!isset($compiledTemplates[$path])) {
+                $templateQueue[] = $path;
+            }
+
+            return $className;
+        };
+
+        foreach ($templatePaths as $templatePath) {
+            $registerTemplate($templatePath);
+        }
+
+        for ($templateIndex = 0; $templateIndex < count($templateQueue); $templateIndex++) {
+            $templatePath = $templateQueue[$templateIndex];
+
+            if (isset($compiledTemplates[$templatePath])) {
+                continue;
+            }
+
+            $compiledTemplates[$templatePath] = true;
+            $className = $templateClasses[$templatePath];
             $templateSource = file_get_contents($templatePath);
 
             if ($templateSource === false) {
                 throw new CompilerException('Lecture impossible : ' . $templatePath);
             }
 
+            $resolver = function (string $includedPath) use (
+                $registerTemplate,
+                &$templateParams,
+            ): array {
+                $includedSource = file_get_contents($includedPath);
+
+                if ($includedSource !== false
+                    && preg_match('/<window\b/i', $includedSource) === 1) {
+                    throw new CompilerException(
+                        'template : un template de page ne peut pas être inclus : '
+                        . $this->relativePath($includedPath),
+                    );
+                }
+
+                $className = $registerTemplate($includedPath);
+                $path = realpath($includedPath) ?: $includedPath;
+
+                return [
+                    'class' => $className,
+                    'params' => $templateParams[$path] ?? [],
+                ];
+            };
+
             try {
-                $generated = (new TemplateCompiler($className))->compile($templateSource);
+                $generated = (new TemplateCompiler(
+                    $className,
+                    $templatePath,
+                    $resolver,
+                ))->compile($templateSource);
                 $templateProgram = (new Parser(
                     (new Lexer($generated))->tokenize(),
                 ))->parse();
@@ -446,10 +537,10 @@ final class PhpCompiler
     }
 
     /**
-     * Découvre les templates `.ui` et associe chaque fichier à sa classe
-     * générée dans `Cyonima\Templates`.
+     * Découvre les templates `.ui`. Les includes rencontrés sont résolus par
+     * `PhpCompiler::compile()` et ajoutés à la file de compilation.
      *
-     * @return array<string, string>
+     * @return list<string>
      */
     private function templateFiles(): array
     {
@@ -544,21 +635,9 @@ final class PhpCompiler
         }
 
         $templates = [];
-        $owners = [];
 
         foreach (array_keys($files) as $file) {
-            $className = $this->templateClassName($file);
-
-            if (isset($owners[$className])) {
-                throw new CompilerException(
-                    'template : classe ' . $className . ' générée deux fois ('
-                    . $this->relativePath($owners[$className]) . ' et '
-                    . $this->relativePath($file) . ')',
-                );
-            }
-
-            $owners[$className] = $file;
-            $templates[$file] = $className;
+            $templates[] = $file;
         }
 
         return $templates;
@@ -671,6 +750,18 @@ final class PhpCompiler
             'CheckButton',
             'ProgressBar',
             'Separator',
+            'Popover',
+            'MenuButton',
+            'Menu',
+            'MenuBar',
+            'Image',
+            'ScrolledWindow',
+            'StringList',
+            'ObjectList',
+            'DropDown',
+            'ListBox',
+            'ListView',
+            'Binding',
         ];
         $count = count($tokens);
 
@@ -692,6 +783,14 @@ final class PhpCompiler
                     continue;
                 }
 
+                return true;
+            }
+        }
+
+        for ($index = 0; $index < $count - 1; $index++) {
+            if ($tokens[$index]->type === TokenType::Identifier
+                && $tokens[$index]->literal === 'Binding'
+                && $tokens[$index + 1]->type === TokenType::DoubleColon) {
                 return true;
             }
         }

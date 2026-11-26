@@ -1,0 +1,34 @@
+@params(string $title, bool $enabled, callable():void $onOpen, callable():void $onAbout, callable():void $onQuit, callable(bool):void $onToggle, callable(string):void $onAlign)
+
+<window title="{{ $title }}" width="480" height="340" class="menubar-window">
+    <shortcut key="<Control>o" on-activate="{{ $onOpen }}" />
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+
+    <style>
+        .menubar-window { background: #101418; color: #e6edf3; }
+        .menubar-panel { padding: 16px; }
+        .title { font-size: 20px; font-weight: bold; }
+    </style>
+
+    <box vertical="true" spacing="10" class="menubar-panel">
+        <menu-bar>
+            <menu label="Fichier">
+                <item label="Ouvrir" accel="<Control>o" icon="document-open" enabled="{{ $enabled }}" on-click="{{ $onOpen }}" />
+                <separator />
+                <item label="Quitter" accel="<Control>q" on-click="{{ $onQuit }}" />
+            </menu>
+            <menu label="Affichage">
+                <item label="Mode compact" checkable="true" checked="false" on-toggle="{{ $onToggle }}" />
+                <separator />
+                <item label="Gauche" radio="align" value="left" checked="true" on-select="{{ $onAlign }}" />
+                <item label="Centre" radio="align" value="center" on-select="{{ $onAlign }}" />
+                <item label="Droite" radio="align" value="right" on-select="{{ $onAlign }}" />
+            </menu>
+            <menu label="Aide">
+                <item label="À propos" icon="help-about" on-click="{{ $onAbout }}" />
+            </menu>
+        </menu-bar>
+        <label text="{{ $title }}" class="title" />
+        <label>Menus natifs, radio, icônes, accélérateurs et états dynamiques.</label>
+    </box>
+</window>

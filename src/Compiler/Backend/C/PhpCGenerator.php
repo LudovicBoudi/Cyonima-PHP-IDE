@@ -81,6 +81,51 @@ final class PhpCGenerator
         'ui_progress_fraction',
         'ui_set_progress_fraction',
         'ui_separator',
+        'ui_popover',
+        'ui_popover_set_child',
+        'ui_menu_button',
+        'ui_menu_button_set_label',
+        'ui_menu_button_set_popover',
+        'ui_menu_button_popup',
+        'ui_menu_button_popdown',
+        'ui_menu',
+        'ui_menu_bar',
+        'ui_menu_add_item',
+        'ui_menu_add_item_ex',
+        'ui_menu_add_check_item',
+        'ui_menu_add_radio_item',
+        'ui_menu_set_check',
+        'ui_menu_select_radio',
+        'ui_menu_set_enabled',
+        'ui_menu_is_enabled',
+        'ui_menu_activate',
+        'ui_menu_add_separator',
+        'ui_menu_add_submenu',
+        'ui_shortcut',
+        'ui_image',
+        'ui_scrolled',
+        'ui_scrolled_set_child',
+        'ui_string_list',
+        'ui_string_list_append',
+        'ui_string_list_count',
+        'ui_string_list_item',
+        'ui_drop_down',
+        'ui_drop_down_selected',
+        'ui_set_drop_down_selected',
+        'ui_drop_down_text',
+        'ui_list_box',
+        'ui_list_box_append',
+        'ui_list_box_selected',
+        'ui_list_box_select',
+        'ui_list_box_mode',
+        'ui_list_box_activate',
+        'ui_list_view',
+        'ui_list_view_selected',
+        'ui_list_view_select',
+        'ui_list_view_set_single_click',
+        'ui_list_view_activate',
+        'ui_set_name',
+        'ui_set_size',
         'ui_add_class',
         'ui_set_tooltip',
         'ui_set_sensitive',
@@ -89,7 +134,10 @@ final class PhpCGenerator
         'ui_set_child',
         'ui_present',
         'ui_set_text',
+        'ui_label_text',
         'ui_entry_text',
+        'ui_entry_set_text',
+        'ui_activate_entry',
         'ui_set_visible',
         'ui_on_click',
         'ui_on_activate',
@@ -97,7 +145,11 @@ final class PhpCGenerator
         'ui_click',
         'ui_on_click_closure',
         'ui_on_activate_closure',
+        'ui_on_entry_changed_closure',
         'ui_on_toggle_closure',
+        'ui_on_drop_down_change_closure',
+        'ui_on_row_activated_closure',
+        'ui_on_list_view_activated_closure',
         'ui_after_closure',
         'ui_quit',
         'ui_run',
@@ -486,10 +538,27 @@ final class PhpCGenerator
         return 'cy_closure_' . $closure->id;
     }
 
+    private function closureParamKind(IrClosure $closure): int
+    {
+        $parameter = $closure->params[0] ?? null;
+
+        if ($parameter === null) {
+            return 0;
+        }
+
+        return match ($parameter->type) {
+            'int' => 1,
+            'bool' => 2,
+            'string' => 3,
+            'float' => 4,
+            default => 5,
+        };
+    }
+
     private function closureStructCode(IrClosure $closure): string
     {
         $type = $this->closureType($closure);
-        $lines = ['typedef struct {', '    void *invoke;'];
+        $lines = ['typedef struct {', '    void *invoke;', '    int arity;', '    int param_kind;'];
 
         foreach ($closure->captures as $name => $captureType) {
             $pointer = isset($closure->capturesByRef[$name]) ? ' *' : '';
@@ -1195,6 +1264,8 @@ final class PhpCGenerator
                 $type . ' *' . $data . ' = (' . $type . ' *) cy_object_new(sizeof('
                     . $type . '), cy_closure_mark_' . $closure->id . ');',
                 $data . '->invoke = (void *) ' . $this->closureFunctionName($closure) . ';',
+                $data . '->arity = ' . count($closure->params) . ';',
+                $data . '->param_kind = ' . $this->closureParamKind($closure) . ';',
             ];
             $captureNames = array_keys($closure->captures);
 
@@ -1618,6 +1689,83 @@ final class PhpCGenerator
             'ui_set_progress_fraction' => 'cy_ui_set_progress_fraction('
                 . implode(', ', $arguments) . ')',
             'ui_separator' => 'cy_ui_separator(' . ($arguments[0] ?? '0') . ')',
+            'ui_popover' => 'cy_ui_popover()',
+            'ui_popover_set_child' => 'cy_ui_popover_set_child('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_button' => 'cy_ui_menu_button(' . ($arguments[0] ?? '""') . ')',
+            'ui_menu_button_set_label' => 'cy_ui_menu_button_set_label('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_button_set_popover' => 'cy_ui_menu_button_set_popover('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_button_popup' => 'cy_ui_menu_button_popup('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu_button_popdown' => 'cy_ui_menu_button_popdown('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu' => 'cy_ui_menu()',
+            'ui_menu_bar' => 'cy_ui_menu_bar(' . ($arguments[0] ?? '0') . ')',
+            'ui_menu_add_item' => 'cy_ui_menu_add_item('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_add_item_ex' => 'cy_ui_menu_add_item_ex('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_add_check_item' => 'cy_ui_menu_add_check_item('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_add_radio_item' => 'cy_ui_menu_add_radio_item('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_set_check' => 'cy_ui_menu_set_check('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_select_radio' => 'cy_ui_menu_select_radio('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu_set_enabled' => 'cy_ui_menu_set_enabled('
+                . implode(', ', $arguments) . ')',
+            'ui_menu_is_enabled' => 'cy_ui_menu_is_enabled('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu_activate' => 'cy_ui_menu_activate('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu_add_separator' => 'cy_ui_menu_add_separator('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_menu_add_submenu' => 'cy_ui_menu_add_submenu('
+                . implode(', ', $arguments) . ')',
+            'ui_shortcut' => 'cy_ui_shortcut(' . implode(', ', $arguments) . ')',
+            'ui_image' => 'cy_ui_image(' . ($arguments[0] ?? '""') . ')',
+            'ui_scrolled' => 'cy_ui_scrolled()',
+            'ui_scrolled_set_child' => 'cy_ui_scrolled_set_child('
+                . implode(', ', $arguments) . ')',
+            'ui_string_list' => 'cy_ui_string_list()',
+            'ui_string_list_append' => 'cy_ui_string_list_append('
+                . implode(', ', $arguments) . ')',
+            'ui_string_list_count' => 'cy_ui_string_list_count('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_string_list_item' => 'cy_ui_string_list_item('
+                . implode(', ', $arguments) . ')',
+            'ui_drop_down' => 'cy_ui_drop_down(' . ($arguments[0] ?? '0') . ')',
+            'ui_drop_down_selected' => 'cy_ui_drop_down_selected('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_set_drop_down_selected' => 'cy_ui_set_drop_down_selected('
+                . implode(', ', $arguments) . ')',
+            'ui_drop_down_text' => 'cy_ui_drop_down_text('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_list_box' => 'cy_ui_list_box()',
+            'ui_list_box_append' => 'cy_ui_list_box_append('
+                . implode(', ', $arguments) . ')',
+            'ui_list_box_selected' => 'cy_ui_list_box_selected('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_list_box_select' => 'cy_ui_list_box_select('
+                . implode(', ', $arguments) . ')',
+            'ui_list_box_mode' => 'cy_ui_list_box_mode('
+                . implode(', ', $arguments) . ')',
+            'ui_list_box_activate' => 'cy_ui_list_box_activate('
+                . implode(', ', $arguments) . ')',
+            'ui_list_view' => 'cy_ui_list_view(' . implode(', ', $arguments) . ')',
+            'ui_list_view_selected' => 'cy_ui_list_view_selected('
+                . ($arguments[0] ?? '0') . ')',
+            'ui_list_view_select' => 'cy_ui_list_view_select('
+                . implode(', ', $arguments) . ')',
+            'ui_list_view_set_single_click' => 'cy_ui_list_view_set_single_click('
+                . implode(', ', $arguments) . ')',
+            'ui_list_view_activate' => 'cy_ui_list_view_activate('
+                . implode(', ', $arguments) . ')',
+            'ui_set_name' => 'cy_ui_set_name(' . implode(', ', $arguments) . ')',
+            'ui_set_size' => 'cy_ui_set_size(' . implode(', ', $arguments) . ')',
             'ui_add_class' => 'cy_ui_add_class(' . implode(', ', $arguments) . ')',
             'ui_set_tooltip' => 'cy_ui_set_tooltip(' . implode(', ', $arguments) . ')',
             'ui_set_sensitive' => 'cy_ui_set_sensitive(' . implode(', ', $arguments) . ')',
@@ -1626,7 +1774,10 @@ final class PhpCGenerator
             'ui_set_child' => 'cy_ui_set_child(' . implode(', ', $arguments) . ')',
             'ui_present' => 'cy_ui_present(' . ($arguments[0] ?? '0') . ')',
             'ui_set_text' => 'cy_ui_set_text(' . implode(', ', $arguments) . ')',
+            'ui_label_text' => 'cy_ui_label_text(' . ($arguments[0] ?? '0') . ')',
             'ui_entry_text' => 'cy_ui_entry_text(' . ($arguments[0] ?? '0') . ')',
+            'ui_entry_set_text' => 'cy_ui_entry_set_text(' . implode(', ', $arguments) . ')',
+            'ui_activate_entry' => 'cy_ui_activate_entry(' . ($arguments[0] ?? '0') . ')',
             'ui_set_visible' => 'cy_ui_set_visible(' . implode(', ', $arguments) . ')',
             'ui_on_click' => 'cy_ui_on_click(' . ($arguments[0] ?? '0')
                 . ', G_CALLBACK(cy_ui_widget_'
@@ -1643,7 +1794,15 @@ final class PhpCGenerator
             'ui_click' => 'cy_ui_click(' . ($arguments[0] ?? '0') . ')',
             'ui_on_click_closure' => 'cy_ui_on_click_closure(' . implode(', ', $arguments) . ')',
             'ui_on_activate_closure' => 'cy_ui_on_activate_closure(' . implode(', ', $arguments) . ')',
+            'ui_on_entry_changed_closure' => 'cy_ui_on_entry_changed_closure('
+                . implode(', ', $arguments) . ')',
             'ui_on_toggle_closure' => 'cy_ui_on_toggle_closure(' . implode(', ', $arguments) . ')',
+            'ui_on_drop_down_change_closure' => 'cy_ui_on_drop_down_change_closure('
+                . implode(', ', $arguments) . ')',
+            'ui_on_row_activated_closure' => 'cy_ui_on_row_activated_closure('
+                . implode(', ', $arguments) . ')',
+            'ui_on_list_view_activated_closure' => 'cy_ui_on_list_view_activated_closure('
+                . implode(', ', $arguments) . ')',
             'ui_after_closure' => 'cy_ui_after_closure(' . implode(', ', $arguments) . ')',
             'ui_quit' => 'cy_ui_quit()',
             'ui_run' => 'cy_ui_run()',

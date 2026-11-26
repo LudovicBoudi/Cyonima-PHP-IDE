@@ -1,0 +1,22 @@
+@params(string $title, callable():void $onAbout, callable():void $onQuit)
+
+<window title="{{ $title }}" width="460" height="340" class="menu-window">
+    <style>
+        .menu-window { background: #101418; color: #e6edf3; }
+        .menu-panel { padding: 16px; }
+        .title { font-size: 20px; font-weight: bold; }
+    </style>
+
+    <box vertical="true" spacing="10" class="menu-panel">
+        <box vertical="false" spacing="8">
+            <label text="{{ $title }}" class="title" />
+            <menu-button label="Menu">
+                <button text="À propos" on-click="{{ $onAbout }}" />
+                <separator />
+                <button text="Quitter" on-click="{{ $onQuit }}" />
+            </menu-button>
+        </box>
+        <separator />
+        <label>Menu popover compilé vers GTK.</label>
+    </box>
+</window>

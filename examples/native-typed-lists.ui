@@ -1,0 +1,25 @@
+@params(ObjectList $objects, int $selected, callable(int):void $onSelect)
+
+<window title="Modèle typé" width="440" height="520" class="typed-window">
+    <style>
+        .typed-window { background: #101418; color: #e6edf3; }
+        .typed-panel { padding: 16px; }
+        .title { font-weight: bold; }
+    </style>
+
+    <box vertical="true" spacing="10" class="typed-panel">
+        <label text="Filtre métier" class="title" />
+        <drop-down
+            items="{{ $objects }}"
+            selected="{{ $selected }}"
+            on-change="{{ $onSelect }}"
+        />
+        <separator />
+        <label text="Objets" class="title" />
+        <list-box
+            items="{{ $objects }}"
+            selection="single"
+            on-row-activated="{{ $onSelect }}"
+        />
+    </box>
+</window>

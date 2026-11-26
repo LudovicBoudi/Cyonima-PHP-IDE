@@ -145,7 +145,7 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Base de données | `Cyonima\Database\Connection`, `Repository`, `Migration`, `Migrator` |
 | ORM léger | `Cyonima\Database\Entity`, `Table`, `Repository::store()`, transactions |
 | Validation | `Cyonima\Validation\Validator`, règles typées |
-| UI native | `Application`, `Window`, `Box`, `Label`, `Button`, `Entry`, `CheckButton`, `ProgressBar`, `Separator`, CSS |
+| UI native | `Application`, `Window`, `Box`, `Label`, `Button`, `Entry`, `CheckButton`, `ProgressBar`, `Separator`, `Popover`, `MenuButton`, `Menu`, `MenuBar`, `Image`, `ScrolledWindow`, `StringList`, `ObjectList`, `Listable`, `DropDown`, `ListBox`, `ListView`, `Binding`, CSS |
 | Templates | `.ui` compilés en `Cyonima\Templates\<Nom>::build()` |
 | Modules natifs | SQLite, libcurl et libssh2 (`sqlite_*`, `curl_*`, `ssh2_*`) |
 | Packaging natif | `--package=appimage\|flatpak` |
@@ -1311,10 +1311,10 @@ Le compilateur génère les appels GTK et les wrappers de callbacks :
 PHP ui_*  →  IR  →  C11 + cyonima_ui.h  →  GTK4  →  ELF
 ```
 
-Le runtime `runtime/native/cyonima_ui.h` maintient une table de widgets
-référencés par des handles `int` (1..256). Il initialise GTK avec `gtk_init`,
-crée des `GtkWindow`, les boîtes et les contrôles, puis lance une `GMainLoop`.
-Il relie les signaux GTK aux fonctions ou closures PHP compilées.
+Le runtime `runtime/native/cyonima_ui.h` maintient une table dynamique de
+widgets référencés par des handles `int` (1..N). Il initialise GTK avec
+`gtk_init`, crée des `GtkWindow`, les boîtes et les contrôles, puis lance une
+`GMainLoop`. Il relie les signaux GTK aux fonctions ou closures PHP compilées.
 
 ### Fonctions UI
 
@@ -1400,9 +1400,14 @@ Un exemple prêt à compiler est fourni dans
 ### Façade objet
 
 La façade `Application` / `Window` / `Box` / `Label` / `Button` / `Entry` /
-`CheckButton` / `ProgressBar` / `Separator` est injectée automatiquement
-lorsqu’un programme utilise `new` sur l’une de ces classes. Elle encapsule les
-handles et les appels `ui_*`.
+`CheckButton` / `ProgressBar` / `Separator` / `Popover` / `MenuButton` /
+`Menu` / `MenuBar` / `Image` / `ScrolledWindow` / `StringList` /
+`ObjectList` / `DropDown` / `ListBox` / `ListView` / `Binding` est injectée
+automatiquement lorsqu’un programme utilise `new` sur l’une de ces classes.
+Elle encapsule les handles et les appels `ui_*`.
+
+`Application` doit être instanciée avant tout widget GTK, y compris
+`DropDown`, `ListBox` et les modèles.
 
 ```php
 $app = new Application('com.cyonima.nativeui.object');
@@ -1410,39 +1415,81 @@ $app->loadCss('.title { font-weight: bold; } .primary { background: #238636; }')
 
 $window = new Window('Cyonima objet', 400, 240);
 $box = new Box(true, 12);
+$box->setName('panel');
 $label = new Label('Bonjour');
 $label->addClass('title');
 $check = new CheckButton('Activer', true);
 $progress = new ProgressBar();
 $progress->setFraction(0.5);
 $separator = new Separator(false);
+$image = new Image('assets/logo.png');
+$image->setSize(48, 48);
+$scrolled = new ScrolledWindow();
+$scrolled->setSize(-1, 160);
 $button = new Button('Cliquer');
 
 $box->append($label);
 $box->append($check);
 $box->append($progress);
 $box->append($separator);
+$box->append($image);
+$box->append($scrolled);
 $box->append($button);
 $window->setChild($box);
 
 $button->onClicked(fn () => $label->setText('Cliqué !'));
-$check->onToggled(fn () => $progress->setFraction(0.75));
+$check->onToggled(fn (bool $active) => $progress->setFraction(0.75));
 
 $window->present();
 $app->run();
 ```
 
 - `Widget` est la classe de base des widgets, avec le handle,
-  `setVisible(bool)`, `addClass(string)`, `setTooltip(string)` et
-  `setSensitive(bool)` ;
+  `setVisible(bool)`, `setName(string)`, `setSize(int, int)`,
+  `addClass(string)`, `setTooltip(string)` et `setSensitive(bool)` ;
 - `Application::loadCss(string)` charge une feuille CSS globale via un
-  `GtkCssProvider` ;
+  `GtkCssProvider` ; `Window::loadCss(string)` fait de même depuis un
+  template ;
 - `CheckButton` expose `active()`, `setActive(bool)`, `onToggled(callable)` ;
 - `ProgressBar` expose `fraction()` et `setFraction(float)` ;
-- `Separator(bool $vertical)` ;
-- les callbacks sont des closures `callable():void` enregistrées via
-  `ui_on_click_closure`, `ui_on_toggle_closure` et maintenues en vie par les
-  racines GC ;
+- `Entry` expose `text()`, `setText(string)`, `activate()`,
+  `onActivate(callable)` et `onChanged(callable)` ;
+- `Label::text()` retourne le texte courant ;
+- `StringList(array<string>)` expose `append(string)`, `count()`,
+  `item(int)` ;
+- `Listable` impose `listLabel(): string` ; `ObjectList(array<Listable>)`
+  expose `add`, `count`, `item`, `labels()` ;
+- `DropDown(StringList $model, int $selected)` expose `selectedIndex()`,
+  `selectedText()`, `setSelected(int)`, `selectText(string)` et
+  `onChanged(callable)` ;
+  `DropDown::fromObjects(ObjectList, int)` et `selectedObject(): ?Listable`
+  branchent un modèle métier ;
+- `ListBox` expose `append(Widget)`, `appendObject(Listable)`,
+  `appendObjects(ObjectList)`, `selectedIndex()`, `selectIndex(int)`,
+  `setSelectionMode('single'|'none'|'multiple')`, `activate(int)` et
+  `onRowActivated(callable)` ;
+- `ListView(StringList $model, int $selected)` expose `selectedIndex()`,
+  `selectedText()`, `selectIndex(int)`, `selectText(string)`,
+  `selectedObject()`, `setSingleClick(bool)`, `activate(int)` et
+  `onActivated(callable)` ; `ListView::fromObjects` accepte un `ObjectList` ;
+- `Binding` expose `refresh()` et les fabriques `entry`, `label`, `check`,
+  `dropIndex`, `dropText`, `listIndex`, `viewIndex`, `viewText` ;
+- `Separator(bool $vertical)`, `Image(string $path)`,
+  `ScrolledWindow::setChild(Widget)` ;
+- `Popover` expose `setChild(Widget)` ; `MenuButton(string $label)` expose
+  `setLabel`, `setPopover`, `popup()` et `popdown()` ;
+- `Menu` expose `addItem(string, callable)`,
+  `addStyledItem(string, string, string, callable)`,
+  `addCheckItem(string, bool, string, string, callable)`,
+  `addRadioItem(string, string, string, bool, string, string, callable)`,
+  `addSeparator()`, `addSubmenu(string, Menu)`, `setChecked(int, bool)`,
+  `setEnabled(int, bool)`, `isEnabled(int)`, `setRadio(int)`, `activate(int)` ;
+- `MenuBar` expose `add(string $label, Menu $menu)` ;
+- `Window::shortcut(string $accelerator, callable)` enregistre un raccourci
+  clavier de fenêtre (syntaxe GTK : `<Control>q`, `F5`, etc.) ;
+- `onToggled` accepte `callable():void` ou `callable(bool):void` ;
+  `onActivate` accepte `callable():void` ou `callable(string):void` ;
+- le registre de widgets est dynamique : la limite de 256 a disparu ;
 - fermer la fenêtre arrête la boucle ;
 - un exemple complet est fourni dans
   [`examples/native-ui-object.php`](../examples/native-ui-object.php) et
@@ -1542,15 +1589,28 @@ Deux fichiers produisant la même classe sont refusés.
 | `<check-button label active on-toggled>` | case à cocher |
 | `<progress-bar fraction>` | barre de progression |
 | `<separator vertical>` | séparateur |
-| `class` / `tooltip` / `sensitive` | attributs communs à tous les widgets |
+| `<image src width height>` | image depuis un fichier |
+| `<scrolled vertical spacing height>` | conteneur défilant |
+| `<menu-button label vertical spacing>` | bouton et menu popover |
+| `<menu-bar>` | barre de menus native |
+| `<menu label>` | menu ou sous-menu |
+| `<item label on-click>` | entrée de menu |
+| `<shortcut key on-activate>` | raccourci clavier de fenêtre |
+| `<drop-down options model items selected on-change>` | sélecteur lié à un modèle |
+| `<list-box selection items on-row-activated>` | liste de lignes sélectionnables |
+| `<list-view options model items selected single-click on-activate>` | vue de liste GTK |
+| `<include file params>` | fragment `.ui` inclus |
+| `<style>` | CSS appliqué par `Window::loadCss` |
+| `id` / `class` / `tooltip` / `sensitive` | attributs communs à tous les widgets |
 | `{{ expression }}` | interpolation dans un texte ou un attribut |
 | `@if` / `@elseif` / `@else` / `@endif` | conditions |
 | `@foreach` / `@endforeach` | boucles |
 | `{{-- ... --}}` | commentaire |
 
 Les types de `@params` suivent la syntaxe du compilateur : scalaires,
-`array<T>`, `array<string,T>`, `?T`, `callable():void`. Les classes doivent
-être nommées de façon absolue, par exemple `App\Todo` ou `\App\Todo`.
+`array<T>`, `array<string,T>`, `?T`, `callable():void`,
+`callable(bool):void`, `callable(string):void`. Les classes doivent être
+nommées de façon absolue, par exemple `App\Todo` ou `\App\Todo`.
 
 Attributs :
 
@@ -1559,43 +1619,482 @@ Attributs :
 - `vertical`, `active`, `sensitive` : `true`, `false` ou `{{ expression }}` ;
 - `title`, `text`, `label`, `placeholder`, `tooltip` : texte avec
   interpolation ;
+- `id` : nom du widget, utilisable en CSS avec `#nom` ;
 - `class` : une ou plusieurs classes séparées par des espaces, ou
   `{{ expression }}` pour une classe dynamique ;
 - `on-click`, `on-activate`, `on-toggled` : obligatoirement
-  `{{ $callable }}`.
+  `{{ $callable }}`. `on-toggled` peut recevoir un `bool`, `on-activate` une
+  `string`.
 
 Un exemple complet est fourni dans
 [`examples/native-templates.php`](../examples/native-templates.php) et
 [`examples/native-todo-list.ui`](../examples/native-todo-list.ui).
 
-Le thème est chargé par l’application, pas par le template :
+#### Fragments et includes
+
+Un fichier `.ui` sans `<window>` est un **fragment**. Il produit une classe
+`Cyonima\Templates\<Nom>` dont `build()` retourne une `Box` :
+
+```html
+@params(App\Todo $todo, callable(bool):void $toggle)
+
+<box vertical="false" spacing="8" class="task-row">
+    <check-button
+        label="{{ $todo->title }}"
+        active="{{ $todo->done }}"
+        on-toggled="{{ $toggle }}"
+    />
+    <label class="status">{{ $todo->status }}</label>
+</box>
+```
+
+Un fragment s’inclut par nom de paramètre :
+
+```html
+@foreach ($todos as $todo)
+    <include file="partials/todo-row.ui" todo="{{ $todo }}" toggle="{{ $onToggle }}" />
+@endforeach
+```
+
+- `file` est résolu relativement au template qui inclut ;
+- les paramètres suivent l’ordre de `@params` du fragment ;
+- les types scalaires autorisent une valeur statique (`true`, `42`, `"texte"`) ;
+- les objets, tableaux et callables exigent `{{ expression }}` ;
+- un include manquant, un paramètre absent, inconnu ou mal typé échoue à la
+  compilation ;
+- inclure un template de page (avec `<window>`) est refusé ;
+- l’auto-inclusion directe est refusée ; les cycles indirects ne sont pas
+  détectés.
+
+Un fragment peut contenir son propre `<style>` ; il est compilé en
+`ui_add_css()` puisqu’il ne possède pas de `Window`.
+
+#### Listes et modèles de chaînes
+
+`StringList` encapsule un `GtkStringList` natif :
 
 ```php
-$application->loadCss(
-    '.task-panel { padding: 16px; }'
-    . '.title { font-size: 22px; font-weight: bold; }'
-    . '.status { color: #3ddc97; }'
+$model = new StringList(['Tous', 'Ouverts', 'Fermés']);
+$model->append('Archivés');
+echo $model->count(), ' ', $model->item(1), "\n";
+
+$drop = new DropDown($model, 0);
+$drop->onChanged(function (string $text): void {
+    echo 'texte ', $text, "\n";
+});
+// ou : function (int $index): void { ... }
+```
+
+`ListBox` transforme automatiquement chaque widget ajouté en `GtkListBoxRow` :
+
+```php
+$list = new ListBox();
+$list->setSelectionMode('single');
+$list->append(new Label('Premier'));
+$list->append(new Label('Second'));
+$list->selectIndex(1);
+echo $list->selectedIndex(), "\n";
+
+$list->onRowActivated(function (int $index): void {
+    echo 'ligne ', $index, "\n";
+});
+$list->activate(0);
+```
+
+Templates :
+
+```html
+<drop-down options="{{ $options }}" selected="0" on-change="{{ $onSelect }}" />
+<drop-down options="Rouge,Vert,Bleu" selected="2" />
+
+<list-box selection="single" on-row-activated="{{ $onSelect }}">
+    @foreach ($options as $option)
+        <label>{{ $option }}</label>
+    @endforeach
+</list-box>
+```
+
+- `options` construit un `StringList` à partir d’un `array<string>` ou d’une
+  liste statique séparée par des virgules ;
+- `model` accepte une variable `StringList` (`model="{{ $model }}"`) ;
+- `on-change` reçoit l’index (`int`) ou le texte (`string`) selon la signature ;
+- `on-row-activated` reçoit l’index de la ligne (`int`) ;
+- les modèles sont conservés pour la durée du processus, sans API de
+  destruction.
+
+#### Modèle métier typé
+
+Une entité implémente `Listable` pour fournir son libellé :
+
+```php
+use Listable;
+use ObjectList;
+
+final class Todo implements Listable
+{
+    public string $title;
+
+    public function listLabel(): string
+    {
+        return $this->title;
+    }
+}
+
+$todos = [];
+$todos[] = new Todo('Compiler');
+$todos[] = new Todo('Tester');
+
+$objects = new ObjectList($todos);
+$drop = DropDown::fromObjects($objects, 0);
+$selected = $drop->selectedObject();
+
+if ($selected !== null) {
+    echo $selected->listLabel(), "\n";
+}
+
+$list = new ListBox();
+$list->appendObjects($objects);
+```
+
+Templates :
+
+```html
+<drop-down items="{{ $objects }}" selected="0" on-change="{{ $onSelect }}" />
+<list-box items="{{ $objects }}" selection="single" on-row-activated="{{ $onSelect }}" />
+```
+
+- `items` exige un `ObjectList` ;
+- `DropDown::fromObjects()` construit le modèle de chaînes à partir des
+  libellés et conserve l’objet sélectionné ;
+- `appendObjects()` crée une ligne par objet ;
+- `options`, `model` et `items` sont mutuellement exclusifs.
+
+#### GtkListView
+
+`ListView` encapsule un `GtkListView` avec `GtkSingleSelection` et une factory
+de libellés :
+
+```php
+$model = new StringList(['Premier', 'Deuxième', 'Troisième']);
+$view = new ListView($model, 0);
+
+$view->selectedIndex();
+$view->selectedText();
+$view->selectIndex(1);
+$view->selectText('Troisième');
+$view->onActivated(function (int $index): void {
+    echo 'activation ', $index, "\n";
+});
+
+$model->append('Quatrième'); // la vue suit le GtkStringList
+```
+
+Avec un modèle métier :
+
+```php
+$view = ListView::fromObjects($objects, 0);
+$selected = $view->selectedObject();
+```
+
+Template :
+
+```html
+<list-view
+    options="{{ $options }}"
+    selected="0"
+    single-click="true"
+    on-activate="{{ $onActivate }}"
+/>
+```
+
+- `options` (liste statique ou `array<string>`), `model="{{ $list }}"` ou
+  `items="{{ $objects }}"` sont exclusifs ;
+- `on-activate` reçoit l’index (`int`) ou aucun argument ;
+- `setSingleClick(false)` exige un double-clic ;
+- les lignes sont des `GtkLabel` avec la classe CSS `list-row` ;
+- un `StringList` modifié après création met la vue à jour.
+
+Bindings : `Binding::viewIndex` et `Binding::viewText`.
+
+Limites : lignes limitées à des libellés, pas de factory personnalisée, pas de
+sélection multiple.
+
+#### Menus popover
+
+`MenuButton` ouvre un `Popover` dont le contenu est un widget ordinaire :
+
+```php
+$menu = new MenuButton('Actions');
+$popover = new Popover();
+$content = new Box(true, 4);
+
+$open = new Button('Ouvrir');
+$open->onClicked(function (): void {
+    echo "ouvert\n";
+});
+
+$content->append($open);
+$content->append(new Separator(false));
+$content->append(new Button('Quitter'));
+$popover->setChild($content);
+$menu->setPopover($popover);
+
+$window->setChild($menu);
+$window->present();
+
+// facultatif, une fois le menu attaché à une fenêtre :
+$menu->popup();
+$menu->popdown();
+```
+
+Template :
+
+```html
+<menu-button label="Fichier">
+    <button text="Ouvrir" on-click="{{ $onOpen }}" />
+    <separator />
+    <button text="Quitter" on-click="{{ $onQuit }}" />
+</menu-button>
+```
+
+Le contenu du `<menu-button>` est automatiquement enveloppé dans un
+`Popover` et une `Box` (`vertical`, `spacing`). Les boutons peuvent recevoir
+tous les attributs habituels. `popup()` exige un menu déjà attaché à une
+fenêtre.
+
+Un exemple complet est fourni dans
+[`examples/native-menu.php`](../examples/native-menu.php).
+
+#### Barre de menus native
+
+`Menu` produit un `GMenu` et `MenuBar` un `GtkPopoverMenuBar` ; les entrées
+sont reliées à des `GSimpleAction`.
+
+```php
+$file = new Menu();
+$file->addItem('Ouvrir', function (): void {
+    echo "ouvert\n";
+});
+$file->addSeparator();
+$file->addItem('Quitter', function () use ($application): void {
+    $application->quit();
+});
+
+$help = new Menu();
+$help->addItem('À propos', function (): void {
+    echo "Cyonima\n";
+});
+
+$bar = new MenuBar();
+$bar->add('Fichier', $file);
+$bar->add('Aide', $help);
+$box->append($bar);
+```
+
+Template :
+
+```html
+<menu-bar>
+    <menu label="Fichier">
+        <item label="Ouvrir" on-click="{{ $onOpen }}" />
+        <separator />
+        <item label="Quitter" on-click="{{ $onQuit }}" />
+    </menu>
+    <menu label="Aide">
+        <menu label="Plus">
+            <item label="À propos" on-click="{{ $onAbout }}" />
+        </menu>
+    </menu>
+</menu-bar>
+```
+
+- les `item` exigent `label` et `on-click` ;
+- `separator` crée une entrée de séparation ;
+- un `menu` imbriqué crée un sous-menu ;
+- les callbacks sont sans argument, sauf `on-toggle` qui peut recevoir un
+  `bool` ;
+- `Menu::activate(int)` permet d’activer une entrée par programme.
+
+Un `<item>` accepte aussi :
+
+```html
+<item
+    label="Ouvrir"
+    accel="<Control>o"
+    icon="document-open"
+    on-click="{{ $onOpen }}"
+/>
+
+<item
+    label="Mode compact"
+    checkable="true"
+    checked="true"
+    on-toggle="{{ $onToggle }}"
+/>
+
+<item
+    label="Gauche"
+    radio="align"
+    value="left"
+    checked="true"
+    on-select="{{ $onAlign }}"
+/>
+<item label="Centre" radio="align" value="center" on-select="{{ $onAlign }}" />
+
+<item
+    label="Ouvrir"
+    enabled="{{ $menuEnabled }}"
+    on-click="{{ $onOpen }}"
+/>
+```
+
+- `accel` affiche l’accélérateur dans le menu ;
+- `icon` accepte un nom d’icône thème (`document-open`, `help-about`) ;
+- `checkable` crée un élément à cocher ; `checked` fixe l’état initial ;
+- `on-toggle` reçoit `bool` (ou aucun argument) ;
+- `radio` définit un groupe ; `value` identifie l’option ;
+- `on-select` reçoit la valeur sélectionnée (`string`) ou aucun argument ;
+- `enabled` active ou désactive une entrée ;
+- `on-click`, `on-toggle` et `on-select` sont exclusifs.
+
+API correspondante :
+
+```php
+$menu->addStyledItem('Ouvrir', '<Control>o', 'document-open', $onOpen);
+$menu->addCheckItem('Mode compact', true, '', '', $onToggle);
+$menu->addRadioItem('align', 'Gauche', 'left', true, '', '', $onAlign);
+$menu->setChecked(0, false);
+$menu->setRadio(2);
+$menu->setEnabled(1, false);
+$menu->isEnabled(1);
+```
+
+Un exemple complet est fourni dans
+[`examples/native-menubar.php`](../examples/native-menubar.php).
+
+#### Raccourcis clavier
+
+```php
+$window->shortcut('<Control>q', function () use ($application): void {
+    $application->quit();
+});
+
+$window->shortcut('F5', function (): void {
+    echo "rafraîchir\n";
+});
+```
+
+Template :
+
+```html
+<window title="Raccourcis" width="420" height="320">
+    <shortcut key="<Control>o" on-activate="{{ $onOpen }}" />
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+    <box>...</box>
+</window>
+```
+
+- syntaxe des accélérateurs GTK : `<Control>q`, `<Primary>s`, `<Shift>F5`,
+  `F5`, etc. ;
+- callbacks sans argument ;
+- portée limitée à la fenêtre ;
+- un `<shortcut>` dans un fragment est refusé ;
+- un accélérateur invalide produit une erreur explicite à l’exécution.
+
+Un exemple complet est fourni dans
+[`examples/native-shortcuts.php`](../examples/native-shortcuts.php).
+
+#### Binding bidirectionnel
+
+Les bindings relient un widget à un état applicatif via des callables :
+
+```php
+$name = 'Cyonima';
+$entry = new Entry('Nom');
+
+$binding = Binding::entry(
+    $entry,
+    function () use (&$name): string {
+        return $name;
+    },
+    function (string $value) use (&$name): void {
+        $name = $value;
+    }
 );
 ```
 
+- widget → état : mise à jour immédiate sur `changed` / `toggled` / `selected` ;
+- état → widget : appel explicite à `$binding->refresh()` ;
+- l’état initial est appliqué à la création du binding.
+
+Fabriques disponibles :
+
+```text
+Binding::entry(Entry, getter():string, setter(string))
+Binding::label(Label, getter():string)
+Binding::check(CheckButton, getter():bool, setter(bool))
+Binding::dropIndex(DropDown, getter():int, setter(int))
+Binding::dropText(DropDown, getter():string, setter(string))
+Binding::listIndex(ListBox, getter():int, setter(int))
+```
+
+Le sens état → widget n’est pas automatique : il n’existe pas de notifications
+de propriétés dans le sous-ensemble. Appeler `refresh()` après une mutation du
+modèle.
+
+Un exemple complet est fourni dans
+[`examples/native-binding.php`](../examples/native-binding.php).
+
+Le thème peut être chargé par l’application ou déclaré dans le template :
+
+```html
+<style>
+    #task-window { background: #101418; color: #e6edf3; }
+    .task-panel { padding: 16px; }
+    .title { font-size: 22px; font-weight: bold; }
+</style>
+```
+
+```php
+$application->loadCss('.task-panel { padding: 16px; }');
+```
+
+Le `<style>` d’un template est statique et compilé en `Window::loadCss()`.
+
 Limites :
 
-- un seul `<window>` racine, pas de fragments ni d’inclusion ;
+- une seule `<window>` par template de page ; les includes ne peuvent viser
+  que des fragments ;
 - `<label>` et `<button>` n’acceptent pas de balises imbriquées ;
-- CSS global uniquement, pas de feuille propre à un template ;
-- pas d’identifiants de widgets, de listes GTK ni de liaison de données ;
+- CSS toujours global à l’affichage, mais déclarable dans un template et
+  ciblable via `#id` ou `.classe` ;
+- listes GTK : `StringList`, `ObjectList`, `DropDown`, `ListBox`,
+  `ListView` ; lignes de `ListView` limitées à des libellés et sélection
+  simple ;
+- menus natifs `GMenu`/`GAction` et popovers de widgets ; éléments cochables,
+  radio, icônes, accélérateurs affichés et activation dynamique ; pas de
+  sous-groupes radio imbriqués ni de valeurs non scalaires ;
+- bindings explicites disponibles ; pas de notifications automatiques de
+  propriétés, `refresh()` requis pour le sens modèle → widget ;
 - pas de cache de templates : ils sont recompilés à chaque compilation ;
+- cycles d’includes indirects non détectés ;
 - les expressions restent du PHP du sous-ensemble, analysé statiquement.
+
+Un fragment d’exemple est fourni dans
+[`examples/partials/todo-row.ui`](../examples/partials/todo-row.ui).
 
 ### Limites de cette première couche
 
 - façade objet et composition par objets disponibles ; widgets limités à la
   fenêtre, la boîte, le libellé, le bouton, l’entrée, la case à cocher, la
-  barre de progression et le séparateur ;
-- callbacks UI limités à `callable():void` ;
-- une seule boucle GTK par programme, 256 widgets maximum ;
-- CSS global seulement : pas de thème par widget, de menus, de listes ni de
-  modèles de données ;
+  barre de progression, le séparateur, l’image, le conteneur défilant, le
+  sélecteur et la liste ;
+- callbacks UI acceptant `callable():void`, `callable(bool):void`,
+  `callable(string):void` ou `callable(int):void` selon le widget ;
+- une seule boucle GTK par programme ; registres dynamiques pour les widgets
+  et les modèles de chaînes ;
+- CSS global : menus natifs, popovers, raccourcis clavier et bindings
+  explicites disponibles ; pas de notifications automatiques ;
 - la compilation ELF d’une application UI exige `libgtk-4-dev`.
 
 La façade objet `Cyonima\UI` (`new Button(...)`, `onClicked(...)`) sera
@@ -1766,6 +2265,17 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 6 | templates `.ui` compilés vers la façade GTK | livré |
 | 7 | ORM léger : entités, table gateway, transactions | livré |
 | 8 | widgets enrichis, CSS global et templates | livré |
+| 9 | réduction des limites UI : ids, styles, images, scroll, callbacks d’état | livré |
+| 10 | fragments de templates et includes paramétrés | livré |
+| 11 | listes GTK, DropDown et modèles de chaînes | livré |
+| 12 | modèle métier typé : `Listable` et `ObjectList` | livré |
+| 13 | menus popover GTK : `MenuButton` et `Popover` | livré |
+| 14 | barre de menus native `GMenu` / `GAction` | livré |
+| 15 | raccourcis clavier GTK | livré |
+| 16 | items de menu cochables, icônes et accélérateurs | livré |
+| 17 | items radio et états dynamiques des menus | livré |
+| 18 | binding bidirectionnel widget ↔ état | livré |
+| 19 | GtkListView et sélection typée | livré |
 
 La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la

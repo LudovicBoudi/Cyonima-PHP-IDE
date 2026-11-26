@@ -2602,24 +2602,96 @@ final class SemanticAnalyzer
 
             if (in_array(
                 $expression->name,
-                ['ui_on_click_closure', 'ui_on_activate_closure', 'ui_after_closure'],
+                [
+                    'ui_on_click_closure',
+                    'ui_on_activate_closure',
+                    'ui_on_entry_changed_closure',
+                    'ui_on_toggle_closure',
+                    'ui_on_drop_down_change_closure',
+                    'ui_on_row_activated_closure',
+                    'ui_on_list_view_activated_closure',
+                    'ui_menu_add_item',
+                    'ui_menu_add_item_ex',
+                    'ui_menu_add_check_item',
+                    'ui_menu_add_radio_item',
+                    'ui_shortcut',
+                    'ui_after_closure',
+                ],
                 true,
             )) {
-                $callableType = $arguments[1] ?? null;
+                $callableIndex = match ($expression->name) {
+                    'ui_menu_add_item' => 2,
+                    'ui_menu_add_item_ex' => 4,
+                    'ui_menu_add_check_item' => 5,
+                    'ui_menu_add_radio_item' => 7,
+                    'ui_shortcut' => 2,
+                    default => 1,
+                };
+                $callableType = $arguments[$callableIndex] ?? null;
+                $expected = match ($expression->name) {
+                    'ui_on_activate_closure' => 'callable():void ou callable(string):void',
+                    'ui_on_entry_changed_closure' => 'callable():void ou callable(string):void',
+                    'ui_on_toggle_closure' => 'callable():void ou callable(bool):void',
+                    'ui_on_drop_down_change_closure' => 'callable():void, callable(int):void ou callable(string):void',
+                    'ui_on_row_activated_closure' => 'callable():void ou callable(int):void',
+                    'ui_on_list_view_activated_closure' => 'callable():void ou callable(int):void',
+                    'ui_menu_add_check_item' => 'callable():void ou callable(bool):void',
+                    'ui_menu_add_radio_item' => 'callable():void ou callable(string):void',
+                    default => 'callable():void',
+                };
+
+                $genericAllowed = in_array(
+                    $expression->name,
+                    [
+                        'ui_on_activate_closure',
+                        'ui_on_entry_changed_closure',
+                        'ui_on_toggle_closure',
+                        'ui_on_drop_down_change_closure',
+                        'ui_on_row_activated_closure',
+                        'ui_on_list_view_activated_closure',
+                        'ui_menu_add_item',
+                        'ui_menu_add_item_ex',
+                        'ui_menu_add_check_item',
+                        'ui_menu_add_radio_item',
+                        'ui_shortcut',
+                    ],
+                    true,
+                );
 
                 if ($callableType === null
                     || !$this->isCallableType($callableType)
-                    || $callableType === 'callable') {
+                    || (!$genericAllowed && $callableType === 'callable')) {
                     throw new CompilerException(
-                        "ligne {$expression->line} : {$expression->name} attend callable():void",
+                        "ligne {$expression->line} : {$expression->name} attend {$expected}",
                     );
                 }
 
-                $signature = $this->callableSignature($callableType);
+                if ($callableType === 'callable') {
+                    $return = $builtin['return'] === 'same'
+                        ? $arguments[0]
+                        : $builtin['return'];
+                    $expression->type = $return;
 
-                if ($signature['params'] !== [] || $signature['return'] !== 'void') {
+                    return $expression->type;
+                }
+
+                $signature = $this->callableSignature($callableType);
+                $accepted = match ($expression->name) {
+                    'ui_on_activate_closure' => [[], ['string']],
+                    'ui_on_entry_changed_closure' => [[], ['string']],
+                    'ui_on_toggle_closure' => [[], ['bool']],
+                    'ui_on_drop_down_change_closure' => [[], ['int'], ['string']],
+                    'ui_on_row_activated_closure' => [[], ['int']],
+                    'ui_on_list_view_activated_closure' => [[], ['int']],
+                    'ui_menu_add_check_item' => [[], ['bool']],
+                    'ui_menu_add_radio_item' => [[], ['string']],
+                    default => [[]],
+                };
+
+                if (!in_array($signature['params'], $accepted, true)
+                    || $signature['return'] !== 'void') {
                     throw new CompilerException(
-                        "ligne {$expression->line} : {$expression->name} attend callable():void",
+                        "ligne {$expression->line} : {$expression->name} attend {$expected}",
                     );
                 }
             }
@@ -3784,6 +3856,51 @@ final class SemanticAnalyzer
             'ui_progress_fraction' => ['params' => ['int'], 'return' => 'float'],
             'ui_set_progress_fraction' => ['params' => ['int', 'float'], 'return' => 'void'],
             'ui_separator' => ['params' => ['bool'], 'return' => 'int'],
+            'ui_popover' => ['params' => [], 'return' => 'int'],
+            'ui_popover_set_child' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_menu_button' => ['params' => ['string'], 'return' => 'int'],
+            'ui_menu_button_set_label' => ['params' => ['int', 'string'], 'return' => 'void'],
+            'ui_menu_button_set_popover' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_menu_button_popup' => ['params' => ['int'], 'return' => 'void'],
+            'ui_menu_button_popdown' => ['params' => ['int'], 'return' => 'void'],
+            'ui_menu' => ['params' => [], 'return' => 'int'],
+            'ui_menu_bar' => ['params' => ['int'], 'return' => 'int'],
+            'ui_menu_add_item' => ['params' => ['int', 'string', 'callable'], 'return' => 'int'],
+            'ui_menu_add_item_ex' => ['params' => ['int', 'string', 'string', 'string', 'callable'], 'return' => 'int'],
+            'ui_menu_add_check_item' => ['params' => ['int', 'string', 'bool', 'string', 'string', 'callable'], 'return' => 'int'],
+            'ui_menu_add_radio_item' => ['params' => ['int', 'string', 'string', 'string', 'bool', 'string', 'string', 'callable'], 'return' => 'int'],
+            'ui_menu_set_check' => ['params' => ['int', 'bool'], 'return' => 'void'],
+            'ui_menu_select_radio' => ['params' => ['int'], 'return' => 'void'],
+            'ui_menu_set_enabled' => ['params' => ['int', 'bool'], 'return' => 'void'],
+            'ui_menu_is_enabled' => ['params' => ['int'], 'return' => 'bool'],
+            'ui_menu_activate' => ['params' => ['int'], 'return' => 'void'],
+            'ui_menu_add_separator' => ['params' => ['int'], 'return' => 'void'],
+            'ui_menu_add_submenu' => ['params' => ['int', 'string', 'int'], 'return' => 'void'],
+            'ui_shortcut' => ['params' => ['int', 'string', 'callable'], 'return' => 'void'],
+            'ui_image' => ['params' => ['string'], 'return' => 'int'],
+            'ui_scrolled' => ['params' => [], 'return' => 'int'],
+            'ui_scrolled_set_child' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_string_list' => ['params' => [], 'return' => 'int'],
+            'ui_string_list_append' => ['params' => ['int', 'string'], 'return' => 'void'],
+            'ui_string_list_count' => ['params' => ['int'], 'return' => 'int'],
+            'ui_string_list_item' => ['params' => ['int', 'int'], 'return' => 'string'],
+            'ui_drop_down' => ['params' => ['int'], 'return' => 'int'],
+            'ui_drop_down_selected' => ['params' => ['int'], 'return' => 'int'],
+            'ui_set_drop_down_selected' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_drop_down_text' => ['params' => ['int'], 'return' => 'string'],
+            'ui_list_box' => ['params' => [], 'return' => 'int'],
+            'ui_list_box_append' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_list_box_selected' => ['params' => ['int'], 'return' => 'int'],
+            'ui_list_box_select' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_list_box_mode' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_list_box_activate' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_list_view' => ['params' => ['int', 'int'], 'return' => 'int'],
+            'ui_list_view_selected' => ['params' => ['int'], 'return' => 'int'],
+            'ui_list_view_select' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_list_view_set_single_click' => ['params' => ['int', 'bool'], 'return' => 'void'],
+            'ui_list_view_activate' => ['params' => ['int', 'int'], 'return' => 'void'],
+            'ui_set_name' => ['params' => ['int', 'string'], 'return' => 'void'],
+            'ui_set_size' => ['params' => ['int', 'int', 'int'], 'return' => 'void'],
             'ui_add_class' => ['params' => ['int', 'string'], 'return' => 'void'],
             'ui_set_tooltip' => ['params' => ['int', 'string'], 'return' => 'void'],
             'ui_set_sensitive' => ['params' => ['int', 'bool'], 'return' => 'void'],
@@ -3792,7 +3909,10 @@ final class SemanticAnalyzer
             'ui_set_child' => ['params' => ['int', 'int'], 'return' => 'void'],
             'ui_present' => ['params' => ['int'], 'return' => 'void'],
             'ui_set_text' => ['params' => ['int', 'string'], 'return' => 'void'],
+            'ui_label_text' => ['params' => ['int'], 'return' => 'string'],
             'ui_entry_text' => ['params' => ['int'], 'return' => 'string'],
+            'ui_entry_set_text' => ['params' => ['int', 'string'], 'return' => 'void'],
+            'ui_activate_entry' => ['params' => ['int'], 'return' => 'void'],
             'ui_set_visible' => ['params' => ['int', 'bool'], 'return' => 'void'],
             'ui_on_click' => ['params' => ['int', 'string'], 'return' => 'void'],
             'ui_on_activate' => ['params' => ['int', 'string'], 'return' => 'void'],
@@ -3800,7 +3920,11 @@ final class SemanticAnalyzer
             'ui_click' => ['params' => ['int'], 'return' => 'void'],
             'ui_on_click_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
             'ui_on_activate_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
+            'ui_on_entry_changed_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
             'ui_on_toggle_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
+            'ui_on_drop_down_change_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
+            'ui_on_row_activated_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
+            'ui_on_list_view_activated_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
             'ui_after_closure' => ['params' => ['int', 'callable'], 'return' => 'void'],
             'ui_quit' => ['params' => [], 'return' => 'void'],
             'ui_run' => ['params' => [], 'return' => 'int'],

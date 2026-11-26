@@ -1,0 +1,18 @@
+@params(array<string> $options, int $selected, callable(int):void $onActivate)
+
+<window title="ListView Cyonima" width="440" height="520" class="listview-window">
+    <style>
+        .listview-window { background: #101418; color: #e6edf3; }
+        .listview-panel { padding: 16px; }
+        .title { font-size: 20px; font-weight: bold; }
+    </style>
+
+    <box vertical="true" spacing="10" class="listview-panel">
+        <label text="GtkListView + GtkStringList" class="title" />
+        <list-view
+            options="{{ $options }}"
+            selected="{{ $selected }}"
+            on-activate="{{ $onActivate }}"
+        />
+    </box>
+</window>

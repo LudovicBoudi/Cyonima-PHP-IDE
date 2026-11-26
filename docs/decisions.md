@@ -726,6 +726,121 @@ Trois écarts assumés par rapport au miroir strict du C :
   plusieurs noms ou une classe dynamique. Limitations : CSS global seulement,
   pas d’identifiants de widgets, callbacks toujours `callable():void`.
 
+68. **Réduction des limites UI** : le registre de widgets devient dynamique
+  (`realloc`), la limite de 256 disparaît. `Widget::setName()` et `setSize()`
+  exposent les identifiants CSS et les tailles demandées. Ajout de `Image`,
+  `ScrolledWindow`, `Entry::setText()`, `Entry::activate()` et des balises
+  `<image>`, `<scrolled>`, `<style>`. Le bloc `<style>` est compilé en
+  `Window::loadCss()` et reste global à l’affichage, mais ciblable par `#id`
+  ou `.classe`. Les closures stockent leur arité (`CyClosure.arity`) :
+  `onToggled` accepte `callable():void` ou `callable(bool):void`,
+  `onActivate` accepte `callable():void` ou `callable(string):void`. Le
+  dispatch se fait à l’exécution selon l’arité. Limites restantes : pas de
+  fragments de template, de listes GTK, de menus ni de modèles de données.
+
+69. **Fragments de templates** : un `.ui` sans `<window>` devient une classe
+  `Cyonima\Templates\<Nom>` dont `build()` retourne une `Box`. Les fragments
+  sont découverts automatiquement et peuvent être inclus à la demande par
+  `<include file="..." />` ; le chemin est relatif au template parent et les
+  paramètres sont passés par nom dans l’ordre de `@params`. Les types scalaires
+  acceptent des littéraux, les objets/tableaux/callables exigent
+  `{{ expression }}`. L’include d’une page (`<window>`) et l’auto-inclusion
+  directe sont refusés. Les `<style>` de fragment sont compilés en
+  `ui_add_css()`. Les cycles indirects ne sont pas détectés.
+
+70. **Listes et modèles de chaînes** : `StringList` encapsule un
+  `GtkStringList` dans un registre de modèles natif séparé (`ui_string_list*`,
+  `ui_drop_down*`, `ui_list_box*`). `DropDown(StringList, selected)` expose
+  `selectedIndex`, `selectedText`, `setSelected`, `onChanged` ; le signal
+  `notify::selected` transmet un index (`int`) ou le texte (`string`) selon
+  la signature de la closure. `ListBox` expose `append`, `selectedIndex`,
+  `selectIndex`, `setSelectionMode`, `activate`, `onRowActivated` ; chaque
+  enfant ajouté est automatiquement enveloppé dans un `GtkListBoxRow`.
+  `CyClosure` stocke en plus `param_kind` pour distinguer `int`, `bool`,
+  `string`, `float` et objet au moment du dispatch. Templates : `<drop-down>`
+  avec `options` (liste statique ou `array<string>`) ou `model`, et
+  `<list-box>` avec `selection` et `on-row-activated`. Limites : pas de
+  `GtkListView`, pas de modèle métier typé ni de liaison automatique.
+
+71. **Modèle métier typé** : interface `Listable` (`listLabel(): string`) et
+  `ObjectList(array<Listable>)` (`add`, `count`, `item`, `labels`).
+  `DropDown::fromObjects(ObjectList, selected)` dérive un `StringList` des
+  libellés, conserve l’`ObjectList` et expose `selectedObject(): ?Listable`.
+  `ListBox::appendObject` / `appendObjects` créent une ligne par objet.
+  Templates : `<drop-down items="{{ $objects }}" />` et
+  `<list-box items="{{ $objects }}" />`, mutuellement exclusifs avec `options`
+  et `model`. Les collections `array<Todo>` sont acceptées comme
+  `array<Listable>` par covariance. Limitations : pas de `GtkListView`, pas de
+  liaison bidirectionnelle, `selectedObject()` dépend de l’index courant.
+
+72. **Menus popover** : `Popover` (`setChild`) et `MenuButton`
+  (`setLabel`, `setPopover`, `popup`, `popdown`) s’appuient sur
+  `GtkPopover` / `GtkMenuButton`. Le template `<menu-button label>` enveloppe
+  automatiquement son contenu dans un `Popover` et une `Box` paramétrable
+  (`vertical`, `spacing`). Les entrées sont des widgets ordinaires, donc les
+  callbacks, séparateurs, classes et images existants fonctionnent.
+  `popup()` exige un menu attaché à une fenêtre. Limitation : pas de `GMenu`,
+  `GtkPopoverMenuBar` ni de `GAction`.
+
+73. **Barre de menus native** : `Menu` encapsule un `GMenu` et
+  `MenuBar` un `GtkPopoverMenuBar`. Les entrées deviennent des
+  `GSimpleAction` dans un `GSimpleActionGroup` global inséré dans la barre
+  sous le préfixe `cymenu` ; les actions sont nommées `itemN` et les items les
+  référencent par action détaillée. `Menu::addItem`, `addSeparator`,
+  `addSubmenu`, `activate` ; `MenuBar::add(label, menu)`. Templates :
+  `<menu-bar>`, `<menu label>`, `<item label on-click>`, `<separator>`.
+  Limitations : callbacks sans argument, pas d’accélérateurs, d’items
+  cochables/radio, d’icônes ni d’états dynamiques.
+
+74. **Raccourcis clavier** : `Window::shortcut(accelerator, callable)` crée un
+  `GtkShortcutController` avec un `GtkShortcut` (`gtk_shortcut_trigger_parse_string`
+  + `gtk_callback_action_new`) attaché à la fenêtre. Les callbacks sont sans
+  argument, conservés par les racines GC. Template : `<shortcut key
+  on-activate>` collecté au niveau fenêtre ; interdit dans un fragment.
+  Accélérateurs au format GTK (`<Control>q`, `F5`, ...). Limitations : portée
+  fenêtre uniquement, pas d’accélérateur affiché dans les menus, pas de
+  combinaisons dynamiques.
+
+75. **Items de menu enrichis** : `Menu::addStyledItem(label, accel, icon,
+  callback)` et `addCheckItem(label, checked, accel, icon, callback)`.
+  `GMenuItem` reçoit l’attribut `accel`, une `GIcon` thématique, et
+  l’attribut `toggle` pour les éléments cochables. Les items cochables
+  utilisent une `GSimpleAction` stateful booléenne ; `change-state` met à jour
+  l’état et appelle la closure (`bool` ou sans argument). `Menu::setChecked`
+  change l’état par programme. Template : attributs `accel`, `icon`,
+  `checkable`, `checked`, `on-toggle` ; `on-click` et `on-toggle` exclusifs.
+  Limitations : pas d’items radio, pas d’activation/désactivation dynamique,
+  icônes limitées aux noms de thème.
+
+76. **Items radio et états dynamiques** : `Menu::addRadioItem(group, label,
+  value, checked, accel, icon, callback)` crée une `GSimpleAction` stateful
+  string par item, avec cible `value`, attribut `radio` et un registre de
+  groupes natif. La sélection met l’état de l’item à sa valeur et remet les
+  autres à `""` ; le callback reçoit la valeur (`string`) ou rien.
+  `Menu::setRadio(position)` sélectionne par programme. `setEnabled` /
+  `isEnabled` agissent sur `GSimpleAction::enabled`. Template : attributs
+  `radio`, `value`, `on-select`, `enabled`. Limitations : pas de sous-groupes
+  radio imbriqués ni de valeurs non scalaires.
+
+77. **Binding bidirectionnel** : `Binding` relie un widget à un état via des
+  callables typés. Fabriques `entry(getter():string, setter(string))`,
+  `label`, `check(getter():bool, setter(bool))`, `dropIndex(int)`,
+  `dropText(string)`, `listIndex(int)`. Le widget met à jour l’état via les
+  signaux GTK (`changed`, `toggled`, `selected`, `row-activated`) ; l’état met
+  à jour le widget via `refresh()`, appelé automatiquement à la création.
+  Ajout de `Entry::onChanged`, `Label::text` et `DropDown::selectText`.
+  Limitation : pas de notifications de propriétés ; le sens modèle → widget
+  reste explicite.
+
+78. **GtkListView** : `ListView(StringList, selected)` crée un `GtkListView`
+  adossé à `GtkSingleSelection` et à une `GtkSignalListItemFactory` dont les
+  lignes sont des `GtkLabel` (classe `list-row`). Sélection par index ou texte,
+  activation par position, `selectedObject()` via `ListView::fromObjects`,
+  `setSingleClick`. Template : `<list-view>` avec `options`, `model` ou `items`,
+  `on-activate`, `single-click`. Bindings `viewIndex` / `viewText`. Le modèle
+  `GtkStringList` peut évoluer après création. Limitations : lignes limitées
+  à des libellés, pas de factory personnalisée ni de sélection multiple.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

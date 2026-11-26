@@ -331,6 +331,8 @@ struct CyMap {
 
 typedef struct {
     void *invoke;
+    int arity;
+    int param_kind;
 } CyClosure;
 
 typedef void (*CyVTableSlot)(void);

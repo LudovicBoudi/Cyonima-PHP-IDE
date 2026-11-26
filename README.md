@@ -515,6 +515,12 @@ console native `Cyonima\Console` (commandes, arguments, options, aide), la
 couche `Cyonima\Database` (connexion SQLite, repositories, migrations), l’ORM
 léger (`Entity`, `Table`, transactions), la
 validation typée `Cyonima\Validation`, les templates `.ui` compilés vers GTK,
+les fragments et includes, les listes GTK (`StringList`, `ObjectList`,
+`DropDown`, `ListBox`, `ListView`), les menus popover (`MenuButton`,
+`Popover`) et la
+barre de menus native (`Menu`, `MenuBar`) avec items cochables, radio,
+icônes, accélérateurs et états dynamiques, les raccourcis clavier, le binding
+bidirectionnel widget ↔ état,
 les signatures annotées via PHPDoc avec
 copie à l’appel, l’interpolation
 de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
@@ -529,13 +535,18 @@ refusés explicitement avec un numéro de ligne.
 
 Une couche UI native expose `ui_init`, `ui_window`, `ui_box`,
 `ui_label`, `ui_button`, `ui_entry`, `ui_check_button`, `ui_progress_bar`,
-`ui_separator`, `ui_add_class`, `ui_add_css`, `ui_append`, `ui_on_click`,
-`ui_after`, `ui_run`, etc. Les callbacks acceptent des noms de fonctions ou des
-closures.
+`ui_separator`, `ui_image`, `ui_scrolled`, `ui_string_list`, `ui_drop_down`,
+`ui_list_box`, `ui_set_name`, `ui_set_size`, `ui_add_class`, `ui_add_css`,
+`ui_append`, `ui_on_click`, `ui_after`, `ui_run`, etc. Les callbacks acceptent
+des noms de fonctions ou des closures.
 
 La façade objet `Application` / `Widget` / `Window` / `Box` / `Label` /
-`Button` / `Entry` / `CheckButton` / `ProgressBar` / `Separator` est injectée
-automatiquement dès qu’un programme instancie l’une de ces classes :
+`Button` / `Entry` / `CheckButton` / `ProgressBar` / `Separator` / `Popover` /
+`MenuButton` / `Menu` / `MenuBar` / `Image` / `ScrolledWindow` /
+`StringList` / `ObjectList` / `DropDown` / `ListBox` / `ListView` / `Binding`
+est injectée automatiquement dès qu’un programme instancie l’une de ces
+classes.
+`Application` doit être créée avant tout widget GTK :
 
 ```php
 $app = new Application('com.cyonima.demo');
@@ -547,30 +558,113 @@ $button->onClicked(fn () => $label->setText('Cliqué !'));
 $check = new CheckButton('Activer', true);
 $progress = new ProgressBar();
 $progress->setFraction(0.5);
-$check->onToggled(fn () => $progress->setFraction(0.75));
+$check->onToggled(fn (bool $active) => $progress->setFraction(0.75));
+
+$logo = new Image('assets/logo.png');
+$logo->setName('logo');
+$logo->setSize(48, 48);
+$scrolled = new ScrolledWindow();
+$scrolled->setSize(-1, 160);
+
+$model = new StringList(['Tous', 'Ouverts', 'Fermés']);
+$drop = new DropDown($model, 0);
+$drop->onChanged(function (int $index) use ($label): void {
+    $label->setText('filtre ' . strval($index));
+});
+
+$list = new ListBox();
+$list->append(new Label('Premier'));
+$list->append(new Label('Second'));
+$list->onRowActivated(function (int $index) use ($label): void {
+    $label->setText('ligne ' . strval($index));
+});
+
+$objects = new ObjectList($todos); // Todo implements Listable
+$typedDrop = DropDown::fromObjects($objects, 0);
+$selected = $typedDrop->selectedObject();
+$list->appendObjects($objects);
+
+$viewModel = new StringList(['Premier', 'Deuxième']);
+$view = new ListView($viewModel, 0);
+$view->onActivated(function (int $index): void {
+    echo 'ligne ', $index, "\n";
+});
+$viewModel->append('Troisième');
+
+$menu = new MenuButton('Actions');
+$popover = new Popover();
+$content = new Box(true, 4);
+$content->append(new Button('Ouvrir'));
+$popover->setChild($content);
+$menu->setPopover($popover);
+
+$fileMenu = new Menu();
+$fileMenu->addItem('Ouvrir', fn () => $label->setText('Ouvert'));
+$fileMenu->addStyledItem('Nouveau', '<Control>n', 'document-new', fn () => $label->setText('Nouveau'));
+$fileMenu->addSeparator();
+$fileMenu->addItem('Quitter', fn () => $app->quit());
+$fileMenu->addCheckItem('Compact', false, '', '', fn (bool $checked) => $label->setText('compact'));
+$fileMenu->addRadioItem('align', 'Gauche', 'left', true, '', '', fn (string $value) => $label->setText($value));
+$fileMenu->setEnabled(1, false);
+$bar = new MenuBar();
+$bar->add('Fichier', $fileMenu);
+
+$window->shortcut('<Control>q', fn () => $app->quit());
+$window->shortcut('F5', fn () => $label->setText('Rafraîchi'));
+
+$name = 'Cyonima';
+$entry = new Entry('Nom');
+$binding = Binding::entry(
+    $entry,
+    function () use (&$name): string { return $name; },
+    function (string $value) use (&$name): void { $name = $value; }
+);
+
+$name = 'Autre';
+$binding->refresh();
 ```
 
-`Widget` fournit `setVisible`, `addClass`, `setTooltip` et `setSensitive`.
-`Application::loadCss(string)` charge une feuille CSS globale.
+`Binding` relie `Entry`, `Label`, `CheckButton`, `DropDown` et `ListBox` à un
+état applicatif. Le widget met à jour l’état immédiatement ; `refresh()`
+propage l’état vers le widget.
+
+`Listable` impose `listLabel(): string`. `DropDown::fromObjects()` et
+`ListBox::appendObjects()` branchent directement un modèle métier.
+`MenuButton` et `Popover` composent des menus à partir de widgets ordinaires ;
+`Menu` et `MenuBar` produisent une barre native `GMenu`/`GAction`.
+```
+
+`Widget` fournit `setVisible`, `setName`, `setSize`, `addClass`,
+`setTooltip` et `setSensitive`. `Entry` ajoute `setText` et `activate`.
+`Application::loadCss(string)` charge une feuille CSS globale. Le registre de
+widgets est dynamique : la limite de 256 a disparu.
 Voir `examples/native-ui-object.php` et `examples/native-widgets.php`.
 
 Les templates `.ui` sont compilés en classes `Cyonima\Templates\<Nom>` :
 
 ```html
-@params(array<App\Todo> $todos, string $title, float $progress, callable():void $onAdd, callable():void $onToggle)
+@params(array<App\Todo> $todos, string $title, float $progress, callable():void $onAdd, callable(bool):void $onToggle)
 
-<window title="{{ $title }}" width="440" height="520" class="task-window">
-    <box vertical="true" spacing="10" class="task-panel">
+<window title="{{ $title }}" width="440" height="520" id="task-window" class="task-window">
+    <style>
+        #task-window { background: #101418; color: #e6edf3; }
+        .task-panel { padding: 16px; }
+        .title { font-weight: bold; }
+    </style>
+    <box vertical="true" spacing="10" id="task-panel" class="task-panel">
         <label text="{{ $title }}" class="title" />
         <progress-bar fraction="{{ $progress }}" />
         <separator />
-        @foreach ($todos as $todo)
-            <check-button
-                label="{{ $todo->title }}"
-                active="{{ $todo->done }}"
-                on-toggled="{{ $onToggle }}"
-            />
-        @endforeach
+        <scrolled height="220" spacing="6">
+            @foreach ($todos as $todo)
+                <check-button
+                    label="{{ $todo->title }}"
+                    active="{{ $todo->done }}"
+                    on-toggled="{{ $onToggle }}"
+                />
+            @endforeach
+        </scrolled>
+        <image src="assets/logo.png" width="32" height="32" />
         <button text="Ajouter" on-click="{{ $onAdd }}" class="primary" />
     </box>
 </window>
@@ -578,15 +672,119 @@ Les templates `.ui` sont compilés en classes `Cyonima\Templates\<Nom>` :
 
 ```php
 $application = new Application('com.cyonima.templates.demo');
-$application->loadCss('.task-panel { padding: 16px; } .title { font-weight: bold; }');
 $window = TodoList::build($todos, 'Tâches', 0.66, $onAdd, $onToggle);
 $window->present();
 $application->run();
 ```
 
-Les balises `check-button`, `progress-bar` et `separator` rejoignent
-`window`, `box`, `label`, `button` et `entry`. Les attributs `class`,
-`tooltip` et `sensitive` sont disponibles partout.
+Les balises `check-button`, `progress-bar`, `separator`, `image`, `scrolled`,
+`drop-down`, `list-box` et `style` rejoignent `window`, `box`, `label`,
+`button` et `entry`. Les attributs `id`, `class`, `tooltip` et `sensitive`
+sont disponibles partout. `on-toggled` peut recevoir un `bool`,
+`on-activate` une `string`, `on-change` un `int` ou une `string`,
+`on-row-activated` un `int`.
+
+```html
+<drop-down options="Tous,Ouverts,Fermés" selected="0" on-change="{{ $onSelect }}" />
+
+<list-box selection="single" on-row-activated="{{ $onSelect }}">
+    @foreach ($options as $option)
+        <label>{{ $option }}</label>
+    @endforeach
+</list-box>
+```
+
+`DropDown` accepte `options` (liste statique ou `array<string>`), `model`
+(`StringList`) ou `items` (`ObjectList`). Voir `examples/native-lists.php`.
+
+```html
+<drop-down items="{{ $objects }}" selected="0" on-change="{{ $onSelect }}" />
+<list-box items="{{ $objects }}" selection="single" on-row-activated="{{ $onSelect }}" />
+<list-view options="{{ $options }}" selected="0" on-activate="{{ $onActivate }}" />
+```
+
+`ObjectList` regroupe des objets `Listable` ; le libellé vient de
+`listLabel()`. Voir `examples/native-typed-lists.php`.
+
+Un menu popover se déclare comme un bouton avec du contenu :
+
+```html
+<menu-button label="Fichier">
+    <button text="Ouvrir" on-click="{{ $onOpen }}" />
+    <separator />
+    <button text="Quitter" on-click="{{ $onQuit }}" />
+</menu-button>
+```
+
+Le contenu est enveloppé automatiquement dans un `Popover` et une `Box`.
+Voir `examples/native-menu.php`.
+
+Une barre de menus native se déclare avec `<menu-bar>` :
+
+```html
+<menu-bar>
+    <menu label="Fichier">
+        <item label="Ouvrir" accel="<Control>o" icon="document-open" on-click="{{ $onOpen }}" />
+        <separator />
+        <item label="Quitter" accel="<Control>q" on-click="{{ $onQuit }}" />
+    </menu>
+    <menu label="Affichage">
+        <item label="Mode compact" checkable="true" checked="false" on-toggle="{{ $onToggle }}" />
+        <separator />
+        <item label="Gauche" radio="align" value="left" checked="true" on-select="{{ $onAlign }}" />
+        <item label="Centre" radio="align" value="center" on-select="{{ $onAlign }}" />
+        <item label="Ouvrir" enabled="{{ $menuEnabled }}" on-click="{{ $onOpen }}" />
+    </menu>
+    <menu label="Aide">
+        <menu label="Plus">
+            <item label="À propos" icon="help-about" on-click="{{ $onAbout }}" />
+        </menu>
+    </menu>
+</menu-bar>
+```
+
+`accel` affiche un accélérateur, `icon` accepte un nom d’icône thème,
+`checkable` / `checked` / `on-toggle` créent un élément cochable,
+`radio` / `value` / `on-select` un groupe radio, et `enabled` active ou
+désactive une entrée.
+
+Voir `examples/native-menubar.php`.
+
+Les raccourcis clavier se déclarent au niveau fenêtre :
+
+```html
+<window title="Raccourcis" width="420" height="320">
+    <shortcut key="<Control>o" on-activate="{{ $onOpen }}" />
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+    <box>...</box>
+</window>
+```
+
+`key` utilise la syntaxe GTK (`<Control>q`, `F5`). Voir
+`examples/native-shortcuts.php`.
+
+Un `.ui` sans `<window>` est un **fragment** qui retourne une `Box` :
+
+```html
+@params(App\Todo $todo, callable(bool):void $toggle)
+
+<box vertical="false" spacing="8" class="task-row">
+    <check-button label="{{ $todo->title }}" active="{{ $todo->done }}" on-toggled="{{ $toggle }}" />
+    <label class="status">{{ $todo->status }}</label>
+</box>
+```
+
+Il s’inclut par nom de paramètre :
+
+```html
+@foreach ($todos as $todo)
+    <include file="partials/todo-row.ui" todo="{{ $todo }}" toggle="{{ $onToggle }}" />
+@endforeach
+```
+
+Les paramètres typés objets, tableaux et callables exigent
+`{{ expression }}` ; les scalaires acceptent aussi un littéral. Voir
+`examples/partials/todo-row.ui`.
 
 Aucun moteur de template n’est embarqué : les balises et directives sont
 traduites en code PHP puis en C. Voir `examples/native-templates.php`.

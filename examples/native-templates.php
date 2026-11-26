@@ -40,20 +40,15 @@ $onAdd = function (): void {
     echo "Ajout demandé\n";
 };
 
-$onToggle = function (): void {
-    echo "Bascule demandée\n";
+$onToggle = function (bool $active): void {
+    if ($active) {
+        echo "Tâche cochée\n";
+    } else {
+        echo "Tâche décochée\n";
+    }
 };
 
 $application = new Application('com.cyonima.templates.demo');
-$application->loadCss(
-    '.task-window { background: #101418; color: #e6edf3; }'
-    . '.task-panel { padding: 16px; }'
-    . '.title { font-size: 22px; font-weight: bold; }'
-    . '.hint { color: #8b949e; font-size: 12px; }'
-    . '.status { color: #3ddc97; }'
-    . '.primary { background: #238636; color: white; }'
-);
-
 $window = NativeTodoList::build($todos, 'Tâches', 0.66, $onAdd, $onToggle);
 $window->present();
 $application->run();

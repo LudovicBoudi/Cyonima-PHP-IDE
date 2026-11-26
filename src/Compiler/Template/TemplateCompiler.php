@@ -12,19 +12,56 @@ use Cyonima\Compiler\CompilerException;
  */
 final class TemplateCompiler
 {
+    private const COMMON_ATTRIBUTES = ['id', 'class', 'tooltip', 'sensitive'];
+
     private int $position = 0;
     private int $length = 0;
     private string $source = '';
     private int $widgetCounter = 0;
+    private int $modelCounter = 0;
     private bool $windowSeen = false;
     private string $lastWidget = '';
+
+    /** @var list<string> */
+    private array $styleBlocks = [];
+
+    /** @var list<array{key: string, handler: string}> */
+    private array $shortcuts = [];
 
     /** @var list<array{name: string, phpType: string, docType: string, documented: bool}> */
     private array $parameters = [];
 
     public function __construct(
         private readonly string $className,
+        private readonly ?string $path = null,
+        private readonly ?\Closure $includeResolver = null,
     ) {
+    }
+
+    /**
+     * Extrait les paramètres de `@params()` sans compiler le template.
+     *
+     * @return list<array{name: string, type: string}>
+     */
+    public static function parameterDeclarations(string $source): array
+    {
+        $compiler = new self('Fragment');
+        $compiler->source = str_replace(["\r\n", "\r"], "\n", $source);
+        $compiler->length = strlen($compiler->source);
+        $compiler->position = 0;
+        $compiler->parameters = [];
+        $compiler->consumeParameters();
+
+        $declarations = [];
+
+        foreach ($compiler->parameters as $parameter) {
+            $declarations[] = [
+                'name' => $parameter['name'],
+                'type' => $parameter['phpType'],
+            ];
+        }
+
+        return $declarations;
     }
 
     public function compile(string $source): string
@@ -33,8 +70,11 @@ final class TemplateCompiler
         $this->length = strlen($this->source);
         $this->position = 0;
         $this->widgetCounter = 0;
+        $this->modelCounter = 0;
         $this->windowSeen = false;
         $this->lastWidget = '';
+        $this->styleBlocks = [];
+        $this->shortcuts = [];
         $this->parameters = [];
         $this->consumeParameters();
         $nodes = $this->parseSequence(null);
@@ -46,8 +86,12 @@ final class TemplateCompiler
             );
         }
 
+        $isFragment = !$this->hasTopLevelWindow($nodes);
+        $returnType = $isFragment ? 'Box' : 'Window';
+
         $lines = [];
-        $lines[] = '<?php';$lines[] = '';
+        $lines[] = '<?php';
+        $lines[] = '';
         $lines[] = 'namespace Cyonima\\Templates;';
         $lines[] = '';
         $lines[] = 'use Window;';
@@ -58,6 +102,16 @@ final class TemplateCompiler
         $lines[] = 'use CheckButton;';
         $lines[] = 'use ProgressBar;';
         $lines[] = 'use Separator;';
+        $lines[] = 'use Popover;';
+        $lines[] = 'use MenuButton;';
+        $lines[] = 'use Menu;';
+        $lines[] = 'use MenuBar;';
+        $lines[] = 'use Image;';
+        $lines[] = 'use ScrolledWindow;';
+        $lines[] = 'use StringList;';
+        $lines[] = 'use DropDown;';
+        $lines[] = 'use ListBox;';
+        $lines[] = 'use ListView;';
         $lines[] = '';
         $lines[] = 'final class ' . $this->className;
         $lines[] = '{';
@@ -80,29 +134,72 @@ final class TemplateCompiler
                 $lines[] = $line;
             }
 
-            $lines[] = '     * @return Window';
+            $lines[] = '     * @return ' . $returnType;
             $lines[] = '     */';
         } else {
-            $lines[] = '    /** @return Window */';
+            $lines[] = '    /** @return ' . $returnType . ' */';
         }
 
-        $lines[] = '    public static function build(' . implode(', ', $signature) . '): Window';
+        $lines[] = '    public static function build(' . implode(', ', $signature)
+            . '): ' . $returnType;
         $lines[] = '    {';
         $body = [];
-        $this->renderNodes($nodes, '$root', 2, $body, true);
 
-        if (!$this->windowSeen) {
-            throw new CompilerException(
-                'template : balise racine <window> manquante',
-            );
+        if ($isFragment) {
+            $body[] = '        $root = new Box(true, 0);';
         }
 
-        $lines = array_merge($lines, $body);
-        $lines[] = '        return $window;';
+        $this->renderNodes($nodes, '$root', 2, $body, true);
+
+        if ($isFragment) {
+            if ($this->shortcuts !== []) {
+                throw new CompilerException(
+                    'template : <shortcut> exige une fenêtre',
+                );
+            }
+
+            foreach ($this->styleBlocks as $css) {
+                $body[] = '        ui_add_css(' . var_export($css, true) . ');';
+            }
+
+            $lines = array_merge($lines, $body);
+            $lines[] = '        return $root;';
+        } else {
+            foreach ($this->shortcuts as $shortcut) {
+                $body[] = '        $window->shortcut('
+                    . $shortcut['key'] . ', ' . $shortcut['handler'] . ');';
+            }
+
+            foreach ($this->styleBlocks as $css) {
+                $body[] = '        $window->loadCss(' . var_export($css, true) . ');';
+            }
+
+            if (!$this->windowSeen) {
+                throw new CompilerException(
+                    'template : balise racine <window> manquante',
+                );
+            }
+
+            $lines = array_merge($lines, $body);
+            $lines[] = '        return $window;';
+        }
+
         $lines[] = '    }';
         $lines[] = '}';
 
         return implode("\n", $lines) . "\n";
+    }
+
+    /** @param list<array<string, mixed>> $nodes */
+    private function hasTopLevelWindow(array $nodes): bool
+    {
+        foreach ($nodes as $node) {
+            if ($node['type'] === 'element' && $node['name'] === 'window') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function consumeParameters(): void
@@ -349,7 +446,7 @@ final class TemplateCompiler
         $text = null;
 
         if (!$selfClosing) {
-            if (in_array($name, ['label', 'button'], true)) {
+            if (in_array($name, ['label', 'button', 'style'], true)) {
                 $text = $this->readRawTextUntilClosing($name);
             } elseif ($name === 'entry') {
                 $this->skipWhitespace();
@@ -584,6 +681,35 @@ final class TemplateCompiler
             $name = (string) $node['name'];
             $attributes = $node['attributes'];
 
+            if ($name === 'style') {
+                $this->styleBlocks[] = (string) $node['text'];
+                continue;
+            }
+
+            if ($name === 'shortcut') {
+                if (!isset($attributes['key'])) {
+                    throw new CompilerException(
+                        'template : attribut "key" requis pour <shortcut>',
+                    );
+                }
+
+                if (!isset($attributes['onactivate'])) {
+                    throw new CompilerException(
+                        'template : attribut "on-activate" requis pour <shortcut>',
+                    );
+                }
+
+                $this->rejectUnknown($attributes, ['key', 'onactivate']);
+                $this->shortcuts[] = [
+                    'key' => $this->stringAttribute($attributes, 'key', ''),
+                    'handler' => $this->requiredDynamic(
+                        $attributes['onactivate'],
+                        'on-activate',
+                    ),
+                ];
+                continue;
+            }
+
             if ($name === 'window') {
                 if (!$root || $this->windowSeen) {
                     throw new CompilerException(
@@ -716,6 +842,243 @@ final class TemplateCompiler
                 continue;
             }
 
+            if ($name === 'menu-bar') {
+                $this->rejectUnknown($attributes, []);
+                $variable = $this->widget('MenuBar', '');
+                $lines[] = $prefix . $variable . ';';
+                $bar = $this->lastWidget;
+                $this->applyCommon($attributes, $bar, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $bar . ');';
+                $this->renderMenuBar($node['children'], $bar, $prefix, $lines);
+                continue;
+            }
+
+            if ($name === 'menu-button') {
+                $label = $this->stringAttribute($attributes, 'label', 'Menu');
+                $vertical = $this->boolAttribute($attributes, 'vertical', true);
+                $spacing = $this->intAttribute($attributes, 'spacing', 4);
+                $this->rejectUnknown($attributes, ['label', 'vertical', 'spacing']);
+                $variable = $this->widget('MenuButton', $label);
+                $lines[] = $prefix . $variable . ';';
+                $menu = $this->lastWidget;
+                $this->applyCommon($attributes, $menu, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $menu . ');';
+
+                $popover = $this->widget('Popover', '');
+                $lines[] = $prefix . $popover . ';';
+                $popoverVariable = $this->lastWidget;
+
+                $inner = $this->widget('Box', $vertical . ', ' . $spacing);
+                $lines[] = $prefix . $inner . ';';
+                $innerVariable = $this->lastWidget;
+
+                $lines[] = $prefix . $popoverVariable . '->setChild('
+                    . $innerVariable . ');';
+                $lines[] = $prefix . $menu . '->setPopover(' . $popoverVariable . ');';
+                $this->renderNodes($node['children'], $innerVariable, $indent, $lines);
+                continue;
+            }
+
+            if ($name === 'image') {
+                $src = $this->stringAttribute($attributes, 'src', '');
+                $width = $this->intAttribute($attributes, 'width', -1);
+                $height = $this->intAttribute($attributes, 'height', -1);
+                $this->rejectUnknown($attributes, ['src', 'width', 'height']);
+                $variable = $this->widget('Image', $src);
+                $lines[] = $prefix . $variable . ';';
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $this->lastWidget
+                    . '->setSize(' . $width . ', ' . $height . ');';
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+                continue;
+            }
+
+            if ($name === 'scrolled') {
+                $vertical = $this->boolAttribute($attributes, 'vertical', true);
+                $spacing = $this->intAttribute($attributes, 'spacing', 0);
+                $height = $this->intAttribute($attributes, 'height', -1);
+                $this->rejectUnknown($attributes, ['vertical', 'spacing', 'height']);
+                $variable = $this->widget('ScrolledWindow', '');
+                $lines[] = $prefix . $variable . ';';
+                $scrolled = $this->lastWidget;
+                $this->applyCommon($attributes, $scrolled, $prefix, $lines);
+                $lines[] = $prefix . $scrolled . '->setSize(-1, ' . $height . ');';
+                $lines[] = $prefix . $parent . '->append(' . $scrolled . ');';
+                $inner = $this->widget('Box', $vertical . ', ' . $spacing);
+                $lines[] = $prefix . $inner . ';';
+                $innerVariable = $this->lastWidget;
+                $lines[] = $prefix . $scrolled . '->setChild(' . $innerVariable . ');';
+                $this->renderNodes($node['children'], $innerVariable, $indent, $lines);
+                continue;
+            }
+
+            if ($name === 'drop-down') {
+                $sources = 0;
+
+                foreach (['options', 'model', 'items'] as $source) {
+                    if (isset($attributes[$source])) {
+                        $sources++;
+                    }
+                }
+
+                if ($sources !== 1) {
+                    throw new CompilerException(
+                        'template : <drop-down> exige soit "options", soit "model", soit "items"',
+                    );
+                }
+
+                $selected = $this->intAttribute($attributes, 'selected', 0);
+                $this->rejectUnknown(
+                    $attributes,
+                    ['options', 'model', 'items', 'selected', 'onchange'],
+                );
+
+                if (isset($attributes['items'])) {
+                    $items = $this->requiredExpression($attributes['items'], 'items');
+                    $this->widgetCounter++;
+                    $this->lastWidget = '$w' . $this->widgetCounter;
+                    $lines[] = $prefix . $this->lastWidget
+                        . ' = DropDown::fromObjects(' . $items . ', ' . $selected . ');';
+                } else {
+                    if (isset($attributes['model'])) {
+                        $modelVariable = $this->requiredExpression(
+                            $attributes['model'],
+                            'model',
+                        );
+                    } else {
+                        $modelArguments = $this->optionList($attributes['options']);
+                        $this->modelCounter++;
+                        $modelVariable = '$m' . $this->modelCounter;
+                        $lines[] = $prefix . $modelVariable
+                            . ' = new StringList(' . $modelArguments . ');';
+                    }
+
+                    $lines[] = $prefix . $this->widget(
+                        'DropDown',
+                        $modelVariable . ', ' . $selected,
+                    ) . ';';
+                }
+
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+
+                if (isset($attributes['onchange'])) {
+                    $handler = $this->requiredDynamic($attributes['onchange'], 'on-change');
+                    $lines[] = $prefix . $this->lastWidget . '->onChanged(' . $handler . ');';
+                }
+                continue;
+            }
+
+            if ($name === 'list-box') {
+                $selection = isset($attributes['selection'])
+                    ? trim($attributes['selection'])
+                    : 'single';
+
+                if (!in_array($selection, ['single', 'none', 'multiple'], true)) {
+                    throw new CompilerException(
+                        'template : "selection" doit valoir single, none ou multiple',
+                    );
+                }
+
+                $this->rejectUnknown($attributes, [
+                    'selection', 'onrowactivated', 'items',
+                ]);
+                $variable = $this->widget('ListBox', '');
+                $lines[] = $prefix . $variable . ';';
+                $listBox = $this->lastWidget;
+                $this->applyCommon($attributes, $listBox, $prefix, $lines);
+                $lines[] = $prefix . $listBox . '->setSelectionMode('
+                    . var_export($selection, true) . ');';
+                $lines[] = $prefix . $parent . '->append(' . $listBox . ');';
+
+                if (isset($attributes['items'])) {
+                    $items = $this->requiredExpression($attributes['items'], 'items');
+                    $lines[] = $prefix . $listBox . '->appendObjects(' . $items . ');';
+                }
+
+                $this->renderNodes($node['children'], $listBox, $indent, $lines);
+
+                if (isset($attributes['onrowactivated'])) {
+                    $handler = $this->requiredDynamic(
+                        $attributes['onrowactivated'],
+                        'on-row-activated',
+                    );
+                    $lines[] = $prefix . $listBox . '->onRowActivated(' . $handler . ');';
+                }
+                continue;
+            }
+
+            if ($name === 'list-view') {
+                $sources = 0;
+
+                foreach (['options', 'model', 'items'] as $source) {
+                    if (isset($attributes[$source])) {
+                        $sources++;
+                    }
+                }
+
+                if ($sources !== 1) {
+                    throw new CompilerException(
+                        'template : <list-view> exige soit "options", soit "model", soit "items"',
+                    );
+                }
+
+                $selected = $this->intAttribute($attributes, 'selected', 0);
+                $this->rejectUnknown($attributes, [
+                    'options', 'model', 'items', 'selected', 'onactivate',
+                    'singleclick',
+                ]);
+
+                if (isset($attributes['items'])) {
+                    $items = $this->requiredExpression($attributes['items'], 'items');
+                    $this->widgetCounter++;
+                    $this->lastWidget = '$w' . $this->widgetCounter;
+                    $lines[] = $prefix . $this->lastWidget
+                        . ' = ListView::fromObjects(' . $items . ', ' . $selected . ');';
+                } else {
+                    if (isset($attributes['model'])) {
+                        $modelVariable = $this->requiredExpression(
+                            $attributes['model'],
+                            'model',
+                        );
+                    } else {
+                        $modelArguments = $this->optionList($attributes['options']);
+                        $this->modelCounter++;
+                        $modelVariable = '$m' . $this->modelCounter;
+                        $lines[] = $prefix . $modelVariable
+                            . ' = new StringList(' . $modelArguments . ');';
+                    }
+
+                    $lines[] = $prefix . $this->widget(
+                        'ListView',
+                        $modelVariable . ', ' . $selected,
+                    ) . ';';
+                }
+
+                $this->applyCommon($attributes, $this->lastWidget, $prefix, $lines);
+                $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+
+                if (isset($attributes['singleclick'])) {
+                    $lines[] = $prefix . $this->lastWidget . '->setSingleClick('
+                        . $this->boolAttribute($attributes, 'singleclick', true) . ');';
+                }
+
+                if (isset($attributes['onactivate'])) {
+                    $handler = $this->requiredDynamic(
+                        $attributes['onactivate'],
+                        'on-activate',
+                    );
+                    $lines[] = $prefix . $this->lastWidget
+                        . '->onActivated(' . $handler . ');';
+                }
+                continue;
+            }
+
+            if ($name === 'include') {
+                $this->renderInclude($attributes, $parent, $prefix, $lines);
+                continue;
+            }
+
             throw new CompilerException('template : balise inconnue <' . $name . '>');
         }
     }
@@ -742,11 +1105,401 @@ final class TemplateCompiler
      */
     private function rejectUnknown(array $attributes, array $allowed): void
     {
+        $allowed = array_merge($allowed, self::COMMON_ATTRIBUTES);
+
         foreach (array_keys($attributes) as $name) {
             if (!in_array($name, $allowed, true)) {
                 throw new CompilerException('template : attribut inconnu "' . $name . '"');
             }
         }
+    }
+
+    /**
+     * @param array<string, string> $attributes
+     * @param list<string> $lines
+     */
+    private function appendItemEnabled(
+        array $attributes,
+        string $menu,
+        int $position,
+        string $prefix,
+        array &$lines,
+    ): void {
+        if (!isset($attributes['enabled'])) {
+            return;
+        }
+
+        $lines[] = $prefix . $menu . '->setEnabled(' . $position . ', '
+            . $this->boolAttribute($attributes, 'enabled', true) . ');';
+    }
+
+    /**
+     * @param list<array<string, mixed>> $nodes
+     * @param list<string> $lines
+     */
+    private function renderMenuBar(
+        array $nodes,
+        string $bar,
+        string $prefix,
+        array &$lines,
+    ): void {
+        foreach ($nodes as $node) {
+            if ($node['type'] === 'text') {
+                if (trim((string) $node['value']) !== '') {
+                    throw new CompilerException(
+                        'template : texte inattendu dans <menu-bar>',
+                    );
+                }
+                continue;
+            }
+
+            if ($node['type'] === 'directive') {
+                throw new CompilerException(
+                    'template : directive non supportée dans <menu-bar>',
+                );
+            }
+
+            if ($node['name'] !== 'menu') {
+                throw new CompilerException(
+                    'template : balise <' . $node['name']
+                    . '> inattendue dans <menu-bar>',
+                );
+            }
+
+            $this->renderMenu($node, $bar, $prefix, $lines, true);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param list<string> $lines
+     */
+    private function renderMenu(
+        array $node,
+        string $parentMenu,
+        string $prefix,
+        array &$lines,
+        bool $barLevel,
+    ): void {
+        $attributes = $node['attributes'];
+
+        if (!isset($attributes['label'])
+            || trim((string) $attributes['label']) === '') {
+            throw new CompilerException('template : label requis pour <menu>');
+        }
+
+        $this->rejectUnknown($attributes, ['label']);
+        $label = $this->textExpression((string) $attributes['label']);
+        $this->modelCounter++;
+        $menu = '$m' . $this->modelCounter;
+        $lines[] = $prefix . $menu . ' = new Menu();';
+        $itemIndex = 0;
+
+        foreach ($node['children'] as $child) {
+            if ($child['type'] === 'text') {
+                if (trim((string) $child['value']) !== '') {
+                    throw new CompilerException(
+                        'template : texte inattendu dans <menu>',
+                    );
+                }
+                continue;
+            }
+
+            if ($child['type'] === 'directive') {
+                throw new CompilerException(
+                    'template : directive non supportée dans <menu>',
+                );
+            }
+
+            $name = (string) $child['name'];
+            $childAttributes = $child['attributes'];
+
+            if ($name === 'item') {
+                if (!isset($childAttributes['label'])
+                    || trim((string) $childAttributes['label']) === '') {
+                    throw new CompilerException(
+                        'template : label requis pour <item>',
+                    );
+                }
+
+                $this->rejectUnknown($childAttributes, [
+                    'label', 'onclick', 'ontoggle', 'onselect',
+                    'checkable', 'checked', 'radio', 'value', 'enabled',
+                    'accel', 'icon',
+                ]);
+                $itemLabel = $this->textExpression((string) $childAttributes['label']);
+                $accelerator = $this->stringAttribute($childAttributes, 'accel', '');
+                $icon = $this->stringAttribute($childAttributes, 'icon', '');
+                $position = $itemIndex;
+                $itemIndex++;
+
+                if (isset($childAttributes['radio'])) {
+                    if (!isset($childAttributes['value'])
+                        || trim((string) $childAttributes['value']) === '') {
+                        throw new CompilerException(
+                            'template : value requis pour un <item radio>',
+                        );
+                    }
+
+                    if (!isset($childAttributes['onselect'])) {
+                        throw new CompilerException(
+                            'template : on-select requis pour un <item radio>',
+                        );
+                    }
+
+                    if (isset($childAttributes['onclick'])
+                        || isset($childAttributes['ontoggle'])) {
+                        throw new CompilerException(
+                            'template : on-click et on-toggle sont interdits pour un <item radio>',
+                        );
+                    }
+
+                    $group = $this->textExpression((string) $childAttributes['radio']);
+                    $value = $this->textExpression((string) $childAttributes['value']);
+                    $checked = $this->boolAttribute($childAttributes, 'checked', false);
+                    $handler = $this->requiredDynamic(
+                        $childAttributes['onselect'],
+                        'on-select',
+                    );
+                    $lines[] = $prefix . $menu . '->addRadioItem('
+                        . $group . ', ' . $itemLabel . ', ' . $value . ', '
+                        . $checked . ', ' . $accelerator . ', ' . $icon . ', '
+                        . $handler . ');';
+                    $this->appendItemEnabled(
+                        $childAttributes,
+                        $menu,
+                        $position,
+                        $prefix,
+                        $lines,
+                    );
+                    continue;
+                }
+
+                $checkable = $this->boolAttribute($childAttributes, 'checkable', false);
+
+                if ($checkable === 'true') {
+                    if (!isset($childAttributes['ontoggle'])) {
+                        throw new CompilerException(
+                            'template : on-toggle requis pour un <item checkable>',
+                        );
+                    }
+
+                    if (isset($childAttributes['onclick'])) {
+                        throw new CompilerException(
+                            'template : on-click est interdit pour un <item checkable>',
+                        );
+                    }
+
+                    $checked = $this->boolAttribute($childAttributes, 'checked', false);
+                    $handler = $this->requiredDynamic(
+                        $childAttributes['ontoggle'],
+                        'on-toggle',
+                    );
+                    $lines[] = $prefix . $menu . '->addCheckItem('
+                        . $itemLabel . ', ' . $checked . ', '
+                        . $accelerator . ', ' . $icon . ', ' . $handler . ');';
+                    $this->appendItemEnabled(
+                        $childAttributes,
+                        $menu,
+                        $position,
+                        $prefix,
+                        $lines,
+                    );
+                    continue;
+                }
+
+                if (!isset($childAttributes['onclick'])) {
+                    throw new CompilerException(
+                        'template : on-click requis pour <item>',
+                    );
+                }
+
+                $handler = $this->requiredDynamic(
+                    $childAttributes['onclick'],
+                    'on-click',
+                );
+                $lines[] = $prefix . $menu . '->addStyledItem('
+                    . $itemLabel . ', ' . $accelerator . ', ' . $icon . ', '
+                    . $handler . ');';
+                $this->appendItemEnabled(
+                    $childAttributes,
+                    $menu,
+                    $position,
+                    $prefix,
+                    $lines,
+                );
+                continue;
+            }
+
+            if ($name === 'separator') {
+                $this->rejectUnknown($childAttributes, []);
+                $lines[] = $prefix . $menu . '->addSeparator();';
+                continue;
+            }
+
+            if ($name === 'menu') {
+                $this->renderMenu($child, $menu, $prefix, $lines, false);
+                continue;
+            }
+
+            throw new CompilerException(
+                'template : balise <' . $name . '> inattendue dans <menu>',
+            );
+        }
+
+        if ($barLevel) {
+            $lines[] = $prefix . $parentMenu . '->add(' . $label . ', ' . $menu . ');';
+        } else {
+            $lines[] = $prefix . $parentMenu . '->addSubmenu('
+                . $label . ', ' . $menu . ');';
+        }
+    }
+
+    /**
+     * @param array<string, string> $attributes
+     * @param list<string> $lines
+     */
+    private function renderInclude(
+        array $attributes,
+        string $parent,
+        string $prefix,
+        array &$lines,
+    ): void {
+        $file = isset($attributes['file']) ? trim($attributes['file']) : '';
+
+        if ($file === '') {
+            throw new CompilerException(
+                'template : attribut "file" requis pour <include>',
+            );
+        }
+
+        if ($this->path === null || $this->includeResolver === null) {
+            throw new CompilerException(
+                'template : include indisponible sans chemin de fichier',
+            );
+        }
+
+        $candidate = str_starts_with($file, '/')
+            ? $file
+            : dirname($this->path) . '/' . $file;
+        $resolved = realpath($candidate) ?: $candidate;
+
+        if (!is_file($resolved)) {
+            throw new CompilerException('template : include introuvable : ' . $file);
+        }
+
+        $resolver = $this->includeResolver;
+        $included = $resolver($resolved);
+
+        if (($included['class'] ?? '') === $this->className) {
+            throw new CompilerException(
+                'template : include récursif de ' . $file,
+            );
+        }
+
+        $arguments = [];
+        $used = ['file' => true];
+
+        foreach ($included['params'] ?? [] as $parameter) {
+            $name = (string) $parameter['name'];
+
+            if (!isset($attributes[$name])) {
+                throw new CompilerException(
+                    'template : paramètre "' . $name . '" manquant pour l’include '
+                    . $file,
+                );
+            }
+
+            $arguments[] = $this->includeArgument(
+                (string) $parameter['type'],
+                $attributes[$name],
+                $name,
+            );
+            $used[$name] = true;
+        }
+
+        foreach (array_keys($attributes) as $name) {
+            if (!isset($used[$name])) {
+                throw new CompilerException(
+                    'template : paramètre inconnu "' . $name . '" pour l’include '
+                    . $file,
+                );
+            }
+        }
+
+        $this->widgetCounter++;
+        $this->lastWidget = '$w' . $this->widgetCounter;
+        $lines[] = $prefix . $this->lastWidget
+            . ' = \\Cyonima\\Templates\\' . (string) $included['class']
+            . '::build(' . implode(', ', $arguments) . ');';
+        $lines[] = $prefix . $parent . '->append(' . $this->lastWidget . ');';
+    }
+
+    private function optionList(string $value): string
+    {
+        $trimmed = trim($value);
+
+        if ($trimmed === '') {
+            throw new CompilerException(
+                'template : "options" ne peut pas être vide',
+            );
+        }
+
+        if (preg_match('/^{{(.+)}}$/s', $trimmed, $matches) === 1) {
+            return '(' . trim($matches[1]) . ')';
+        }
+
+        $items = [];
+
+        foreach (explode(',', $trimmed) as $option) {
+            $option = trim($option);
+
+            if ($option === '') {
+                throw new CompilerException(
+                    'template : option vide dans <drop-down>',
+                );
+            }
+
+            $items[] = var_export($option, true);
+        }
+
+        return '[' . implode(', ', $items) . ']';
+    }
+
+    private function includeArgument(string $type, string $value, string $name): string
+    {        $trimmed = trim($value);
+
+        if (preg_match('/^{{(.+)}}$/s', $trimmed, $matches) === 1) {
+            return '(' . trim($matches[1]) . ')';
+        }
+
+        if ($type === 'string') {
+            return var_export($value, true);
+        }
+
+        if ($type === 'bool') {
+            if ($trimmed === 'true' || $trimmed === '1') {
+                return 'true';
+            }
+
+            if ($trimmed === 'false' || $trimmed === '0') {
+                return 'false';
+            }
+        }
+
+        if ($type === 'int' && preg_match('/^-?[0-9]+$/', $trimmed) === 1) {
+            return $trimmed;
+        }
+
+        if ($type === 'float'
+            && preg_match('/^-?[0-9]+(\.[0-9]+)?$/', $trimmed) === 1) {
+            return $trimmed;
+        }
+
+        throw new CompilerException(
+            'template : paramètre "' . $name . '" (' . $type
+            . ') doit être {{ expression }}',
+        );
     }
 
     /**
@@ -759,6 +1512,11 @@ final class TemplateCompiler
         string $prefix,
         array &$lines,
     ): void {
+        if (isset($attributes['id'])) {
+            $lines[] = $prefix . $widget . '->setName('
+                . $this->textExpression($attributes['id']) . ');';
+        }
+
         if (isset($attributes['class'])) {
             foreach ($this->classNames($attributes['class']) as $class) {
                 $lines[] = $prefix . $widget . '->addClass(' . $class . ');';
@@ -866,6 +1624,17 @@ final class TemplateCompiler
         }
 
         throw new CompilerException('template : booléen attendu pour "' . $name . '"');
+    }
+
+    private function requiredExpression(string $value, string $attribute): string
+    {
+        if (preg_match('/^{{(.+)}}$/s', trim($value), $matches) !== 1) {
+            throw new CompilerException(
+                'template : "' . $attribute . '" doit être {{ expression }}',
+            );
+        }
+
+        return '(' . trim($matches[1]) . ')';
     }
 
     private function requiredDynamic(string $value, string $attribute): string

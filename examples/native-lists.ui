@@ -1,0 +1,25 @@
+@params(array<string> $options, int $selected, callable(int):void $onSelect)
+
+<window title="Listes Cyonima" width="420" height="520" class="list-window">
+    <style>
+        .list-window { background: #101418; color: #e6edf3; }
+        .list-panel { padding: 16px; }
+        .title { font-weight: bold; }
+    </style>
+
+    <box vertical="true" spacing="10" class="list-panel">
+        <label text="Filtre" class="title" />
+        <drop-down
+            options="{{ $options }}"
+            selected="{{ $selected }}"
+            on-change="{{ $onSelect }}"
+        />
+        <separator />
+        <label text="Résultats" class="title" />
+        <list-box selection="single" on-row-activated="{{ $onSelect }}">
+            @foreach ($options as $option)
+                <label>{{ $option }}</label>
+            @endforeach
+        </list-box>
+    </box>
+</window>

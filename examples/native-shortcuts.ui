@@ -1,0 +1,19 @@
+@params(string $title, callable():void $onOpen, callable():void $onQuit)
+
+<window title="{{ $title }}" width="440" height="320" class="shortcut-window">
+    <shortcut key="<Control>o" on-activate="{{ $onOpen }}" />
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+
+    <style>
+        .shortcut-window { background: #101418; color: #e6edf3; }
+        .shortcut-panel { padding: 16px; }
+        .title { font-size: 20px; font-weight: bold; }
+        .hint { color: #8b949e; }
+    </style>
+
+    <box vertical="true" spacing="10" class="shortcut-panel">
+        <label text="{{ $title }}" class="title" />
+        <label>Ctrl+O : ouvrir</label>
+        <label class="hint">Ctrl+Q : quitter</label>
+    </box>
+</window>

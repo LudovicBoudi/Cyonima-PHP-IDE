@@ -5758,7 +5758,6 @@ T::ok(
 );
 
 $templateErrors = [
-    ['window manquante', '<box vertical="true"></box>', 'balise racine <window> manquante'],
     ['balise inconnue', '<window><frame /></window>', 'balise inconnue <frame>'],
     ['attribut inconnu', '<window><label color="red">x</label></window>', 'attribut inconnu "color"'],
     ['balise non fermée', '<window><box>', 'balise <box> non fermée'],
@@ -6384,6 +6383,2392 @@ PHP;
 }
 
 $removeTree($uiRoot);
+
+// ---------------------------------------------------------------------------
+T::section('44. UI — réduction des limites : ids, styles, images, callbacks d’état');
+
+$limitsRoot = sys_get_temp_dir() . '/cyonima_ui_limits_' . getmypid();
+$removeTree($limitsRoot);
+mkdir($limitsRoot . '/src', 0775, true);
+mkdir($limitsRoot . '/templates', 0775, true);
+
+$limitsTemplate = <<<'UI'
+@params(bool $enabled, callable(bool):void $onToggle)
+
+<window title="Limites" width="360" height="420" id="limit-window" class="limit-window">
+    <style>
+        #limit-window { background: #101418; }
+        .panel { padding: 8px; }
+    </style>
+    <box vertical="true" spacing="6" id="limit-panel" class="panel">
+        <scrolled height="120" spacing="4">
+            <check-button label="A" active="true" on-toggled="{{ $onToggle }}" />
+            <check-button label="B" on-toggled="{{ $onToggle }}" />
+        </scrolled>
+        <image src="packaging/icon/com.cyonima.Ide.svg" width="32" height="32" />
+        <label id="limit-state" sensitive="{{ $enabled }}">État</label>
+    </box>
+</window>
+UI;
+
+$limitsApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Limits;
+
+$onToggle = function (bool $active): void {
+    echo "toggle\n";
+};
+
+$application = new Application('com.cyonima.ui.limits');
+$window = Limits::build(true, $onToggle);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$limitsGenerated = (new TemplateCompiler('Limits'))->compile($limitsTemplate);
+T::ok(str_contains($limitsGenerated, 'new ScrolledWindow()'), 'limites : balise scrolled');
+T::ok(str_contains($limitsGenerated, '->setChild('), 'limites : contenu défilant');
+T::ok(str_contains($limitsGenerated, 'new Image('), 'limites : balise image');
+T::ok(str_contains($limitsGenerated, '->setSize(32, 32)'), 'limites : taille d’image');
+T::ok(str_contains($limitsGenerated, "->setName('limit-panel')"), 'limites : identifiant de widget');
+T::ok(str_contains($limitsGenerated, '$window->loadCss('), 'limites : style dans le template');
+T::ok(str_contains($limitsGenerated, '->onToggled(($onToggle))'), 'limites : callback booléen');
+
+file_put_contents($limitsRoot . '/templates/limits.ui', $limitsTemplate);
+file_put_contents($limitsRoot . '/src/app.php', $limitsApp);
+
+$limitsC = (new PhpCompiler($limitsRoot))->compile($limitsRoot . '/src/app.php', null, 'c');
+$limitsCSource = (string) file_get_contents($limitsC['cPath']);
+T::ok(str_contains($limitsCSource, 'cy_ui_scrolled'), 'limites : scrolled natif');
+T::ok(str_contains($limitsCSource, 'cy_ui_image'), 'limites : image native');
+T::ok(str_contains($limitsCSource, 'cy_ui_set_name'), 'limites : nom natif');
+T::ok(str_contains($limitsCSource, 'cy_ui_set_size'), 'limites : taille native');
+T::ok(str_contains($limitsCSource, 'cy_ui_add_css'), 'limites : CSS natif');
+
+$limitsFacade = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.ui.limits.facade');
+$entry = new Entry('Nom');
+$entry->setText('Cyonima');
+$entry->activate();
+$image = new Image('packaging/icon/com.cyonima.Ide.svg');
+$image->setSize(48, 48);
+$image->setName('logo');
+$scrolled = new ScrolledWindow();
+$box = new Box(true, 0);
+$scrolled->setChild($box);
+$scrolled->setSize(-1, 120);
+PHP;
+
+$limitsFacadeC = $compilePhp('ui-limits-facade', $limitsFacade, 'c');
+$limitsFacadeSource = (string) file_get_contents($limitsFacadeC['cPath']);
+T::ok(str_contains($limitsFacadeSource, 'cy_ui_entry_set_text'), 'limites : Entry::setText');
+T::ok(str_contains($limitsFacadeSource, 'cy_ui_activate_entry'), 'limites : Entry::activate');
+T::ok(str_contains($limitsFacadeSource, 'cy_ui_scrolled_set_child'), 'limites : ScrolledWindow');
+T::ok(str_contains($limitsFacadeSource, 'cy_ui_set_size'), 'limites : Widget::setSize');
+
+$limitsErrorApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Limits;
+
+$onToggle = function (int $code): void {
+    echo $code, "\n";
+};
+
+$application = new Application('com.cyonima.ui.limits.error');
+$window = Limits::build(true, $onToggle);
+PHP;
+
+file_put_contents($limitsRoot . '/src/error.php', $limitsErrorApp);
+
+try {
+    (new PhpCompiler($limitsRoot))->compile($limitsRoot . '/src/error.php', null, 'c');
+    T::ok(false, 'limites : callback booléen incompatible');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'callable(bool):void'),
+        'limites : callback booléen incompatible',
+        $exception->getMessage(),
+    );
+}
+
+$limitsErrors = [
+    ['image largeur invalide', '<window><image width="large" /></window>', 'entier attendu pour "width"'],
+    ['scrolled hauteur invalide', '<window><scrolled height="haut"></scrolled></window>', 'entier attendu pour "height"'],
+];
+
+foreach ($limitsErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('LimitsBroken' . $index))->compile($source);
+        T::ok(false, 'limites : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'limites : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$limitsGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$limitsDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$limitsGtk) {
+    T::skip('GTK4 dev absent : exécution des limites UI non testée');
+} elseif (!$limitsDisplay) {
+    T::skip('DISPLAY absent : exécution des limites UI non testée');
+} else {
+    $limitsElf = (new PhpCompiler($limitsRoot))->compile($limitsRoot . '/src/app.php', null, 'elf');
+    $limitsRunner = 'timeout 8 ' . escapeshellarg((string) $limitsElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $limitsRunner = 'dbus-run-session -- ' . $limitsRunner;
+    }
+
+    $limitsOut = [];
+    $limitsStatus = 0;
+    exec($limitsRunner . ' 2>&1', $limitsOut, $limitsStatus);
+    T::ok(
+        $limitsStatus === 0,
+        'limites : template avec style, image et scroll exécuté',
+        implode("\n", $limitsOut),
+    );
+
+    $stateSource = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.ui.limits.state');
+$check = new CheckButton('Basculer', false);
+$events = '';
+
+$check->onToggled(function (bool $active) use (&$events): void {
+    if ($active) {
+        $events = $events . '1';
+    } else {
+        $events = $events . '0';
+    }
+});
+
+$check->setActive(true);
+$check->setActive(false);
+
+if ($events === '10') {
+    echo "toggled=ok\n";
+}
+
+$entry = new Entry('texte');
+$received = '';
+$entry->onActivate(function (string $value) use (&$received): void {
+    $received = $value;
+});
+$entry->setText('bonjour');
+$entry->activate();
+
+if ($received === 'bonjour') {
+    echo "entry=ok\n";
+}
+
+$box = new Box(true, 0);
+$lastHandle = 0;
+
+for ($i = 0; $i < 300; $i = $i + 1) {
+    $label = new Label('x');
+    $box->append($label);
+    $lastHandle = $label->handle;
+}
+
+if ($lastHandle > 300) {
+    echo "growth=ok\n";
+}
+
+$image = new Image('packaging/icon/com.cyonima.Ide.svg');
+$scrolled = new ScrolledWindow();
+$scrolled->setChild($box);
+$scrolled->setSize(-1, 100);
+$image->setSize(32, 32);
+$image->setName('logo');
+echo 'handles=', $image->handle, ',', $scrolled->handle, "\n";
+PHP;
+
+    $stateElf = $compilePhp('ui-limits-state', $stateSource, 'elf');
+    $stateRunner = 'timeout 8 ' . escapeshellarg((string) $stateElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $stateRunner = 'dbus-run-session -- ' . $stateRunner;
+    }
+
+    $stateOut = [];
+    $stateStatus = 0;
+    exec($stateRunner . ' 2>&1', $stateOut, $stateStatus);
+    $stateText = implode("\n", $stateOut);
+    T::ok(str_contains($stateText, 'toggled=ok'), 'limites : callback booléen à l’exécution', $stateText);
+    T::ok(str_contains($stateText, 'entry=ok'), 'limites : callback texte à l’exécution', $stateText);
+    T::ok(str_contains($stateText, 'growth=ok'), 'limites : plus de 256 widgets', $stateText);
+    T::ok($stateStatus === 0, 'limites : état des widgets exécuté', $stateText);
+}
+
+$removeTree($limitsRoot);
+
+// ---------------------------------------------------------------------------
+T::section('45. Templates — fragments, includes et paramètres');
+
+$fragRoot = sys_get_temp_dir() . '/cyonima_fragments_' . getmypid();
+$removeTree($fragRoot);
+mkdir($fragRoot . '/src', 0775, true);
+mkdir($fragRoot . '/templates/partials', 0775, true);
+
+$cardSource = <<<'UI'
+@params(App\Todo $todo, callable(bool):void $toggle)
+
+<style>
+    .card { padding: 6px; }
+</style>
+
+<box vertical="true" spacing="4" class="card">
+    <check-button label="{{ $todo->title }}" active="{{ $todo->done }}" on-toggled="{{ $toggle }}" />
+    <label>{{ $todo->status }}</label>
+</box>
+UI;
+
+$boardSource = <<<'UI'
+@params(array<App\Todo> $todos, string $title, callable(bool):void $toggle)
+
+<window title="{{ $title }}" width="420" height="480">
+    <box vertical="true" spacing="6">
+        @foreach ($todos as $todo)
+            <include file="partials/card.ui" todo="{{ $todo }}" toggle="{{ $toggle }}" />
+        @endforeach
+    </box>
+</window>
+UI;
+
+$boardApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Board;
+
+final class Todo
+{
+    public string $title;
+    public string $status;
+    public bool $done;
+
+    public function __construct(string $title, string $status, bool $done)
+    {
+        $this->title = $title;
+        $this->status = $status;
+        $this->done = $done;
+    }
+}
+
+$todos = [];
+$todos[] = new Todo('Fragments', 'en cours', false);
+$todos[] = new Todo('Includes', 'fait', true);
+
+$toggle = function (bool $active): void {
+    echo "toggle\n";
+};
+
+$application = new Application('com.cyonima.fragments.board');
+$window = Board::build($todos, 'Tableau', $toggle);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+file_put_contents($fragRoot . '/templates/partials/card.ui', $cardSource);
+file_put_contents($fragRoot . '/templates/board.ui', $boardSource);
+file_put_contents($fragRoot . '/src/app.php', $boardApp);
+
+$fragmentGenerated = (new TemplateCompiler('Card'))->compile($cardSource);
+T::ok(str_contains($fragmentGenerated, '@return Box'), 'fragment : retour Box');
+T::ok(str_contains($fragmentGenerated, '$root = new Box(true, 0);'), 'fragment : racine Box');
+T::ok(str_contains($fragmentGenerated, 'return $root;'), 'fragment : aucun Window');
+T::ok(str_contains($fragmentGenerated, 'ui_add_css('), 'fragment : style local');
+
+$fragC = (new PhpCompiler($fragRoot))->compile($fragRoot . '/src/app.php', null, 'c');
+$fragCSource = (string) file_get_contents($fragC['cPath']);
+T::ok(
+    str_contains($fragCSource, 'CyObj_Cyonima__Templates__Card'),
+    'fragment : classe Card générée',
+);
+T::ok(
+    str_contains($fragCSource, 'fn_Cyonima__Templates__Card__build'),
+    'fragment : build Card',
+);
+T::ok(
+    str_contains($fragCSource, 'fn_Cyonima__Templates__Board__build')
+        && str_contains($fragCSource, 'fn_Cyonima__Templates__Card__build('),
+    'fragment : include compilé dans Board',
+);
+
+$exampleFragC = (new PhpCompiler(
+    $fragRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-todo-list.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-templates.php',
+    null,
+    'c',
+);
+$exampleFragSource = (string) file_get_contents($exampleFragC['cPath']);
+T::ok(
+    str_contains($exampleFragSource, 'CyObj_Cyonima__Templates__TodoRow'),
+    'fragment : include découvert à la demande',
+);
+
+$fragResolver = function (string $path) use ($cardSource): array {
+    return [
+        'class' => 'Card',
+        'params' => TemplateCompiler::parameterDeclarations($cardSource),
+    ];
+};
+
+$fragErrorPage = static fn (string $include): string => <<<UI
+<window title="Erreur">
+    <box vertical="true">
+        $include
+    </box>
+</window>
+UI;
+
+file_put_contents(
+    $fragRoot . '/templates/missing.ui',
+    $fragErrorPage('<include file="partials/card.ui" todo="{{ $todo }}" />'),
+);
+file_put_contents(
+    $fragRoot . '/templates/unknown.ui',
+    $fragErrorPage('<include file="partials/card.ui" todo="{{ $todo }}" toggle="{{ $toggle }}" extra="x" />'),
+);
+file_put_contents(
+    $fragRoot . '/templates/static.ui',
+    $fragErrorPage('<include file="partials/card.ui" todo="littéral" toggle="{{ $toggle }}" />'),
+);
+
+$fragErrorCases = [
+    [
+        'paramètre manquant',
+        $fragRoot . '/templates/missing.ui',
+        'paramètre "toggle" manquant',
+    ],
+    [
+        'paramètre inconnu',
+        $fragRoot . '/templates/unknown.ui',
+        'paramètre inconnu "extra"',
+    ],
+    [
+        'paramètre typé statique',
+        $fragRoot . '/templates/static.ui',
+        'doit être {{ expression }}',
+    ],
+];
+
+foreach ($fragErrorCases as $index => [$label, $pagePath, $needle]) {
+    $pageSource = (string) file_get_contents($pagePath);
+
+    try {
+        (new TemplateCompiler('FragError' . $index, $pagePath, $fragResolver))
+            ->compile($pageSource);
+        T::ok(false, 'fragment : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'fragment : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+file_put_contents(
+    $fragRoot . '/templates/self.ui',
+    '<include file="self.ui" />',
+);
+$selfSource = (string) file_get_contents($fragRoot . '/templates/self.ui');
+
+try {
+    (new TemplateCompiler(
+        'Self',
+        $fragRoot . '/templates/self.ui',
+        static fn (string $path): array => ['class' => 'Self', 'params' => []],
+    ))->compile($selfSource);
+    T::ok(false, 'fragment : include récursif refusé');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'include récursif'),
+        'fragment : include récursif refusé',
+        $exception->getMessage(),
+    );
+}
+
+$nestedPage = <<<'UI'
+@params(string $title)
+
+<window title="{{ $title }}" width="320" height="200">
+    <box vertical="true">
+        <include file="nested.ui" />
+    </box>
+</window>
+UI;
+
+$nestedInner = <<<'UI'
+@params()
+
+<window title="Interdit" width="200" height="100">
+    <box vertical="true">
+        <label>Page</label>
+    </box>
+</window>
+UI;
+
+$pageRoot = $fragRoot . '/page-project';
+mkdir($pageRoot . '/templates', 0775, true);
+mkdir($pageRoot . '/src', 0775, true);
+file_put_contents($pageRoot . '/templates/parent-page.ui', $nestedPage);
+file_put_contents($pageRoot . '/templates/nested.ui', $nestedInner);
+file_put_contents($pageRoot . '/src/nested.php', <<<'PHP'
+<?php
+namespace App;
+
+use Cyonima\Templates\ParentPage;
+
+$window = ParentPage::build('Parent');
+PHP);
+
+try {
+    (new PhpCompiler($pageRoot))->compile($pageRoot . '/src/nested.php', null, 'c');
+    T::ok(false, 'fragment : page incluse refusée');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'template de page ne peut pas être inclus'),
+        'fragment : page incluse refusée',
+        $exception->getMessage(),
+    );
+}
+
+$fragGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$fragDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$fragGtk) {
+    T::skip('GTK4 dev absent : exécution des fragments non testée');
+} elseif (!$fragDisplay) {
+    T::skip('DISPLAY absent : exécution des fragments non testée');
+} else {
+    $fragElf = (new PhpCompiler($fragRoot))->compile($fragRoot . '/src/app.php', null, 'elf');
+    $fragRunner = 'timeout 8 ' . escapeshellarg((string) $fragElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $fragRunner = 'dbus-run-session -- ' . $fragRunner;
+    }
+
+    $fragOut = [];
+    $fragStatus = 0;
+    exec($fragRunner . ' 2>&1', $fragOut, $fragStatus);
+    T::ok(
+        $fragStatus === 0,
+        'fragment : page avec includes exécutée',
+        implode("\n", $fragOut),
+    );
+}
+
+$removeTree($fragRoot);
+
+// ---------------------------------------------------------------------------
+T::section('46. UI — listes GTK, DropDown et modèles de chaînes');
+
+$listsRoot = sys_get_temp_dir() . '/cyonima_lists_' . getmypid();
+$removeTree($listsRoot);
+mkdir($listsRoot . '/src', 0775, true);
+mkdir($listsRoot . '/templates', 0775, true);
+
+$listsTemplate = <<<'UI'
+@params(array<string> $options, int $selected, callable(int):void $onSelect)
+
+<window title="Listes" width="420" height="480">
+    <box vertical="true" spacing="8">
+        <drop-down options="{{ $options }}" selected="{{ $selected }}" on-change="{{ $onSelect }}" />
+        <drop-down options="Rouge,Vert,Bleu" selected="2" />
+        <list-box selection="single" on-row-activated="{{ $onSelect }}">
+            @foreach ($options as $option)
+                <label>{{ $option }}</label>
+            @endforeach
+        </list-box>
+    </box>
+</window>
+UI;
+
+$listsApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Lists;
+
+$options = ['Un', 'Deux', 'Trois'];
+$onSelect = function (int $index): void {
+    echo 'select=', $index, "\n";
+};
+
+$application = new Application('com.cyonima.lists.page');
+$window = Lists::build($options, 1, $onSelect);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$listsGenerated = (new TemplateCompiler('Lists'))->compile($listsTemplate);
+T::ok(str_contains($listsGenerated, 'new DropDown('), 'listes : DropDown généré');
+T::ok(str_contains($listsGenerated, 'new StringList('), 'listes : StringList généré');
+T::ok(str_contains($listsGenerated, 'new ListBox()'), 'listes : ListBox généré');
+T::ok(str_contains($listsGenerated, "->setSelectionMode('single')"), 'listes : mode de sélection');
+T::ok(str_contains($listsGenerated, '->onChanged(($onSelect))'), 'listes : callback drop-down');
+T::ok(str_contains($listsGenerated, '->onRowActivated(($onSelect))'), 'listes : callback de ligne');
+
+file_put_contents($listsRoot . '/templates/lists.ui', $listsTemplate);
+file_put_contents($listsRoot . '/src/app.php', $listsApp);
+
+$listsC = (new PhpCompiler($listsRoot))->compile($listsRoot . '/src/app.php', null, 'c');
+$listsCSource = (string) file_get_contents($listsC['cPath']);
+T::ok(str_contains($listsCSource, 'cy_ui_string_list'), 'listes : modèle natif');
+T::ok(str_contains($listsCSource, 'cy_ui_drop_down'), 'listes : drop-down natif');
+T::ok(str_contains($listsCSource, 'cy_ui_list_box'), 'listes : list-box natif');
+T::ok(str_contains($listsCSource, 'cy_ui_on_row_activated_closure'), 'listes : signal row-activated');
+T::ok(str_contains($listsCSource, 'cy_ui_on_drop_down_change_closure'), 'listes : signal selected');
+
+$listsErrors = [
+    ['drop-down sans source', '<window><drop-down /></window>', 'exige soit "options", soit "model"'],
+    [
+        'drop-down double source',
+        '<window><drop-down options="a,b" model="{{ $model }}" /></window>',
+        'exige soit "options", soit "model"',
+    ],
+    ['drop-down options vide', '<window><drop-down options="" /></window>', '"options" ne peut pas être vide'],
+    [
+        'list-box sélection invalide',
+        '<window><list-box selection="double"></list-box></window>',
+        '"selection" doit valoir single, none ou multiple',
+    ],
+];
+
+foreach ($listsErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('ListsBroken' . $index))->compile($source);
+        T::ok(false, 'listes : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'listes : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$listsCallbackError = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\Lists;
+
+$options = ['Un'];
+$onSelect = function (string $text): void {
+    echo $text, "\n";
+};
+
+$application = new Application('com.cyonima.lists.error');
+$window = Lists::build($options, 0, $onSelect);
+PHP;
+
+file_put_contents($listsRoot . '/src/error.php', $listsCallbackError);
+
+try {
+    (new PhpCompiler($listsRoot))->compile($listsRoot . '/src/error.php', null, 'c');
+    T::ok(false, 'listes : callback de ligne incompatible');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'callable():void ou callable(int):void')
+            || str_contains($exception->getMessage(), 'callable(int):void'),
+        'listes : callback de ligne incompatible',
+        $exception->getMessage(),
+    );
+}
+
+$listsValues = <<<'PHP'
+<?php
+
+$app = new Application('com.cyonima.lists.values');
+$model = new StringList(['a', 'b', 'c']);
+
+if ($model->count() === 3 && $model->item(1) === 'b') {
+    echo "list=ok\n";
+}
+
+$drop = new DropDown($model, 1);
+
+if ($drop->selectedIndex() === 1 && $drop->selectedText() === 'b') {
+    echo "drop=ok\n";
+}
+
+$seenInt = -1;
+$drop->onChanged(function (int $index) use (&$seenInt): void {
+    $seenInt = $index;
+});
+$drop->setSelected(2);
+
+if ($seenInt === 2) {
+    echo "change-int=ok\n";
+}
+
+$dropText = new DropDown($model, 0);
+$seenText = '';
+$dropText->onChanged(function (string $text) use (&$seenText): void {
+    $seenText = $text;
+});
+$dropText->setSelected(2);
+
+if ($seenText === 'c') {
+    echo "change-text=ok\n";
+}
+
+$list = new ListBox();
+$list->append(new Label('x'));
+$list->append(new Label('y'));
+$list->selectIndex(1);
+
+if ($list->selectedIndex() === 1) {
+    echo "list-select=ok\n";
+}
+
+$activated = -1;
+$list->onRowActivated(function (int $index) use (&$activated): void {
+    $activated = $index;
+});
+$list->activate(1);
+
+if ($activated === 1) {
+    echo "row-activated=ok\n";
+}
+PHP;
+
+$listsValuesC = $compilePhp('ui-lists-values', $listsValues, 'c');
+$listsValuesSource = (string) file_get_contents($listsValuesC['cPath']);
+T::ok(str_contains($listsValuesSource, 'cy_ui_string_list'), 'listes : façade StringList');
+T::ok(str_contains($listsValuesSource, 'cy_ui_list_box_activate'), 'listes : activation de ligne');
+
+$exampleListsC = (new PhpCompiler(
+    $listsRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-lists.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-lists.php',
+    null,
+    'c',
+);
+$exampleListsSource = (string) file_get_contents($exampleListsC['cPath']);
+T::ok(
+    str_contains($exampleListsSource, 'cy_ui_drop_down')
+        && str_contains($exampleListsSource, 'cy_ui_list_box'),
+    'listes : exemple du dépôt',
+);
+
+$listsGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$listsDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$listsGtk) {
+    T::skip('GTK4 dev absent : exécution des listes non testée');
+} elseif (!$listsDisplay) {
+    T::skip('DISPLAY absent : exécution des listes non testée');
+} else {
+    $listsElf = (new PhpCompiler($listsRoot))->compile($listsRoot . '/src/app.php', null, 'elf');
+    $listsRunner = 'timeout 8 ' . escapeshellarg((string) $listsElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $listsRunner = 'dbus-run-session -- ' . $listsRunner;
+    }
+
+    $listsOut = [];
+    $listsStatus = 0;
+    exec($listsRunner . ' 2>&1', $listsOut, $listsStatus);
+    T::ok(
+        $listsStatus === 0,
+        'listes : page avec DropDown et ListBox exécutée',
+        implode("\n", $listsOut),
+    );
+
+    $valuesElf = $compilePhp('ui-lists-values', $listsValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'list=ok'), 'listes : StringList à l’exécution', $valuesText);
+    T::ok(str_contains($valuesText, 'drop=ok'), 'listes : DropDown à l’exécution', $valuesText);
+    T::ok(str_contains($valuesText, 'change-int=ok'), 'listes : callback index', $valuesText);
+    T::ok(str_contains($valuesText, 'change-text=ok'), 'listes : callback texte', $valuesText);
+    T::ok(str_contains($valuesText, 'list-select=ok'), 'listes : sélection de ligne', $valuesText);
+    T::ok(str_contains($valuesText, 'row-activated=ok'), 'listes : activation de ligne', $valuesText);
+    T::ok($valuesStatus === 0, 'listes : valeurs exécutées', $valuesText);
+}
+
+$removeTree($listsRoot);
+
+// ---------------------------------------------------------------------------
+T::section('47. UI — modèle métier typé et Listable');
+
+$typedRoot = sys_get_temp_dir() . '/cyonima_typed_' . getmypid();
+$removeTree($typedRoot);
+mkdir($typedRoot . '/src', 0775, true);
+mkdir($typedRoot . '/templates', 0775, true);
+
+$typedTemplate = <<<'UI'
+@params(ObjectList $objects, int $selected, callable(int):void $onSelect)
+
+<window title="Objets" width="420" height="480">
+    <box vertical="true" spacing="8">
+        <drop-down items="{{ $objects }}" selected="{{ $selected }}" on-change="{{ $onSelect }}" />
+        <list-box items="{{ $objects }}" selection="single" on-row-activated="{{ $onSelect }}" />
+    </box>
+</window>
+UI;
+
+$typedApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\TypedObjects;
+use Listable;
+use ObjectList;
+
+final class Todo implements Listable
+{
+    public string $title;
+
+    public function __construct(string $title)
+    {
+        $this->title = $title;
+    }
+
+    public function listLabel(): string
+    {
+        return $this->title;
+    }
+}
+
+$application = new Application('com.cyonima.typed.page');
+
+$todos = [];
+$todos[] = new Todo('Un');
+$todos[] = new Todo('Deux');
+$todos[] = new Todo('Trois');
+$objects = new ObjectList($todos);
+
+$onSelect = function (int $index): void {
+    echo 'select=', $index, "\n";
+};
+
+$window = TypedObjects::build($objects, 1, $onSelect);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$typedGenerated = (new TemplateCompiler('TypedObjects'))->compile($typedTemplate);
+T::ok(str_contains($typedGenerated, 'DropDown::fromObjects(($objects)'), 'typed : DropDown depuis objets');
+T::ok(str_contains($typedGenerated, '->appendObjects(($objects))'), 'typed : ListBox depuis objets');
+
+file_put_contents($typedRoot . '/templates/typed-objects.ui', $typedTemplate);
+file_put_contents($typedRoot . '/src/app.php', $typedApp);
+
+$typedC = (new PhpCompiler($typedRoot))->compile($typedRoot . '/src/app.php', null, 'c');
+$typedCSource = (string) file_get_contents($typedC['cPath']);
+T::ok(str_contains($typedCSource, 'CyObj_ObjectList'), 'typed : ObjectList C');
+T::ok(str_contains($typedCSource, 'CyVTable_Listable'), 'typed : interface Listable C');
+T::ok(str_contains($typedCSource, 'fn_DropDown__fromObjects'), 'typed : fabrique DropDown');
+T::ok(str_contains($typedCSource, 'fn_ListBox__appendObjects'), 'typed : appendObjects');
+
+$typedErrors = [
+    [
+        'drop-down items statique',
+        '<window><drop-down items="x" /></window>',
+        '"items" doit être {{ expression }}',
+    ],
+    [
+        'drop-down items et options',
+        '<window><drop-down items="{{ $objects }}" options="a,b" /></window>',
+        'exige soit "options", soit "model", soit "items"',
+    ],
+    [
+        'list-box items statique',
+        '<window><list-box items="x"></list-box></window>',
+        '"items" doit être {{ expression }}',
+    ],
+];
+
+foreach ($typedErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('TypedBroken' . $index))->compile($source);
+        T::ok(false, 'typed : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'typed : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$typedValues = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use DropDown;
+use ListBox;
+use Listable;
+use ObjectList;
+
+final class Item implements Listable
+{
+    public string $label;
+
+    public function __construct(string $label)
+    {
+        $this->label = $label;
+    }
+
+    public function listLabel(): string
+    {
+        return $this->label;
+    }
+}
+
+$application = new Application('com.cyonima.typed.values');
+
+$items = [];
+$items[] = new Item('Un');
+$items[] = new Item('Deux');
+$items[] = new Item('Trois');
+$objects = new ObjectList($items);
+$labels = $objects->labels();
+
+if ($objects->count() === 3 && $labels[1] === 'Deux') {
+    echo "labels=ok\n";
+}
+
+$drop = DropDown::fromObjects($objects, 1);
+$selected = $drop->selectedObject();
+
+if ($selected !== null && $selected->listLabel() === 'Deux') {
+    echo "selected=ok\n";
+}
+
+$list = new ListBox();
+$list->appendObjects($objects);
+$list->selectIndex(2);
+
+if ($list->selectedIndex() === 2) {
+    echo "rows=ok\n";
+}
+
+$drop->setSelected(2);
+$changed = $drop->selectedObject();
+
+if ($changed !== null && $changed->listLabel() === 'Trois') {
+    echo "change=ok\n";
+}
+PHP;
+
+$typedValuesC = $compilePhp('ui-typed-values', $typedValues, 'c');
+$typedValuesSource = (string) file_get_contents($typedValuesC['cPath']);
+T::ok(str_contains($typedValuesSource, 'cy_ui_drop_down'), 'typed : façade DropDown');
+T::ok(str_contains($typedValuesSource, 'cy_ui_list_box'), 'typed : façade ListBox');
+
+$typedGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$typedDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$typedGtk) {
+    T::skip('GTK4 dev absent : exécution du modèle typé non testée');
+} elseif (!$typedDisplay) {
+    T::skip('DISPLAY absent : exécution du modèle typé non testée');
+} else {
+    $typedElf = (new PhpCompiler($typedRoot))->compile($typedRoot . '/src/app.php', null, 'elf');
+    $typedRunner = 'timeout 8 ' . escapeshellarg((string) $typedElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $typedRunner = 'dbus-run-session -- ' . $typedRunner;
+    }
+
+    $typedOut = [];
+    $typedStatus = 0;
+    exec($typedRunner . ' 2>&1', $typedOut, $typedStatus);
+    T::ok(
+        $typedStatus === 0,
+        'typed : page avec modèle métier exécutée',
+        implode("\n", $typedOut),
+    );
+
+    $valuesElf = $compilePhp('ui-typed-values', $typedValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'labels=ok'), 'typed : labels métier', $valuesText);
+    T::ok(str_contains($valuesText, 'selected=ok'), 'typed : sélection d’objet', $valuesText);
+    T::ok(str_contains($valuesText, 'rows=ok'), 'typed : lignes typées', $valuesText);
+    T::ok(str_contains($valuesText, 'change=ok'), 'typed : changement d’objet', $valuesText);
+    T::ok($valuesStatus === 0, 'typed : valeurs exécutées', $valuesText);
+}
+
+$exampleTypedC = (new PhpCompiler(
+    $typedRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-typed-lists.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-typed-lists.php',
+    null,
+    'c',
+);
+$exampleTypedSource = (string) file_get_contents($exampleTypedC['cPath']);
+T::ok(
+    str_contains($exampleTypedSource, 'fn_DropDown__fromObjects')
+        && str_contains($exampleTypedSource, 'fn_ListBox__appendObjects'),
+    'typed : exemple du dépôt',
+);
+
+$removeTree($typedRoot);
+
+// ---------------------------------------------------------------------------
+T::section('48. UI — menus popover GTK');
+
+$menuRoot = sys_get_temp_dir() . '/cyonima_menu_' . getmypid();
+$removeTree($menuRoot);
+mkdir($menuRoot . '/src', 0775, true);
+mkdir($menuRoot . '/templates', 0775, true);
+
+$menuTemplate = <<<'UI'
+@params(string $title, callable():void $onOpen, callable():void $onQuit)
+
+<window title="{{ $title }}" width="420" height="320">
+    <box vertical="true" spacing="8">
+        <menu-button label="{{ $title }}" class="menu">
+            <button text="Ouvrir" on-click="{{ $onOpen }}" />
+            <separator />
+            <button text="Quitter" on-click="{{ $onQuit }}" />
+        </menu-button>
+        <label>Contenu</label>
+    </box>
+</window>
+UI;
+
+$menuApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\MenuPage;
+
+$onOpen = function (): void {
+    echo "open\n";
+};
+$onQuit = function (): void {
+    echo "quit\n";
+};
+
+$application = new Application('com.cyonima.menu.page');
+$window = MenuPage::build('Actions', $onOpen, $onQuit);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$menuGenerated = (new TemplateCompiler('MenuPage'))->compile($menuTemplate);
+T::ok(str_contains($menuGenerated, 'new MenuButton(($title))'), 'menu : MenuButton généré');
+T::ok(str_contains($menuGenerated, 'new Popover()'), 'menu : Popover généré');
+T::ok(str_contains($menuGenerated, '->setPopover('), 'menu : popover attaché');
+T::ok(str_contains($menuGenerated, '->setChild('), 'menu : contenu du popover');
+T::ok(str_contains($menuGenerated, "->addClass('menu')"), 'menu : classe CSS');
+
+file_put_contents($menuRoot . '/templates/menu-page.ui', $menuTemplate);
+file_put_contents($menuRoot . '/src/app.php', $menuApp);
+
+$menuC = (new PhpCompiler($menuRoot))->compile($menuRoot . '/src/app.php', null, 'c');
+$menuCSource = (string) file_get_contents($menuC['cPath']);
+T::ok(str_contains($menuCSource, 'cy_ui_menu_button'), 'menu : bouton natif');
+T::ok(str_contains($menuCSource, 'cy_ui_popover'), 'menu : popover natif');
+T::ok(str_contains($menuCSource, 'cy_ui_popover_set_child'), 'menu : contenu natif');
+T::ok(str_contains($menuCSource, 'cy_ui_menu_button_set_popover'), 'menu : attachement natif');
+
+try {
+    (new TemplateCompiler('MenuBroken'))->compile(
+        '<window><menu-button spacing="large"><label>x</label></menu-button></window>',
+    );
+    T::ok(false, 'menu : erreur espacement invalide');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'entier attendu pour "spacing"'),
+        'menu : erreur espacement invalide',
+        $exception->getMessage(),
+    );
+}
+
+$menuValues = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.menu.values');
+$menu = new MenuButton('Menu');
+$popover = new Popover();
+$box = new Box(true, 4);
+$action = new Button('Action');
+$count = 0;
+
+$action->onClicked(function () use (&$count): void {
+    $count = $count + 1;
+});
+
+$box->append($action);
+$popover->setChild($box);
+$menu->setPopover($popover);
+$menu->setLabel('Actions');
+$action->click();
+
+if ($count === 1) {
+    echo "click=ok\n";
+}
+
+echo "menu=ok\n";
+PHP;
+
+$menuValuesC = $compilePhp('ui-menu-values', $menuValues, 'c');
+$menuValuesSource = (string) file_get_contents($menuValuesC['cPath']);
+T::ok(str_contains($menuValuesSource, 'cy_ui_menu_button'), 'menu : façade MenuButton');
+T::ok(str_contains($menuValuesSource, 'cy_ui_popover_set_child'), 'menu : façade Popover');
+
+$menuGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$menuDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$menuGtk) {
+    T::skip('GTK4 dev absent : exécution des menus non testée');
+} elseif (!$menuDisplay) {
+    T::skip('DISPLAY absent : exécution des menus non testée');
+} else {
+    $menuElf = (new PhpCompiler($menuRoot))->compile($menuRoot . '/src/app.php', null, 'elf');
+    $menuRunner = 'timeout 8 ' . escapeshellarg((string) $menuElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $menuRunner = 'dbus-run-session -- ' . $menuRunner;
+    }
+
+    $menuOut = [];
+    $menuStatus = 0;
+    exec($menuRunner . ' 2>&1', $menuOut, $menuStatus);
+    T::ok(
+        $menuStatus === 0,
+        'menu : page avec menu-button exécutée',
+        implode("\n", $menuOut),
+    );
+
+    $valuesElf = $compilePhp('ui-menu-values', $menuValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'click=ok'), 'menu : action de menu', $valuesText);
+    T::ok(str_contains($valuesText, 'menu=ok'), 'menu : valeurs exécutées', $valuesText);
+    T::ok($valuesStatus === 0, 'menu : widget menu exécuté', $valuesText);
+}
+
+$exampleMenuC = (new PhpCompiler(
+    $menuRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-menu.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-menu.php',
+    null,
+    'c',
+);
+$exampleMenuSource = (string) file_get_contents($exampleMenuC['cPath']);
+T::ok(
+    str_contains($exampleMenuSource, 'cy_ui_menu_button')
+        && str_contains($exampleMenuSource, 'cy_ui_popover'),
+    'menu : exemple du dépôt',
+);
+
+$removeTree($menuRoot);
+
+// ---------------------------------------------------------------------------
+T::section('49. UI — barre de menus native GMenu / GAction');
+
+$menubarRoot = sys_get_temp_dir() . '/cyonima_menubar_' . getmypid();
+$removeTree($menubarRoot);
+mkdir($menubarRoot . '/src', 0775, true);
+mkdir($menubarRoot . '/templates', 0775, true);
+
+$menubarTemplate = <<<'UI'
+@params(string $title, callable():void $onOpen, callable():void $onQuit, callable():void $onAbout)
+
+<window title="{{ $title }}" width="460" height="320">
+    <box vertical="true" spacing="8">
+        <menu-bar>
+            <menu label="Fichier">
+                <item label="Ouvrir" on-click="{{ $onOpen }}" />
+                <separator />
+                <item label="Quitter" on-click="{{ $onQuit }}" />
+            </menu>
+            <menu label="Aide">
+                <menu label="Plus">
+                    <item label="À propos" on-click="{{ $onAbout }}" />
+                </menu>
+            </menu>
+        </menu-bar>
+        <label>Contenu</label>
+    </box>
+</window>
+UI;
+
+$menubarApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\NativeMenuBarPage;
+
+$onOpen = function (): void {
+    echo "open\n";
+};
+$onQuit = function (): void {
+    echo "quit\n";
+};
+$onAbout = function (): void {
+    echo "about\n";
+};
+
+$application = new Application('com.cyonima.menubar.page');
+$window = NativeMenuBarPage::build('Menus natifs', $onOpen, $onQuit, $onAbout);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$menubarGenerated = (new TemplateCompiler('NativeMenuBarPage'))->compile($menubarTemplate);
+T::ok(str_contains($menubarGenerated, 'new MenuBar()'), 'menubar : MenuBar généré');
+T::ok(str_contains($menubarGenerated, 'new Menu()'), 'menubar : Menu généré');
+T::ok(str_contains($menubarGenerated, "->addStyledItem('Ouvrir'"), 'menubar : item généré');
+T::ok(str_contains($menubarGenerated, '->addSeparator()'), 'menubar : séparateur généré');
+T::ok(str_contains($menubarGenerated, "->add('Fichier'"), 'menubar : menu ajouté');
+T::ok(str_contains($menubarGenerated, "->addSubmenu('Plus'"), 'menubar : sous-menu généré');
+
+file_put_contents($menubarRoot . '/templates/native-menu-bar-page.ui', $menubarTemplate);
+file_put_contents($menubarRoot . '/src/app.php', $menubarApp);
+
+$menubarC = (new PhpCompiler($menubarRoot))->compile($menubarRoot . '/src/app.php', null, 'c');
+$menubarCSource = (string) file_get_contents($menubarC['cPath']);
+T::ok(str_contains($menubarCSource, 'cy_ui_menu_bar'), 'menubar : barre native');
+T::ok(str_contains($menubarCSource, 'cy_ui_menu_add_item'), 'menubar : item natif');
+T::ok(str_contains($menubarCSource, 'cy_ui_menu_add_separator'), 'menubar : séparateur natif');
+T::ok(str_contains($menubarCSource, 'cy_ui_menu_add_submenu'), 'menubar : sous-menu natif');
+
+$menubarErrors = [
+    [
+        'balise inattendue',
+        '<window><menu-bar><label>x</label></menu-bar></window>',
+        'balise <label> inattendue dans <menu-bar>',
+    ],
+    [
+        'item sans callback',
+        '<window><menu-bar><menu label="F"><item label="x" /></menu></menu-bar></window>',
+        'on-click requis pour <item>',
+    ],
+    [
+        'menu sans label',
+        '<window><menu-bar><menu><item label="x" on-click="{{ $f }}" /></menu></menu-bar></window>',
+        'label requis pour <menu>',
+    ],
+    [
+        'directive dans menu',
+        '<window><menu-bar>@if (true)<menu label="F"></menu>@endif</menu-bar></window>',
+        'directive non supportée dans <menu-bar>',
+    ],
+];
+
+foreach ($menubarErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('MenuBarBroken' . $index))->compile($source);
+        T::ok(false, 'menubar : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'menubar : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$menubarValues = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.menubar.values');
+$menu = new Menu();
+$count = 0;
+$menu->addItem('Action', function () use (&$count): void {
+    $count = $count + 1;
+});
+$menu->addSeparator();
+
+$sub = new Menu();
+$sub->addItem('Sous-action', function () use (&$count): void {
+    $count = $count + 10;
+});
+$menu->addSubmenu('Plus', $sub);
+$menu->activate(0);
+
+if ($count === 1) {
+    echo "activate=ok\n";
+}
+
+$bar = new MenuBar();
+$bar->add('Fichier', $menu);
+echo "bar=ok\n";
+PHP;
+
+$menubarValuesC = $compilePhp('ui-menubar-values', $menubarValues, 'c');
+$menubarValuesSource = (string) file_get_contents($menubarValuesC['cPath']);
+T::ok(str_contains($menubarValuesSource, 'cy_ui_menu_bar'), 'menubar : façade MenuBar');
+T::ok(str_contains($menubarValuesSource, 'cy_ui_menu_activate'), 'menubar : activation programmatique');
+
+$menubarGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$menubarDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$menubarGtk) {
+    T::skip('GTK4 dev absent : exécution des menus natifs non testée');
+} elseif (!$menubarDisplay) {
+    T::skip('DISPLAY absent : exécution des menus natifs non testée');
+} else {
+    $menubarElf = (new PhpCompiler($menubarRoot))->compile(
+        $menubarRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $menubarRunner = 'timeout 8 ' . escapeshellarg((string) $menubarElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $menubarRunner = 'dbus-run-session -- ' . $menubarRunner;
+    }
+
+    $menubarOut = [];
+    $menubarStatus = 0;
+    exec($menubarRunner . ' 2>&1', $menubarOut, $menubarStatus);
+    T::ok(
+        $menubarStatus === 0,
+        'menubar : page avec barre de menus exécutée',
+        implode("\n", $menubarOut),
+    );
+
+    $valuesElf = $compilePhp('ui-menubar-values', $menubarValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'activate=ok'), 'menubar : action native', $valuesText);
+    T::ok(str_contains($valuesText, 'bar=ok'), 'menubar : barre construite', $valuesText);
+    T::ok($valuesStatus === 0, 'menubar : valeurs exécutées', $valuesText);
+}
+
+$exampleMenubarC = (new PhpCompiler(
+    $menubarRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-menu-bar.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-menubar.php',
+    null,
+    'c',
+);
+$exampleMenubarSource = (string) file_get_contents($exampleMenubarC['cPath']);
+T::ok(
+    str_contains($exampleMenubarSource, 'cy_ui_menu_bar')
+        && str_contains($exampleMenubarSource, 'cy_ui_menu_add_item'),
+    'menubar : exemple du dépôt',
+);
+
+$removeTree($menubarRoot);
+
+// ---------------------------------------------------------------------------
+T::section('50. UI — raccourcis clavier GTK');
+
+$shortcutRoot = sys_get_temp_dir() . '/cyonima_shortcuts_' . getmypid();
+$removeTree($shortcutRoot);
+mkdir($shortcutRoot . '/src', 0775, true);
+mkdir($shortcutRoot . '/templates', 0775, true);
+
+$shortcutTemplate = <<<'UI'
+@params(string $title, callable():void $onOpen, callable():void $onQuit)
+
+<window title="{{ $title }}" width="420" height="320">
+    <shortcut key="<Control>o" on-activate="{{ $onOpen }}" />
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+    <box vertical="true" spacing="8">
+        <label>Ctrl+O / Ctrl+Q</label>
+    </box>
+</window>
+UI;
+
+$shortcutApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\ShortcutPage;
+
+$onOpen = function (): void {
+    echo "open\n";
+};
+$onQuit = function (): void {
+    echo "quit\n";
+};
+
+$application = new Application('com.cyonima.shortcut.page');
+$window = ShortcutPage::build('Raccourcis', $onOpen, $onQuit);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$shortcutGenerated = (new TemplateCompiler('ShortcutPage'))->compile($shortcutTemplate);
+T::ok(
+    str_contains($shortcutGenerated, "->shortcut('<Control>o', (\$onOpen))"),
+    'raccourcis : Ctrl+O généré',
+);
+T::ok(
+    str_contains($shortcutGenerated, "->shortcut('<Control>q', (\$onQuit))"),
+    'raccourcis : Ctrl+Q généré',
+);
+
+file_put_contents($shortcutRoot . '/templates/shortcut-page.ui', $shortcutTemplate);
+file_put_contents($shortcutRoot . '/src/app.php', $shortcutApp);
+
+$shortcutC = (new PhpCompiler($shortcutRoot))->compile($shortcutRoot . '/src/app.php', null, 'c');
+$shortcutCSource = (string) file_get_contents($shortcutC['cPath']);
+T::ok(str_contains($shortcutCSource, 'cy_ui_shortcut'), 'raccourcis : primitive native');
+T::ok(
+    str_contains($shortcutCSource, '<Control>o')
+        && str_contains($shortcutCSource, '<Control>q'),
+    'raccourcis : deux raccourcis générés',
+);
+
+$shortcutErrors = [
+    [
+        'clé manquante',
+        '<window><shortcut on-activate="{{ $f }}" /></window>',
+        'attribut "key" requis pour <shortcut>',
+    ],
+    [
+        'callback manquant',
+        '<window><shortcut key="<Control>q" /></window>',
+        'attribut "on-activate" requis pour <shortcut>',
+    ],
+    [
+        'raccourci dans un fragment',
+        '<box><shortcut key="<Control>q" on-activate="{{ $f }}" /></box>',
+        '<shortcut> exige une fenêtre',
+    ],
+];
+
+foreach ($shortcutErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('ShortcutBroken' . $index))->compile($source);
+        T::ok(false, 'raccourcis : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'raccourcis : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$shortcutGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$shortcutDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$shortcutGtk) {
+    T::skip('GTK4 dev absent : exécution des raccourcis non testée');
+} elseif (!$shortcutDisplay) {
+    T::skip('DISPLAY absent : exécution des raccourcis non testée');
+} else {
+    $shortcutElf = (new PhpCompiler($shortcutRoot))->compile(
+        $shortcutRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $shortcutRunner = 'timeout 8 ' . escapeshellarg((string) $shortcutElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $shortcutRunner = 'dbus-run-session -- ' . $shortcutRunner;
+    }
+
+    $shortcutOut = [];
+    $shortcutStatus = 0;
+    exec($shortcutRunner . ' 2>&1', $shortcutOut, $shortcutStatus);
+    T::ok(
+        $shortcutStatus === 0,
+        'raccourcis : page avec shortcuts exécutée',
+        implode("\n", $shortcutOut),
+    );
+}
+
+$exampleShortcutC = (new PhpCompiler(
+    $shortcutRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-shortcuts.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-shortcuts.php',
+    null,
+    'c',
+);
+$exampleShortcutSource = (string) file_get_contents($exampleShortcutC['cPath']);
+T::ok(
+    str_contains($exampleShortcutSource, 'cy_ui_shortcut'),
+    'raccourcis : exemple du dépôt',
+);
+
+$removeTree($shortcutRoot);
+
+// ---------------------------------------------------------------------------
+T::section('51. UI — items de menu cochables, icônes et accélérateurs');
+
+$menuItemRoot = sys_get_temp_dir() . '/cyonima_menu_items_' . getmypid();
+$removeTree($menuItemRoot);
+mkdir($menuItemRoot . '/src', 0775, true);
+mkdir($menuItemRoot . '/templates', 0775, true);
+
+$menuItemTemplate = <<<'UI'
+@params(string $title, callable():void $onOpen, callable(bool):void $onToggle)
+
+<window title="{{ $title }}" width="440" height="320">
+    <menu-bar>
+        <menu label="Affichage">
+            <item label="Ouvrir" accel="<Control>o" icon="document-open" on-click="{{ $onOpen }}" />
+            <separator />
+            <item label="Mode compact" checkable="true" checked="true" on-toggle="{{ $onToggle }}" />
+        </menu>
+    </menu-bar>
+    <box vertical="true" spacing="8">
+        <label>Menu enrichi</label>
+    </box>
+</window>
+UI;
+
+$menuItemApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\MenuItemPage;
+
+$onOpen = function (): void {
+    echo "open\n";
+};
+$onToggle = function (bool $checked): void {
+    if ($checked) {
+        echo "checked\n";
+    } else {
+        echo "unchecked\n";
+    }
+};
+
+$application = new Application('com.cyonima.menu.items.page');
+$window = MenuItemPage::build('Items', $onOpen, $onToggle);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$menuItemGenerated = (new TemplateCompiler('MenuItemPage'))->compile($menuItemTemplate);
+T::ok(
+    str_contains(
+        $menuItemGenerated,
+        "addStyledItem('Ouvrir', '<Control>o', 'document-open'",
+    ),
+    'items : accélérateur et icône',
+);
+T::ok(
+    str_contains(
+        $menuItemGenerated,
+        "addCheckItem('Mode compact', true, '', '', (\$onToggle))",
+    ),
+    'items : élément cochable',
+);
+
+file_put_contents($menuItemRoot . '/templates/menu-item-page.ui', $menuItemTemplate);
+file_put_contents($menuItemRoot . '/src/app.php', $menuItemApp);
+
+$menuItemC = (new PhpCompiler($menuItemRoot))->compile(
+    $menuItemRoot . '/src/app.php',
+    null,
+    'c',
+);
+$menuItemCSource = (string) file_get_contents($menuItemC['cPath']);
+T::ok(str_contains($menuItemCSource, 'cy_ui_menu_add_item_ex'), 'items : item stylé natif');
+T::ok(
+    str_contains($menuItemCSource, 'cy_ui_menu_add_check_item'),
+    'items : item cochable natif',
+);
+
+$menuItemErrors = [
+    [
+        'checkable sans on-toggle',
+        '<window><menu-bar><menu label="F"><item label="x" checkable="true" /></menu></menu-bar></window>',
+        'on-toggle requis pour un <item checkable>',
+    ],
+    [
+        'checkable avec on-click',
+        '<window><menu-bar><menu label="F"><item label="x" checkable="true" on-click="{{ $f }}" on-toggle="{{ $g }}" /></menu></menu-bar></window>',
+        'on-click est interdit pour un <item checkable>',
+    ],
+    [
+        'item sans on-click',
+        '<window><menu-bar><menu label="F"><item label="x" /></menu></menu-bar></window>',
+        'on-click requis pour <item>',
+    ],
+];
+
+foreach ($menuItemErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('MenuItemBroken' . $index))->compile($source);
+        T::ok(false, 'items : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'items : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$menuItemValues = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.menu.items.values');
+$menu = new Menu();
+$state = false;
+$menu->addCheckItem('Option', false, '', '', function (bool $checked) use (&$state): void {
+    $state = $checked;
+});
+$menu->setChecked(0, true);
+
+if ($state) {
+    echo "check=ok\n";
+}
+
+$menu->addStyledItem('Ouvrir', '<Control>o', 'document-open', function (): void {
+    echo "open\n";
+});
+echo "styled=ok\n";
+PHP;
+
+$menuItemValuesC = $compilePhp('ui-menu-items-values', $menuItemValues, 'c');
+$menuItemValuesSource = (string) file_get_contents($menuItemValuesC['cPath']);
+T::ok(str_contains($menuItemValuesSource, 'cy_ui_menu_add_check_item'), 'items : façade cochable');
+T::ok(str_contains($menuItemValuesSource, 'cy_ui_menu_set_check'), 'items : état programmatique');
+
+$menuItemGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$menuItemDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$menuItemGtk) {
+    T::skip('GTK4 dev absent : exécution des items de menu non testée');
+} elseif (!$menuItemDisplay) {
+    T::skip('DISPLAY absent : exécution des items de menu non testée');
+} else {
+    $menuItemElf = (new PhpCompiler($menuItemRoot))->compile(
+        $menuItemRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $menuItemRunner = 'timeout 8 ' . escapeshellarg((string) $menuItemElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $menuItemRunner = 'dbus-run-session -- ' . $menuItemRunner;
+    }
+
+    $menuItemOut = [];
+    $menuItemStatus = 0;
+    exec($menuItemRunner . ' 2>&1', $menuItemOut, $menuItemStatus);
+    T::ok(
+        $menuItemStatus === 0,
+        'items : page avec menu enrichi exécutée',
+        implode("\n", $menuItemOut),
+    );
+
+    $valuesElf = $compilePhp('ui-menu-items-values', $menuItemValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'check=ok'), 'items : état coché', $valuesText);
+    T::ok(str_contains($valuesText, 'styled=ok'), 'items : icône et accélérateur', $valuesText);
+    T::ok($valuesStatus === 0, 'items : valeurs exécutées', $valuesText);
+}
+
+$removeTree($menuItemRoot);
+
+// ---------------------------------------------------------------------------
+T::section('52. UI — items radio et états dynamiques des menus');
+
+$radioRoot = sys_get_temp_dir() . '/cyonima_radio_' . getmypid();
+$removeTree($radioRoot);
+mkdir($radioRoot . '/src', 0775, true);
+mkdir($radioRoot . '/templates', 0775, true);
+
+$radioTemplate = <<<'UI'
+@params(string $title, bool $enabled, callable(string):void $onAlign, callable():void $onOpen)
+
+<window title="{{ $title }}" width="440" height="320">
+    <menu-bar>
+        <menu label="Affichage">
+            <item label="Gauche" radio="align" value="left" checked="true" on-select="{{ $onAlign }}" />
+            <item label="Centre" radio="align" value="center" on-select="{{ $onAlign }}" />
+            <item label="Droite" radio="align" value="right" on-select="{{ $onAlign }}" />
+            <separator />
+            <item label="Ouvrir" enabled="{{ $enabled }}" on-click="{{ $onOpen }}" />
+        </menu>
+    </menu-bar>
+    <box vertical="true" spacing="8">
+        <label>Radio</label>
+    </box>
+</window>
+UI;
+
+$radioApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\RadioPage;
+
+$onAlign = function (string $value): void {
+    echo 'align=', $value, "\n";
+};
+$onOpen = function (): void {
+    echo "open\n";
+};
+
+$application = new Application('com.cyonima.radio.page');
+$window = RadioPage::build('Radio', true, $onAlign, $onOpen);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$radioGenerated = (new TemplateCompiler('RadioPage'))->compile($radioTemplate);
+T::ok(
+    str_contains(
+        $radioGenerated,
+        "addRadioItem('align', 'Gauche', 'left', true, '', '', (\$onAlign))",
+    ),
+    'radio : item sélectionné généré',
+);
+T::ok(
+    str_contains(
+        $radioGenerated,
+        "addRadioItem('align', 'Centre', 'center', false, '', '', (\$onAlign))",
+    ),
+    'radio : item non sélectionné généré',
+);
+T::ok(
+    str_contains($radioGenerated, 'setEnabled(3, ($enabled))'),
+    'radio : état dynamique généré',
+);
+
+file_put_contents($radioRoot . '/templates/radio-page.ui', $radioTemplate);
+file_put_contents($radioRoot . '/src/app.php', $radioApp);
+
+$radioC = (new PhpCompiler($radioRoot))->compile($radioRoot . '/src/app.php', null, 'c');
+$radioCSource = (string) file_get_contents($radioC['cPath']);
+T::ok(str_contains($radioCSource, 'cy_ui_menu_add_radio_item'), 'radio : item radio natif');
+T::ok(str_contains($radioCSource, 'cy_ui_menu_set_enabled'), 'radio : activation native');
+
+$radioErrors = [
+    [
+        'radio sans value',
+        '<window><menu-bar><menu label="F"><item label="x" radio="g" on-select="{{ $f }}" /></menu></menu-bar></window>',
+        'value requis pour un <item radio>',
+    ],
+    [
+        'radio sans on-select',
+        '<window><menu-bar><menu label="F"><item label="x" radio="g" value="v" /></menu></menu-bar></window>',
+        'on-select requis pour un <item radio>',
+    ],
+    [
+        'radio avec on-click',
+        '<window><menu-bar><menu label="F"><item label="x" radio="g" value="v" on-click="{{ $f }}" on-select="{{ $g }}" /></menu></menu-bar></window>',
+        'on-click et on-toggle sont interdits pour un <item radio>',
+    ],
+];
+
+foreach ($radioErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('RadioBroken' . $index))->compile($source);
+        T::ok(false, 'radio : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'radio : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$radioValues = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.radio.values');
+$menu = new Menu();
+$selected = '';
+$menu->addRadioItem('align', 'Gauche', 'left', true, '', '', function (string $value) use (&$selected): void {
+    $selected = $value;
+});
+$menu->addRadioItem('align', 'Centre', 'center', false, '', '', function (string $value) use (&$selected): void {
+    $selected = $value;
+});
+$menu->setRadio(1);
+
+if ($selected === 'center') {
+    echo "radio=ok\n";
+}
+
+$menu->addStyledItem('Ouvrir', '', '', function (): void {
+    echo "open\n";
+});
+$menu->setEnabled(2, false);
+
+if (!$menu->isEnabled(2)) {
+    echo "disabled=ok\n";
+}
+
+$menu->setEnabled(2, true);
+
+if ($menu->isEnabled(2)) {
+    echo "enabled=ok\n";
+}
+PHP;
+
+$radioValuesC = $compilePhp('ui-radio-values', $radioValues, 'c');
+$radioValuesSource = (string) file_get_contents($radioValuesC['cPath']);
+T::ok(str_contains($radioValuesSource, 'cy_ui_menu_select_radio'), 'radio : sélection programmatique');
+T::ok(str_contains($radioValuesSource, 'cy_ui_menu_is_enabled'), 'radio : lecture d’état');
+
+$radioGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$radioDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$radioGtk) {
+    T::skip('GTK4 dev absent : exécution des items radio non testée');
+} elseif (!$radioDisplay) {
+    T::skip('DISPLAY absent : exécution des items radio non testée');
+} else {
+    $radioElf = (new PhpCompiler($radioRoot))->compile(
+        $radioRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $radioRunner = 'timeout 8 ' . escapeshellarg((string) $radioElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $radioRunner = 'dbus-run-session -- ' . $radioRunner;
+    }
+
+    $radioOut = [];
+    $radioStatus = 0;
+    exec($radioRunner . ' 2>&1', $radioOut, $radioStatus);
+    T::ok(
+        $radioStatus === 0,
+        'radio : page avec items radio exécutée',
+        implode("\n", $radioOut),
+    );
+
+    $valuesElf = $compilePhp('ui-radio-values', $radioValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'radio=ok'), 'radio : sélection d’un item', $valuesText);
+    T::ok(str_contains($valuesText, 'disabled=ok'), 'radio : désactivation dynamique', $valuesText);
+    T::ok(str_contains($valuesText, 'enabled=ok'), 'radio : réactivation dynamique', $valuesText);
+    T::ok($valuesStatus === 0, 'radio : valeurs exécutées', $valuesText);
+}
+
+$exampleRadioC = (new PhpCompiler(
+    $radioRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-menu-bar.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-menubar.php',
+    null,
+    'c',
+);
+$exampleRadioSource = (string) file_get_contents($exampleRadioC['cPath']);
+T::ok(
+    str_contains($exampleRadioSource, 'cy_ui_menu_add_radio_item')
+        && str_contains($exampleRadioSource, 'cy_ui_menu_set_enabled'),
+    'radio : exemple du dépôt',
+);
+
+$removeTree($radioRoot);
+
+// ---------------------------------------------------------------------------
+T::section('53. UI — binding bidirectionnel');
+
+$bindingRoot = sys_get_temp_dir() . '/cyonima_binding_' . getmypid();
+$removeTree($bindingRoot);
+mkdir($bindingRoot . '/src', 0775, true);
+
+$bindingSource = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.binding.test');
+$name = 'Alice';
+$entry = new Entry('Nom');
+$entryBinding = Binding::entry($entry, function () use (&$name): string {
+    return $name;
+}, function (string $value) use (&$name): void {
+    $name = $value;
+});
+
+if ($entry->text() === 'Alice') {
+    echo "entry-init=ok\n";
+}
+
+$entry->setText('Bob');
+
+if ($name === 'Bob') {
+    echo "entry-write=ok\n";
+}
+
+$name = 'Carol';
+$entryBinding->refresh();
+
+if ($entry->text() === 'Carol') {
+    echo "entry-refresh=ok\n";
+}
+
+$enabled = false;
+$check = new CheckButton('Activer', false);
+$checkBinding = Binding::check($check, function () use (&$enabled): bool {
+    return $enabled;
+}, function (bool $active) use (&$enabled): void {
+    $enabled = $active;
+});
+$check->setActive(true);
+
+if ($enabled) {
+    echo "check-write=ok\n";
+}
+
+$enabled = false;
+$checkBinding->refresh();
+
+if (!$check->active()) {
+    echo "check-refresh=ok\n";
+}
+
+$model = new StringList(['a', 'b', 'c']);
+$drop = new DropDown($model, 0);
+$index = 0;
+$dropBinding = Binding::dropIndex($drop, function () use (&$index): int {
+    return $index;
+}, function (int $value) use (&$index): void {
+    $index = $value;
+});
+$drop->setSelected(2);
+
+if ($index === 2) {
+    echo "drop-write=ok\n";
+}
+
+$index = 1;
+$dropBinding->refresh();
+
+if ($drop->selectedIndex() === 1) {
+    echo "drop-refresh=ok\n";
+}
+
+$text = 'a';
+$dropTextBinding = Binding::dropText($drop, function () use (&$text): string {
+    return $text;
+}, function (string $value) use (&$text): void {
+    $text = $value;
+});
+$drop->setSelected(2);
+
+if ($text === 'c') {
+    echo "text-write=ok\n";
+}
+
+$text = 'b';
+$dropTextBinding->refresh();
+
+if ($drop->selectedText() === 'b') {
+    echo "text-refresh=ok\n";
+}
+
+$label = new Label('');
+$labelText = 'Départ';
+$labelBinding = Binding::label($label, function () use (&$labelText): string {
+    return $labelText;
+});
+$labelText = 'Arrivée';
+$labelBinding->refresh();
+
+if ($label->text() === 'Arrivée') {
+    echo "label=ok\n";
+}
+
+$list = new ListBox();
+$list->append(new Label('Un'));
+$list->append(new Label('Deux'));
+$selected = 0;
+$listBinding = Binding::listIndex($list, function () use (&$selected): int {
+    return $selected;
+}, function (int $value) use (&$selected): void {
+    $selected = $value;
+});
+$list->activate(1);
+
+if ($selected === 1) {
+    echo "list-write=ok\n";
+}
+
+$selected = 0;
+$listBinding->refresh();
+
+if ($list->selectedIndex() === 0) {
+    echo "list-refresh=ok\n";
+}
+PHP;
+
+file_put_contents($bindingRoot . '/src/app.php', $bindingSource);
+
+$bindingC = (new PhpCompiler($bindingRoot))->compile(
+    $bindingRoot . '/src/app.php',
+    null,
+    'c',
+);
+$bindingCSource = (string) file_get_contents($bindingC['cPath']);
+T::ok(str_contains($bindingCSource, 'Binding__entry'), 'binding : Entry');
+T::ok(str_contains($bindingCSource, 'Binding__check'), 'binding : CheckButton');
+T::ok(str_contains($bindingCSource, 'Binding__dropIndex'), 'binding : DropDown index');
+T::ok(str_contains($bindingCSource, 'Binding__dropText'), 'binding : DropDown texte');
+T::ok(str_contains($bindingCSource, 'Binding__listIndex'), 'binding : ListBox');
+T::ok(str_contains($bindingCSource, 'cy_ui_on_entry_changed_closure'), 'binding : signal changed');
+T::ok(str_contains($bindingCSource, 'cy_ui_label_text'), 'binding : lecture Label');
+
+$bindingError = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.binding.error');
+$entry = new Entry('Nom');
+$name = 'x';
+$bad = Binding::entry($entry, function () use (&$name): void {
+    echo $name;
+}, function (string $value) use (&$name): void {
+    $name = $value;
+});
+PHP;
+
+file_put_contents($bindingRoot . '/src/error.php', $bindingError);
+
+try {
+    (new PhpCompiler($bindingRoot))->compile(
+        $bindingRoot . '/src/error.php',
+        null,
+        'c',
+    );
+    T::ok(false, 'binding : getter incompatible');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'callable():string')
+            || str_contains($exception->getMessage(), 'type'),
+        'binding : getter incompatible',
+        $exception->getMessage(),
+    );
+}
+
+$bindingGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$bindingDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$bindingGtk) {
+    T::skip('GTK4 dev absent : exécution du binding non testée');
+} elseif (!$bindingDisplay) {
+    T::skip('DISPLAY absent : exécution du binding non testée');
+} else {
+    $bindingElf = (new PhpCompiler($bindingRoot))->compile(
+        $bindingRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $bindingRunner = 'timeout 8 ' . escapeshellarg((string) $bindingElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $bindingRunner = 'dbus-run-session -- ' . $bindingRunner;
+    }
+
+    $bindingOut = [];
+    $bindingStatus = 0;
+    exec($bindingRunner . ' 2>&1', $bindingOut, $bindingStatus);
+    $bindingText = implode("\n", $bindingOut);
+    $bindingExpected = [
+        'entry-init=ok',
+        'entry-write=ok',
+        'entry-refresh=ok',
+        'check-write=ok',
+        'check-refresh=ok',
+        'drop-write=ok',
+        'drop-refresh=ok',
+        'text-write=ok',
+        'text-refresh=ok',
+        'label=ok',
+        'list-write=ok',
+        'list-refresh=ok',
+    ];
+    $bindingMissing = [];
+
+    foreach ($bindingExpected as $line) {
+        if (!str_contains($bindingText, $line)) {
+            $bindingMissing[] = $line;
+        }
+    }
+
+    T::ok(
+        $bindingMissing === [],
+        'binding : widget → état et état → widget',
+        implode(', ', $bindingMissing) . "\n" . $bindingText,
+    );
+    T::ok($bindingStatus === 0, 'binding : exécution terminée', $bindingText);
+}
+
+$exampleBindingC = (new PhpCompiler($bindingRoot))->compile(
+    dirname(__DIR__) . '/examples/native-binding.php',
+    null,
+    'c',
+);
+$exampleBindingSource = (string) file_get_contents($exampleBindingC['cPath']);
+T::ok(
+    str_contains($exampleBindingSource, 'Binding__entry')
+        && str_contains($exampleBindingSource, 'Binding__label'),
+    'binding : exemple du dépôt',
+);
+
+$removeTree($bindingRoot);
+
+// ---------------------------------------------------------------------------
+T::section('54. UI — GtkListView et ListView');
+
+$viewRoot = sys_get_temp_dir() . '/cyonima_listview_' . getmypid();
+$removeTree($viewRoot);
+mkdir($viewRoot . '/src', 0775, true);
+mkdir($viewRoot . '/templates', 0775, true);
+
+$viewTemplate = <<<'UI'
+@params(string $title, array<string> $options, int $selected, callable(int):void $onActivate)
+
+<window title="{{ $title }}" width="440" height="420">
+    <box vertical="true" spacing="8">
+        <list-view options="{{ $options }}" selected="{{ $selected }}" on-activate="{{ $onActivate }}" />
+        <list-view options="Un,Deux,Trois" selected="2" single-click="false" />
+    </box>
+</window>
+UI;
+
+$viewApp = <<<'PHP'
+<?php
+namespace App;
+
+use Application;
+use Cyonima\Templates\ListViewPage;
+
+$options = ['A', 'B', 'C'];
+$onActivate = function (int $index): void {
+    echo 'activate=', $index, "\n";
+};
+
+$application = new Application('com.cyonima.listview.page');
+$window = ListViewPage::build('ListView', $options, 1, $onActivate);
+$window->present();
+$application->after(60, function () use ($application): void {
+    $application->quit();
+});
+$application->run();
+PHP;
+
+$viewGenerated = (new TemplateCompiler('ListViewPage'))->compile($viewTemplate);
+T::ok(str_contains($viewGenerated, 'new ListView('), 'list-view : widget généré');
+T::ok(str_contains($viewGenerated, 'new StringList('), 'list-view : modèle généré');
+T::ok(str_contains($viewGenerated, "->setSingleClick(false)"), 'list-view : clic simple');
+T::ok(str_contains($viewGenerated, '->onActivated(($onActivate))'), 'list-view : callback');
+
+file_put_contents($viewRoot . '/templates/list-view-page.ui', $viewTemplate);
+file_put_contents($viewRoot . '/src/app.php', $viewApp);
+
+$viewC = (new PhpCompiler($viewRoot))->compile($viewRoot . '/src/app.php', null, 'c');
+$viewCSource = (string) file_get_contents($viewC['cPath']);
+T::ok(str_contains($viewCSource, 'cy_ui_list_view'), 'list-view : widget natif');
+T::ok(str_contains($viewCSource, 'cy_ui_list_view_selected'), 'list-view : sélection native');
+T::ok(str_contains($viewCSource, 'cy_ui_list_view_set_single_click'), 'list-view : clic native');
+T::ok(str_contains($viewCSource, 'cy_ui_on_list_view_activated_closure'), 'list-view : signal activate');
+
+$viewErrors = [
+    [
+        'sans source',
+        '<window><list-view /></window>',
+        '<list-view> exige soit "options", soit "model", soit "items"',
+    ],
+    [
+        'double source',
+        '<window><list-view options="a,b" model="{{ $m }}" /></window>',
+        '<list-view> exige soit "options", soit "model", soit "items"',
+    ],
+    [
+        'items statique',
+        '<window><list-view items="x" /></window>',
+        '"items" doit être {{ expression }}',
+    ],
+];
+
+foreach ($viewErrors as $index => [$label, $source, $needle]) {
+    try {
+        (new TemplateCompiler('ViewBroken' . $index))->compile($source);
+        T::ok(false, 'list-view : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'list-view : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$viewValues = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.listview.values');
+$model = new StringList(['a', 'b', 'c']);
+$view = new ListView($model, 1);
+
+if ($view->selectedIndex() === 1 && $view->selectedText() === 'b') {
+    echo "initial=ok\n";
+}
+
+$view->selectText('c');
+
+if ($view->selectedIndex() === 2) {
+    echo "select-text=ok\n";
+}
+
+$model->append('d');
+
+if ($model->count() === 4) {
+    echo "model-append=ok\n";
+}
+
+$activated = -1;
+$view->onActivated(function (int $index) use (&$activated): void {
+    $activated = $index;
+});
+$view->activate(2);
+
+if ($activated === 2) {
+    echo "activate=ok\n";
+}
+
+$boundIndex = 0;
+$indexBinding = Binding::viewIndex($view, function () use (&$boundIndex): int {
+    return $boundIndex;
+}, function (int $value) use (&$boundIndex): void {
+    $boundIndex = $value;
+});
+$view->activate(1);
+
+if ($boundIndex === 1) {
+    echo "view-index=ok\n";
+}
+
+$boundIndex = 3;
+$indexBinding->refresh();
+
+if ($view->selectedIndex() === 3) {
+    echo "view-refresh=ok\n";
+}
+
+$boundText = 'a';
+$textBinding = Binding::viewText($view, function () use (&$boundText): string {
+    return $boundText;
+}, function (string $value) use (&$boundText): void {
+    $boundText = $value;
+});
+$view->activate(2);
+
+if ($boundText === 'c') {
+    echo "view-text=ok\n";
+}
+
+$boundText = 'b';
+$textBinding->refresh();
+
+if ($view->selectedText() === 'b') {
+    echo "view-text-refresh=ok\n";
+}
+PHP;
+
+$viewValuesC = $compilePhp('ui-listview-values', $viewValues, 'c');
+$viewValuesSource = (string) file_get_contents($viewValuesC['cPath']);
+T::ok(str_contains($viewValuesSource, 'cy_ui_list_view'), 'list-view : façade');
+T::ok(str_contains($viewValuesSource, 'Binding__viewIndex'), 'list-view : binding index');
+T::ok(str_contains($viewValuesSource, 'Binding__viewText'), 'list-view : binding texte');
+
+$viewGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$viewDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$viewGtk) {
+    T::skip('GTK4 dev absent : exécution de ListView non testée');
+} elseif (!$viewDisplay) {
+    T::skip('DISPLAY absent : exécution de ListView non testée');
+} else {
+    $viewElf = (new PhpCompiler($viewRoot))->compile(
+        $viewRoot . '/src/app.php',
+        null,
+        'elf',
+    );
+    $viewRunner = 'timeout 8 ' . escapeshellarg((string) $viewElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $viewRunner = 'dbus-run-session -- ' . $viewRunner;
+    }
+
+    $viewOut = [];
+    $viewStatus = 0;
+    exec($viewRunner . ' 2>&1', $viewOut, $viewStatus);
+    T::ok(
+        $viewStatus === 0,
+        'list-view : page avec GtkListView exécutée',
+        implode("\n", $viewOut),
+    );
+
+    $valuesElf = $compilePhp('ui-listview-values', $viewValues, 'elf');
+    $valuesRunner = 'timeout 8 ' . escapeshellarg((string) $valuesElf['binaryPath']);
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $valuesRunner = 'dbus-run-session -- ' . $valuesRunner;
+    }
+
+    $valuesOut = [];
+    $valuesStatus = 0;
+    exec($valuesRunner . ' 2>&1', $valuesOut, $valuesStatus);
+    $valuesText = implode("\n", $valuesOut);
+    T::ok(str_contains($valuesText, 'initial=ok'), 'list-view : sélection initiale', $valuesText);
+    T::ok(str_contains($valuesText, 'select-text=ok'), 'list-view : sélection par texte', $valuesText);
+    T::ok(str_contains($valuesText, 'model-append=ok'), 'list-view : modèle dynamique', $valuesText);
+    T::ok(str_contains($valuesText, 'activate=ok'), 'list-view : activation', $valuesText);
+    T::ok(str_contains($valuesText, 'view-index=ok'), 'list-view : binding index', $valuesText);
+    T::ok(str_contains($valuesText, 'view-refresh=ok'), 'list-view : refresh index', $valuesText);
+    T::ok(str_contains($valuesText, 'view-text=ok'), 'list-view : binding texte', $valuesText);
+    T::ok(str_contains($valuesText, 'view-text-refresh=ok'), 'list-view : refresh texte', $valuesText);
+    T::ok($valuesStatus === 0, 'list-view : valeurs exécutées', $valuesText);
+}
+
+$exampleViewC = (new PhpCompiler(
+    $viewRoot,
+    [],
+    [],
+    [dirname(__DIR__) . '/examples/native-listview.ui'],
+))->compile(
+    dirname(__DIR__) . '/examples/native-listview.php',
+    null,
+    'c',
+);
+$exampleViewSource = (string) file_get_contents($exampleViewC['cPath']);
+T::ok(
+    str_contains($exampleViewSource, 'cy_ui_list_view'),
+    'list-view : exemple du dépôt',
+);
+
+$removeTree($viewRoot);
 
 $removeTree($templateRoot);
 
