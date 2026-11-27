@@ -1167,6 +1167,15 @@ Trois écarts assumés par rapport au miroir strict du C :
   les warnings de mesure d’un popover ancré dans la barre. `Alt+↑/↓` reste
   disponible. Limitations : liste non groupée par date, maximum 20 entrées.
 
+113. **Sommaire Markdown** : `Markdown::headings()` relève les titres hors
+  blocs de code, avec niveau, texte nettoyé et ligne source.
+  `MarkdownPreview::render()` construit un sommaire (liste activable, replié
+  par défaut, bouton `Sommaire (N)`, hauteur limitée). Un clic remonte la ligne
+  source via `setOnNavigate()` ; l’IDE déplace le curseur, fait défiler
+  l’éditeur avec `CodeEditor::scrollToLine()` puis positionne l’aperçu via la
+  cartographie de lignes. Limitations : pas de sommaire en popover, pas de
+  numérotation automatique ni de liens d’ancre HTML.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

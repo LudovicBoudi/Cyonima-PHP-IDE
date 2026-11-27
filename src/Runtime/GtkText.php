@@ -247,6 +247,14 @@ final class GtkText
         $ffi->gtk_text_view_scroll_to_iter($view, FFI::addr($iter), 0.1, 1, 0.0, 0.5);
     }
 
+    public static function scrollToLine(CData $view, CData $buffer, int $line): void
+    {
+        $ffi = self::ffi();
+        $iter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_line($buffer, FFI::addr($iter), max(0, $line));
+        $ffi->gtk_text_view_scroll_to_iter($view, FFI::addr($iter), 0.1, 1, 0.0, 0.5);
+    }
+
     /** Installe les deux tags de surlignage de recherche sur un buffer. */
     public static function installSearchTags(CData $buffer): void
     {

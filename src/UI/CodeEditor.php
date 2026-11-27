@@ -172,6 +172,12 @@ final class CodeEditor extends Widget
         return $this;
     }
 
+    public function scrollToLine(int $line): static
+    {
+        GtkText::scrollToLine($this->raw()->handle(), $this->buffer->handle(), $line);
+        return $this;
+    }
+
     /**
      * Handler : function (CodeEditor $editor, int $keyval, int $state): bool
      * Retourner true consomme la touche.

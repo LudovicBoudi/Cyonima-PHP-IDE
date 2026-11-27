@@ -294,6 +294,31 @@ list row:selected {
     padding: 12px 16px;
 }
 
+.markdown-toc-toggle {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    color: #75beff;
+    font-size: 11px;
+    padding: 4px 8px;
+    min-height: 0;
+}
+
+.markdown-toc-toggle:hover {
+    background-color: #2a2d2e;
+}
+
+.markdown-toc-row {
+    color: #75beff;
+    font-size: 12px;
+    padding: 3px 8px;
+}
+
+.markdown-toc-row:hover {
+    background-color: #2a2d2e;
+}
+
 .search-options {
     padding: 0 4px;
 }

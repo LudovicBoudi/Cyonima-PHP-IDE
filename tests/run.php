@@ -10783,6 +10783,27 @@ T::same(3, $preview->renderedLineCount(), 'markdown UI : lignes rendues');
 T::same(2, $preview->previewLineForSourceLine(4), 'markdown UI : source vers aperçu');
 T::same(4, $preview->sourceLineForPreviewLine(2), 'markdown UI : aperçu vers source');
 
+$tocMarkdown = "# Titre\n\ntexte\n\n## Section **A**\n";
+$tocHeadings = Markdown::headings($tocMarkdown);
+T::same(2, count($tocHeadings), 'sommaire : titres détectés');
+T::same(1, $tocHeadings[0]['level'], 'sommaire : niveau 1');
+T::same('Titre', $tocHeadings[0]['text'], 'sommaire : texte du titre');
+T::same(2, $tocHeadings[1]['level'], 'sommaire : niveau 2');
+T::same('Section A', $tocHeadings[1]['text'], 'sommaire : styles retirés');
+T::same(4, $tocHeadings[1]['line'], 'sommaire : ligne source');
+
+$tocLine = null;
+$preview->setOnNavigate(function (int $line) use (&$tocLine): void {
+    $tocLine = $line;
+});
+$preview->render($tocMarkdown);
+T::same(2, $preview->tocCount(), 'sommaire UI : entrées');
+T::ok(!$preview->tocVisible(), 'sommaire UI : replié par défaut');
+$preview->toggleToc();
+T::ok($preview->tocVisible(), 'sommaire UI : déplié');
+T::ok($preview->activateTocRow(1), 'sommaire UI : activation');
+T::same(4, $tocLine, 'sommaire UI : ligne transmise');
+
 // ---------------------------------------------------------------------------
 T::section('76. IDE — défilement synchronisé');
 

@@ -9,6 +9,7 @@ use Cyonima\Compiler\CompilerException;
 use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Diagnostics;
+use Cyonima\Runtime\GtkScroll;
 use Cyonima\Runtime\GitRepository;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
@@ -123,6 +124,26 @@ $scrollSync->setMapper(function (bool $fromSource, float $fraction) use (
     $sourceLine = $markdownPreview->sourceLineForPreviewLine($previewLine);
 
     return $editorLines <= 1 ? 0.0 : $sourceLine / ($editorLines - 1);
+});
+
+$markdownPreview->setOnNavigate(function (int $line) use (
+    $editor,
+    $markdownPreview,
+    $previewPage,
+    &$updateCursor,
+): void {
+    $editor->moveCursorToLine($line);
+    $editor->scrollToLine($line);
+    $updateCursor();
+
+    $previewLines = max(1, $markdownPreview->renderedLineCount());
+    $previewLine = $markdownPreview->previewLineForSourceLine($line);
+    $fraction = $previewLines <= 1 ? 0.0 : $previewLine / ($previewLines - 1);
+    $adjustment = GtkScroll::vadjustment($previewPage->raw()->handle());
+
+    if ($adjustment !== null) {
+        GtkScroll::setFraction($adjustment, $fraction);
+    }
 });
 
 $togglePreview = function () use (

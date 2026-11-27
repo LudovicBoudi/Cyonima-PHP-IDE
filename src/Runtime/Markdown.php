@@ -94,6 +94,40 @@ final class Markdown
         ];
     }
 
+    /**
+     * @return list<array{level: int, text: string, line: int}>
+     */
+    public static function headings(string $markdown): array
+    {
+        $lines = preg_split('/\R/', str_replace("\r\n", "\n", $markdown)) ?: [];
+        $headings = [];
+        $inCode = false;
+
+        foreach ($lines as $index => $line) {
+            if (str_starts_with(trim($line), '```')) {
+                $inCode = !$inCode;
+                continue;
+            }
+
+            if ($inCode || preg_match('/^(#{1,6})\s+(.*)$/u', $line, $match) !== 1) {
+                continue;
+            }
+
+            $text = trim($match[2]);
+            $text = preg_replace('/!\[([^\]]*)\]\([^)]*\)/u', '$1', $text) ?? $text;
+            $text = preg_replace('/\[([^\]]+)\]\([^)]*\)/u', '$1', $text) ?? $text;
+            $text = str_replace(['**', '__', '*', '_', '`', '~~'], '', $text);
+
+            $headings[] = [
+                'level' => strlen($match[1]),
+                'text' => trim($text),
+                'line' => $index,
+            ];
+        }
+
+        return $headings;
+    }
+
     private static function inline(string $text): string
     {
         $escaped = htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
