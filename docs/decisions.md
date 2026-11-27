@@ -1089,6 +1089,18 @@ Trois écarts assumés par rapport au miroir strict du C :
   ignorée. Limitations : pas de surveillance des fichiers hors projet, plafond
   de dossiers, pas de persistance.
 
+105. **Rechercher/Remplacer dans l’éditeur** : `TextSearch` fournit les
+  correspondances et le remplacement avec options casse, mot entier et regex.
+  `FindBar` (Ctrl+F/Ctrl+H) affiche les champs, les options, le compteur
+  `position/total`, les boutons suivant/précédent, remplacer et tout
+  remplacer. Le parcours boucle ; les remplacements unitaires utilisent
+  `CodeEditor::selectRange`/`replaceRange` (nouveaux helpers `GtkText` sur
+  offsets), le remplacement global part de la fin pour préserver les offsets.
+  `Échap` ferme et rend le focus à l’éditeur ; la barre se rafraîchit quand le
+  texte change. Limitations : pas de surlignage de toutes les occurrences, pas
+  d’historique de recherches, remplacement unitaire littéral (les références
+  arrière ne sont appliquées qu’au remplacement global).
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

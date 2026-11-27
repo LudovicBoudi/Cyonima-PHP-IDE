@@ -152,6 +152,26 @@ final class CodeEditor extends Widget
         return $this;
     }
 
+    /** Sélection par offsets en octets dans le buffer. */
+    public function selectRange(int $start, int $end): static
+    {
+        GtkText::selectOffsets($this->buffer->handle(), $start, $end);
+        return $this;
+    }
+
+    /** Remplace une plage par un texte, en conservant l'historique d'annulation. */
+    public function replaceRange(int $start, int $end, string $replacement): static
+    {
+        GtkText::replaceRange($this->buffer->handle(), $start, $end, $replacement);
+        return $this;
+    }
+
+    public function scrollToOffset(int $offset): static
+    {
+        GtkText::scrollToOffset($this->raw()->handle(), $this->buffer->handle(), $offset);
+        return $this;
+    }
+
     /**
      * Handler : function (CodeEditor $editor, int $keyval, int $state): bool
      * Retourner true consomme la touche.

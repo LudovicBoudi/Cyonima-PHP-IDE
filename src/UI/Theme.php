@@ -255,6 +255,24 @@ list row:selected {
     padding: 4px;
 }
 
+.find-bar {
+    background-color: #252526;
+    border-bottom: 1px solid #3f3f46;
+    padding: 4px 6px;
+}
+
+.find-status {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 0 6px;
+}
+
+.find-action {
+    font-size: 11px;
+    padding: 3px 8px;
+    min-height: 0;
+}
+
 .search-options {
     padding: 0 4px;
 }

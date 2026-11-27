@@ -187,6 +187,18 @@ Les bindings Gio ne sont pas générés : `FileWatcher` déclare le strict
 nécessaire en FFI (`libgio-2.0.so.0`) et garde le callback PHP en vie. Si Gio
 est indisponible, la surveillance est désactivée sans bloquer l'IDE.
 
+## Rechercher et remplacer
+
+`Ctrl+F` ouvre la barre de recherche au-dessus de l'éditeur, `Ctrl+H` sa
+variante avec remplacement. La recherche locale accepte la casse, le mot
+entier et les expressions régulières ; `Entrée`/`Maj+Entrée` parcourent les
+occurrences avec bouclage, et le compteur affiche `position/total`.
+**Remplacer** traite l'occurrence sélectionnée, **Tout remplacer** applique les
+remplacements de la fin vers le début pour préserver les offsets, en conservant
+l'historique d'annulation. `Échap` ferme la barre et rend le focus à l'éditeur.
+Les remplacements passent par `CodeEditor::replaceRange` et déclenchent les
+signaux normaux de modification.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
@@ -252,14 +264,14 @@ opérations réelles de l'IDE.
 | Menu | Actions |
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
-| Édition | Annuler, Rétablir, Tout sélectionner |
+| Édition | Annuler, Rétablir, Rechercher, Remplacer, Tout sélectionner |
 | Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aller au fichier, rechercher un symbole, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
-Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+T`, `Ctrl+Shift+P`, `Ctrl+W`,
-`Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`,
-`Ctrl+Espace` et `F5`.
+Raccourcis : `Ctrl+S`, `Ctrl+F`, `Ctrl+H`, `Ctrl+P`, `Ctrl+T`, `Ctrl+Shift+P`,
+`Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`,
+`Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`, `Ctrl+Espace` et `F5`.
 
 ## Concepteur d'interface
 

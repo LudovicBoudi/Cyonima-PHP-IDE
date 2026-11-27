@@ -41,6 +41,7 @@ use Cyonima\Runtime\ProjectSearch;
 use Cyonima\Runtime\QuickOpenMatcher;
 use Cyonima\Runtime\RecentProjects;
 use Cyonima\Runtime\SymbolIndex;
+use Cyonima\Runtime\TextSearch;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
@@ -49,6 +50,7 @@ use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
 use Cyonima\UI\DiffPanel;
+use Cyonima\UI\FindBar;
 use Cyonima\UI\GitPanel;
 use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
@@ -10602,6 +10604,51 @@ if (!FileWatcher::available()) {
 
     $removeTree($watchRoot);
 }
+
+// ---------------------------------------------------------------------------
+T::section('74. IDE — rechercher et remplacer dans l’éditeur');
+
+$findText = "Needle needle needleX\nNEEDLE";
+T::same(4, count(TextSearch::matches($findText, 'needle')), 'éditeur : recherche');
+T::same(2, count(TextSearch::matches($findText, 'needle', ['caseSensitive' => true])), 'éditeur : casse');
+T::same(3, count(TextSearch::matches($findText, 'needle', ['wholeWord' => true])), 'éditeur : mot entier');
+T::same(4, count(TextSearch::matches($findText, 'n[a-z]+dle', ['regex' => true])), 'éditeur : expression régulière');
+T::ok(
+    !str_contains(TextSearch::replaceAll($findText, 'needle', 'thread'), 'needle'),
+    'éditeur : remplacement global',
+);
+
+try {
+    TextSearch::matches($findText, '(', ['regex' => true]);
+    T::ok(false, 'éditeur : expression invalide signalée');
+} catch (\InvalidArgumentException) {
+    T::ok(true, 'éditeur : expression invalide signalée');
+}
+
+$findEditor = new CodeEditor('php', "one two one\nAlpha");
+$findBar = new FindBar($findEditor);
+
+T::same(2, $findBar->setQuery('one')->matchCount(), 'éditeur UI : occurrences');
+T::ok($findBar->findNext(), 'éditeur UI : suivant');
+T::same(0, $findBar->currentIndex(), 'éditeur UI : première occurrence');
+T::ok($findBar->findNext(), 'éditeur UI : suivant 2');
+T::same(1, $findBar->currentIndex(), 'éditeur UI : seconde occurrence');
+T::ok($findBar->findPrevious(), 'éditeur UI : précédent');
+T::same(0, $findBar->currentIndex(), 'éditeur UI : retour première');
+
+$findBar->setQuery('one')->setReplacement('three');
+T::ok($findBar->replaceCurrent(), 'éditeur UI : remplacer');
+T::same("three two one\nAlpha", $findEditor->text(), 'éditeur UI : texte remplacé');
+T::same(1, $findBar->matchCount(), 'éditeur UI : occurrences restantes');
+T::same(1, $findBar->replaceAll(), 'éditeur UI : tout remplacer');
+T::same("three two three\nAlpha", $findEditor->text(), 'éditeur UI : texte final');
+
+$findBar->setQuery('ALPHA');
+T::same(1, $findBar->matchCount(), 'éditeur UI : casse insensible par défaut');
+$findBar->setOption('caseSensitive', true);
+T::same(0, $findBar->matchCount(), 'éditeur UI : casse sensible');
+$findBar->setOption('caseSensitive', false);
+T::same(1, $findBar->matchCount(), 'éditeur UI : retour insensible');
 
 $removeTree($templateRoot);
 

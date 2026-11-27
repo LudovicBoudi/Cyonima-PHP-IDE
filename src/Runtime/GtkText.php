@@ -37,6 +37,8 @@ final class GtkText
         void         gtk_text_buffer_get_iter_at_line(void *buffer, CyonimaTextIter *iter, int line_number);
         void         gtk_text_buffer_get_iter_at_line_offset(
             void *buffer, CyonimaTextIter *iter, int line_number, int char_offset);
+        void         gtk_text_buffer_get_iter_at_offset(
+            void *buffer, CyonimaTextIter *iter, int char_offset);
         int          gtk_text_iter_get_offset(const CyonimaTextIter *iter);
         int          gtk_text_iter_get_line(const CyonimaTextIter *iter);
         int          gtk_text_iter_get_line_offset(const CyonimaTextIter *iter);
@@ -45,6 +47,9 @@ final class GtkText
 
         void         gtk_text_view_get_cursor_locations(
             void *view, const CyonimaTextIter *iter, CyonimaRect *strong, CyonimaRect *weak);
+        int          gtk_text_view_scroll_to_iter(
+            void *view, CyonimaTextIter *iter, double within_margin,
+            int use_align, double xalign, double yalign);
 
         void         gtk_text_buffer_delete(void *buffer, CyonimaTextIter *start, CyonimaTextIter *end);
         void         gtk_text_buffer_insert(void *buffer, CyonimaTextIter *iter, const char *text, int length);
@@ -199,6 +204,38 @@ final class GtkText
             max(0, $character),
         );
         $ffi->gtk_text_buffer_place_cursor($buffer, FFI::addr($iter));
+    }
+
+    public static function selectOffsets(CData $buffer, int $start, int $end): void
+    {
+        $ffi = self::ffi();
+        $startIter = $ffi->new('CyonimaTextIter');
+        $endIter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($startIter), max(0, $start));
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($endIter), max(0, $end));
+        $ffi->gtk_text_buffer_select_range($buffer, FFI::addr($startIter), FFI::addr($endIter));
+    }
+
+    public static function replaceRange(CData $buffer, int $start, int $end, string $replacement): void
+    {
+        $ffi = self::ffi();
+        $startIter = $ffi->new('CyonimaTextIter');
+        $endIter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($startIter), max(0, $start));
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($endIter), max(0, $end));
+        $ffi->gtk_text_buffer_delete($buffer, FFI::addr($startIter), FFI::addr($endIter));
+
+        $insertIter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($insertIter), max(0, $start));
+        $ffi->gtk_text_buffer_insert($buffer, FFI::addr($insertIter), $replacement, -1);
+    }
+
+    public static function scrollToOffset(CData $view, CData $buffer, int $offset): void
+    {
+        $ffi = self::ffi();
+        $iter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($iter), max(0, $offset));
+        $ffi->gtk_text_view_scroll_to_iter($view, FFI::addr($iter), 0.1, 1, 0.0, 0.5);
     }
 
     private static function insertIter(CData $buffer): CData

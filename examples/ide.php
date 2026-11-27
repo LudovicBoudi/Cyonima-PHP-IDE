@@ -27,6 +27,7 @@ use Cyonima\UI\DebugPanel;
 use Cyonima\UI\DiffPanel;
 use Cyonima\App\DesignerWindow;
 use Cyonima\UI\FileBrowser;
+use Cyonima\UI\FindBar;
 use Cyonima\UI\GitPanel;
 use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
@@ -86,6 +87,7 @@ $diagnosticCount = 0;
 $completionItems = 0;
 
 $popup = new CompletionPopup($editor);
+$findBar = new FindBar($editor);
 
 $statusPos = (new Label('Ln 1, Col 1'))->cssClass('status-item');
 
@@ -791,6 +793,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $nextTab,
     $quickOpen,
     $symbolSearch,
+    $findBar,
     &$commandPalette,
 ): bool {
     Loop::after(0, $updateCursor);
@@ -825,6 +828,14 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
         }
         if ($keyval === 0x74) { // Ctrl+T
             $symbolSearch->present();
+            return true;
+        }
+        if ($keyval === 0x66) { // Ctrl+F
+            $findBar->show();
+            return true;
+        }
+        if ($keyval === 0x68) { // Ctrl+H
+            $findBar->showReplace();
             return true;
         }
         if ($keyval === 0x77) { // Ctrl+W
@@ -1190,7 +1201,9 @@ if (is_dir($root)) {
 }
 
 // --- Onglet, éditeur, terminal --------------------------------------------
-$editorArea = (new ScrolledWindow($editor))->expand();
+$editorArea = (new Box(Orientation::VERTICAL, 0))
+    ->append($findBar, (new ScrolledWindow($editor))->expand())
+    ->expand();
 
 $panelProblemsTab = (new Button('PROBLÈMES'))->cssClass('panel-tab');
 $panelOutputTab = (new Button('SORTIE'))->cssClass('panel-tab');
@@ -1414,6 +1427,8 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Fichier : Onglet précédent', 'detail' => 'Ctrl+Shift+Tab', 'action' => fn () => $nextTab(-1)],
     ['label' => 'Navigation : Aller au fichier', 'detail' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
     ['label' => 'Navigation : rechercher un symbole', 'detail' => 'Ctrl+T', 'action' => fn () => $symbolSearch->present()],
+    ['label' => 'Édition : rechercher', 'detail' => 'Ctrl+F', 'action' => fn () => $findBar->show()],
+    ['label' => 'Édition : remplacer', 'detail' => 'Ctrl+H', 'action' => fn () => $findBar->showReplace()],
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
@@ -1472,6 +1487,9 @@ $menuBar = (new MenuBar())
         ['label' => 'Annuler', 'shortcut' => 'Ctrl+Z', 'action' => fn () => $editor->undo()],
         ['label' => 'Rétablir', 'shortcut' => 'Ctrl+Shift+Z', 'action' => fn () => $editor->redo()],
         ['separator' => true],
+        ['label' => 'Rechercher…', 'shortcut' => 'Ctrl+F', 'action' => fn () => $findBar->show()],
+        ['label' => 'Remplacer…', 'shortcut' => 'Ctrl+H', 'action' => fn () => $findBar->showReplace()],
+        ['separator' => true],
         ['label' => 'Tout sélectionner', 'shortcut' => 'Ctrl+A', 'action' => fn () => $editor->selectAll()],
     ])
     ->addMenu('Affichage', [
@@ -1518,7 +1536,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+P Fichier · Ctrl+T Symbole · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+F Rechercher · Ctrl+H Remplacer · Ctrl+P Fichier · Ctrl+T Symbole · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1603,6 +1621,12 @@ if ($auto) {
     Loop::after(380, fn () => $openFile($sampleSecond));
     Loop::after(450, fn () => $openFile($sample));
     Loop::after(500, fn () => $runButton->click());
+    Loop::after(620, function () use ($findBar): void {
+        $findBar->show();
+        $findBar->setQuery('terminal');
+        $findBar->findNext();
+    });
+    Loop::after(660, fn () => $findBar->hide());
     Loop::after(700, function () use ($editor): void {
         $editor->setText($editor->text() . "\nstr");
         $editor->moveCursorToEnd();
