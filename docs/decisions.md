@@ -1101,6 +1101,15 @@ Trois écarts assumés par rapport au miroir strict du C :
   d’historique de recherches, remplacement unitaire littéral (les références
   arrière ne sont appliquées qu’au remplacement global).
 
+106. **Surlignage des occurrences** : `GtkText` expose les tags de buffer
+  (`create_tag` via varargs FFI, `apply_tag_by_name`, `remove_tag_by_name`) et
+  `hasTagAtOffset` pour les tests. `FindBar` installe `cyonima-find`
+  (fond brun) et `cyonima-find-current` (fond orange, texte blanc), applique le
+  tag courant et les autres occurrences après chaque rafraîchissement, et
+  nettoie tout à la fermeture. Le surlignage est plafonné à 500 occurrences
+  pour rester fluide ; les correspondances au-delà restent navigables.
+  Limitations : couleurs fixes, pas de configuration utilisateur.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

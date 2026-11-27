@@ -7,6 +7,7 @@ namespace Cyonima\UI;
 use Cyonima\Gtk\Raw\Box as RawBox;
 use Cyonima\Gtk\Raw\EventControllerKey as RawEventControllerKey;
 use Cyonima\Gtk\Raw\Orientation;
+use Cyonima\Runtime\GtkText;
 use Cyonima\Runtime\TextSearch;
 
 /**
@@ -14,6 +15,10 @@ use Cyonima\Runtime\TextSearch;
  */
 final class FindBar extends Widget
 {
+    private const MAX_HIGHLIGHTS = 500;
+    private const TAG_MATCH = 'cyonima-find';
+    private const TAG_CURRENT = 'cyonima-find-current';
+
     private Entry $findEntry;
     private Entry $replaceEntry;
     private Label $statusLabel;
@@ -40,6 +45,7 @@ final class FindBar extends Widget
         parent::__construct(RawBox::new(Orientation::VERTICAL, 4));
 
         $this->cssClass('find-bar');
+        GtkText::installSearchTags($this->editor->buffer()->handle());
 
         $this->findEntry = new Entry('Rechercher');
         $this->findEntry->onChanged(fn (): int => $this->refreshMatches());
@@ -134,6 +140,7 @@ final class FindBar extends Widget
         $this->visible(false);
         $this->shown = false;
         $this->statusLabel->text('');
+        $this->clearHighlights();
         $this->editor->grabFocus();
 
         return $this;
@@ -235,6 +242,7 @@ final class FindBar extends Widget
         } catch (\InvalidArgumentException) {
             $this->matches = [];
             $this->statusLabel->text('Expression invalide');
+            $this->highlightMatches();
             return 0;
         }
 
@@ -243,6 +251,7 @@ final class FindBar extends Widget
             $this->statusLabel->text(
                 $this->findEntry->text() === '' ? '' : 'Aucun résultat',
             );
+            $this->highlightMatches();
             return 0;
         }
 
@@ -251,6 +260,7 @@ final class FindBar extends Widget
         }
 
         $this->updateStatus();
+        $this->highlightMatches();
 
         return count($this->matches);
     }
@@ -298,6 +308,7 @@ final class FindBar extends Widget
         $this->editor->selectRange($match['start'], $match['end']);
         $this->editor->scrollToOffset($match['start']);
         $this->updateStatus();
+        $this->highlightMatches();
 
         return $this;
     }
@@ -409,6 +420,40 @@ final class FindBar extends Widget
         }
 
         return false;
+    }
+
+    private function clearHighlights(): void
+    {
+        $buffer = $this->editor->buffer()->handle();
+        GtkText::removeTagEverywhere($buffer, self::TAG_MATCH);
+        GtkText::removeTagEverywhere($buffer, self::TAG_CURRENT);
+    }
+
+    private function highlightMatches(): void
+    {
+        $this->clearHighlights();
+
+        if (!$this->shown || $this->matches === []) {
+            return;
+        }
+
+        $buffer = $this->editor->buffer()->handle();
+        $limit = min(count($this->matches), self::MAX_HIGHLIGHTS);
+
+        for ($index = 0; $index < $limit; $index++) {
+            if ($index === $this->currentIndex) {
+                continue;
+            }
+
+            $match = $this->matches[$index];
+            GtkText::applyTagByName($buffer, self::TAG_MATCH, $match['start'], $match['end']);
+        }
+
+        $current = $this->currentMatch();
+
+        if ($current !== null) {
+            GtkText::applyTagByName($buffer, self::TAG_CURRENT, $current['start'], $current['end']);
+        }
     }
 
     private function updateStatus(): void

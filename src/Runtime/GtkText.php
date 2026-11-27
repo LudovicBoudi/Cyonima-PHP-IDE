@@ -53,6 +53,15 @@ final class GtkText
 
         void         gtk_text_buffer_delete(void *buffer, CyonimaTextIter *start, CyonimaTextIter *end);
         void         gtk_text_buffer_insert(void *buffer, CyonimaTextIter *iter, const char *text, int length);
+        void        *gtk_text_buffer_create_tag(
+            void *buffer, const char *tag_name, const char *first_property_name, ...);
+        void         gtk_text_buffer_apply_tag_by_name(
+            void *buffer, const char *name, const CyonimaTextIter *start, const CyonimaTextIter *end);
+        void         gtk_text_buffer_remove_tag_by_name(
+            void *buffer, const char *name, const CyonimaTextIter *start, const CyonimaTextIter *end);
+        void        *gtk_text_buffer_get_tag_table(void *buffer);
+        void        *gtk_text_tag_table_lookup(void *table, const char *name);
+        int          gtk_text_iter_has_tag(const CyonimaTextIter *iter, void *tag);
         C;
 
     private static ?FFI $ffi = null;
@@ -236,6 +245,94 @@ final class GtkText
         $iter = $ffi->new('CyonimaTextIter');
         $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($iter), max(0, $offset));
         $ffi->gtk_text_view_scroll_to_iter($view, FFI::addr($iter), 0.1, 1, 0.0, 0.5);
+    }
+
+    /** Installe les deux tags de surlignage de recherche sur un buffer. */
+    public static function installSearchTags(CData $buffer): void
+    {
+        $ffi = self::ffi();
+        $ffi->gtk_text_buffer_create_tag(
+            $buffer,
+            'cyonima-find',
+            'background',
+            '#613214',
+            null,
+        );
+        $ffi->gtk_text_buffer_create_tag(
+            $buffer,
+            'cyonima-find-current',
+            'background',
+            '#a45a00',
+            'foreground',
+            '#ffffff',
+            null,
+        );
+    }
+
+    public static function applyTagByName(CData $buffer, string $name, int $start, int $end): void
+    {
+        $ffi = self::ffi();
+        $startIter = $ffi->new('CyonimaTextIter');
+        $endIter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($startIter), max(0, $start));
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($endIter), max(0, $end));
+        $ffi->gtk_text_buffer_apply_tag_by_name(
+            $buffer,
+            $name,
+            FFI::addr($startIter),
+            FFI::addr($endIter),
+        );
+    }
+
+    public static function removeTagByName(CData $buffer, string $name, int $start, int $end): void
+    {
+        $ffi = self::ffi();
+        $startIter = $ffi->new('CyonimaTextIter');
+        $endIter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($startIter), max(0, $start));
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($endIter), max(0, $end));
+        $ffi->gtk_text_buffer_remove_tag_by_name(
+            $buffer,
+            $name,
+            FFI::addr($startIter),
+            FFI::addr($endIter),
+        );
+    }
+
+    public static function removeTagEverywhere(CData $buffer, string $name): void
+    {
+        $ffi = self::ffi();
+        $start = $ffi->new('CyonimaTextIter');
+        $end = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_start_iter($buffer, FFI::addr($start));
+        $ffi->gtk_text_buffer_get_end_iter($buffer, FFI::addr($end));
+        $ffi->gtk_text_buffer_remove_tag_by_name(
+            $buffer,
+            $name,
+            FFI::addr($start),
+            FFI::addr($end),
+        );
+    }
+
+    public static function hasTagAtOffset(CData $buffer, string $name, int $offset): bool
+    {
+        $ffi = self::ffi();
+        $table = $ffi->gtk_text_buffer_get_tag_table($buffer);
+
+        if ($table === null) {
+            return false;
+        }
+
+        $tag = $ffi->gtk_text_tag_table_lookup($table, $name);
+
+        if ($tag === null) {
+            return false;
+        }
+
+        $iter = $ffi->new('CyonimaTextIter');
+        $ffi->gtk_text_buffer_get_iter_at_offset($buffer, FFI::addr($iter), max(0, $offset));
+
+        return $ffi->gtk_text_iter_has_tag(FFI::addr($iter), $tag) !== 0;
     }
 
     private static function insertIter(CData $buffer): CData

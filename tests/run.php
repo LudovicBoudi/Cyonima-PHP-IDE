@@ -29,6 +29,7 @@ use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
 use Cyonima\Runtime\Diagnostics;
 use Cyonima\Runtime\FileWatcher;
+use Cyonima\Runtime\GtkText;
 use Cyonima\Compiler\FormCompiler;
 use Cyonima\Compiler\Lexer\Lexer;
 use Cyonima\Compiler\Lexer\TokenType;
@@ -10649,6 +10650,38 @@ $findBar->setOption('caseSensitive', true);
 T::same(0, $findBar->matchCount(), 'éditeur UI : casse sensible');
 $findBar->setOption('caseSensitive', false);
 T::same(1, $findBar->matchCount(), 'éditeur UI : retour insensible');
+
+$findWindow = new UI\Window('Recherche éditeur');
+$findWindow->setChild($findBar);
+$findWindow->present();
+
+$findBar->setQuery('three')->show();
+$findBuffer = $findEditor->buffer()->handle();
+T::ok(
+    GtkText::hasTagAtOffset($findBuffer, 'cyonima-find-current', 0),
+    'surlignage : occurrence courante',
+);
+T::ok(
+    GtkText::hasTagAtOffset($findBuffer, 'cyonima-find', 10),
+    'surlignage : autres occurrences',
+);
+$findBar->selectMatch(0);
+$findBar->findNext();
+T::ok(
+    GtkText::hasTagAtOffset($findBuffer, 'cyonima-find-current', 10),
+    'surlignage : nouvelle occurrence courante',
+);
+T::ok(
+    GtkText::hasTagAtOffset($findBuffer, 'cyonima-find', 0),
+    'surlignage : ancienne occurrence',
+);
+$findBar->hide();
+T::ok(
+    !GtkText::hasTagAtOffset($findBuffer, 'cyonima-find', 0)
+    && !GtkText::hasTagAtOffset($findBuffer, 'cyonima-find-current', 10),
+    'surlignage : nettoyé à la fermeture',
+);
+$findWindow->raw()->close();
 
 $removeTree($templateRoot);
 
