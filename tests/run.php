@@ -10788,8 +10788,10 @@ $tocHeadings = Markdown::headings($tocMarkdown);
 T::same(2, count($tocHeadings), 'sommaire : titres détectés');
 T::same(1, $tocHeadings[0]['level'], 'sommaire : niveau 1');
 T::same('Titre', $tocHeadings[0]['text'], 'sommaire : texte du titre');
+T::same('1', $tocHeadings[0]['number'], 'sommaire : numéro 1');
 T::same(2, $tocHeadings[1]['level'], 'sommaire : niveau 2');
 T::same('Section A', $tocHeadings[1]['text'], 'sommaire : styles retirés');
+T::same('1.1', $tocHeadings[1]['number'], 'sommaire : numéro 1.1');
 T::same(4, $tocHeadings[1]['line'], 'sommaire : ligne source');
 
 $tocLine = null;
@@ -10803,6 +10805,24 @@ $preview->toggleToc();
 T::ok($preview->tocVisible(), 'sommaire UI : déplié');
 T::ok($preview->activateTocRow(1), 'sommaire UI : activation');
 T::same(4, $tocLine, 'sommaire UI : ligne transmise');
+
+$nestedMarkdown = "# A\n## A1\n## A2\n# B\n";
+$nestedHeadings = Markdown::headings($nestedMarkdown);
+T::same('1', $nestedHeadings[0]['number'], 'sommaire : numéro racine');
+T::same('1.1', $nestedHeadings[1]['number'], 'sommaire : numéro enfant');
+T::same('1.2', $nestedHeadings[2]['number'], 'sommaire : second enfant');
+T::same('2', $nestedHeadings[3]['number'], 'sommaire : numéro suivant');
+
+$preview->render($nestedMarkdown);
+T::same(4, $preview->tocCount(), 'sommaire UI : sections imbriquées');
+T::ok($preview->toggleTocSection(0), 'sommaire UI : section repliée');
+T::ok($preview->isTocCollapsed(0), 'sommaire UI : état replié');
+$preview->activateTocRow(1);
+T::same(3, $tocLine, 'sommaire UI : ligne après repli');
+T::ok($preview->toggleTocSection(0), 'sommaire UI : section dépliée');
+T::ok(!$preview->isTocCollapsed(0), 'sommaire UI : état déplié');
+$preview->activateTocRow(1);
+T::same(1, $tocLine, 'sommaire UI : enfant après dépli');
 
 // ---------------------------------------------------------------------------
 T::section('76. IDE — défilement synchronisé');

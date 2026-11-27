@@ -32,8 +32,20 @@ final class MarkdownPreview extends Widget
     /** @var list<RawListBoxRow> */
     private array $tocRows = [];
 
-    /** @var list<array{level: int, text: string, line: int}> */
+    /** @var list<array{level: int, text: string, line: int, number: string}> */
     private array $headings = [];
+
+    /** @var list<object{index: int, heading: array, children: list<object>}> */
+    private array $tocTree = [];
+
+    /** @var array<int, true> */
+    private array $tocCollapsed = [];
+
+    /** @var array<int, true> */
+    private array $tocParents = [];
+
+    /** @var list<int> index de titre pour chaque ligne affichée */
+    private array $tocHeadingIndexes = [];
 
     private bool $tocVisible = false;
 
@@ -119,7 +131,7 @@ final class MarkdownPreview extends Widget
         return $this->lineMap;
     }
 
-    /** @return list<array{level: int, text: string, line: int}> */
+    /** @return list<array{level: int, text: string, line: int, number: string}> */
     public function headings(): array
     {
         return $this->headings;
@@ -189,25 +201,59 @@ final class MarkdownPreview extends Widget
         return $sourceLine;
     }
 
-    /** @param list<array{level: int, text: string, line: int}> $headings */
+    public function toggleTocSection(int $headingIndex): bool
+    {
+        if (!isset($this->tocParents[$headingIndex])) {
+            return false;
+        }
+
+        if (isset($this->tocCollapsed[$headingIndex])) {
+            unset($this->tocCollapsed[$headingIndex]);
+        } else {
+            $this->tocCollapsed[$headingIndex] = true;
+        }
+
+        $this->renderTocRows();
+
+        return true;
+    }
+
+    public function isTocCollapsed(int $headingIndex): bool
+    {
+        return isset($this->tocCollapsed[$headingIndex]);
+    }
+
+    /** @param list<array{level: int, text: string, line: int, number: string}> $headings */
     private function buildToc(array $headings): void
     {
-        foreach ($this->tocRows as $row) {
-            $this->tocList->remove($row);
-        }
-
-        $this->tocRows = [];
         $this->headings = $headings;
+        $this->tocTree = [];
+        $this->tocCollapsed = [];
+        $this->tocParents = [];
 
-        foreach ($headings as $heading) {
-            $label = (new Label(str_repeat('  ', max(0, $heading['level'] - 1)) . $heading['text']))
-                ->cssClass('markdown-toc-row');
-            $row = RawListBoxRow::new();
-            $row->setChild($label->raw());
-            $row->setActivatable(true);
-            $this->tocList->append($row);
-            $this->tocRows[] = $row;
+        $stack = [];
+
+        foreach ($headings as $index => $heading) {
+            $node = (object) [
+                'index' => $index,
+                'heading' => $heading,
+                'children' => [],
+            ];
+
+            while ($stack !== [] && end($stack)->heading['level'] >= $heading['level']) {
+                array_pop($stack);
+            }
+
+            if ($stack === []) {
+                $this->tocTree[] = $node;
+            } else {
+                $stack[count($stack) - 1]->children[] = $node;
+            }
+
+            $stack[] = $node;
         }
+
+        $this->renderTocRows();
 
         if ($headings === []) {
             $this->tocVisible = false;
@@ -221,9 +267,68 @@ final class MarkdownPreview extends Widget
         $this->tocScroller->setVisible($this->tocVisible);
     }
 
+    private function renderTocRows(): void
+    {
+        foreach ($this->tocRows as $row) {
+            $this->tocList->remove($row);
+        }
+
+        $this->tocRows = [];
+        $this->tocHeadingIndexes = [];
+
+        foreach ($this->tocTree as $node) {
+            $this->appendTocNode($node, 0);
+        }
+
+        if ($this->tocVisible && isset($this->tocRows[0])) {
+            $this->tocList->selectRow($this->tocRows[0]);
+        }
+    }
+
+    private function appendTocNode(object $node, int $depth): void
+    {
+        $heading = $node->heading;
+        $collapsed = isset($this->tocCollapsed[$node->index]);
+        $box = new Box(Orientation::HORIZONTAL, 2);
+        $box->raw()->setMarginStart($depth * 12);
+
+        if ($node->children !== []) {
+            $this->tocParents[$node->index] = true;
+            $toggle = (new IconButton(
+                $collapsed ? 'pan-end-symbolic' : 'pan-down-symbolic',
+                $collapsed ? 'Déplier' : 'Replier',
+            ))
+                ->cssClass('markdown-toc-toggle-icon')
+                ->onClicked(fn (): bool => $this->toggleTocSection($node->index));
+            $box->append($toggle);
+        } else {
+            $spacer = new Label('');
+            $spacer->raw()->setSizeRequest(16, -1);
+            $box->append($spacer);
+        }
+
+        $label = (new Label($heading['number'] . ' ' . $heading['text']))
+            ->cssClass('markdown-toc-row');
+        $box->append($label);
+
+        $row = RawListBoxRow::new();
+        $row->setChild($box->raw());
+        $row->setActivatable(true);
+        $this->tocList->append($row);
+        $this->tocRows[] = $row;
+        $this->tocHeadingIndexes[] = $node->index;
+
+        if (!$collapsed) {
+            foreach ($node->children as $child) {
+                $this->appendTocNode($child, $depth + 1);
+            }
+        }
+    }
+
     private function activateTocIndex(int $index): bool
     {
-        $heading = $this->headings[$index] ?? null;
+        $headingIndex = $this->tocHeadingIndexes[$index] ?? null;
+        $heading = $headingIndex === null ? null : ($this->headings[$headingIndex] ?? null);
 
         if ($heading === null) {
             return false;

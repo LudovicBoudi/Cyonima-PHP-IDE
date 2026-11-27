@@ -95,13 +95,14 @@ final class Markdown
     }
 
     /**
-     * @return list<array{level: int, text: string, line: int}>
+     * @return list<array{level: int, text: string, line: int, number: string}>
      */
     public static function headings(string $markdown): array
     {
         $lines = preg_split('/\R/', str_replace("\r\n", "\n", $markdown)) ?: [];
         $headings = [];
         $inCode = false;
+        $counters = [0, 0, 0, 0, 0, 0];
 
         foreach ($lines as $index => $line) {
             if (str_starts_with(trim($line), '```')) {
@@ -113,15 +114,30 @@ final class Markdown
                 continue;
             }
 
+            $level = strlen($match[1]);
+
+            for ($parent = 0; $parent < $level - 1; $parent++) {
+                if ($counters[$parent] === 0) {
+                    $counters[$parent] = 1;
+                }
+            }
+
+            $counters[$level - 1]++;
+
+            for ($deeper = $level; $deeper < 6; $deeper++) {
+                $counters[$deeper] = 0;
+            }
+
             $text = trim($match[2]);
             $text = preg_replace('/!\[([^\]]*)\]\([^)]*\)/u', '$1', $text) ?? $text;
             $text = preg_replace('/\[([^\]]+)\]\([^)]*\)/u', '$1', $text) ?? $text;
             $text = str_replace(['**', '__', '*', '_', '`', '~~'], '', $text);
 
             $headings[] = [
-                'level' => strlen($match[1]),
+                'level' => $level,
                 'text' => trim($text),
                 'line' => $index,
+                'number' => implode('.', array_slice($counters, 0, $level)),
             ];
         }
 

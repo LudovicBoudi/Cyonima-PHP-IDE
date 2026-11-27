@@ -1176,6 +1176,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   cartographie de lignes. Limitations : pas de sommaire en popover, pas de
   numérotation automatique ni de liens d’ancre HTML.
 
+114. **Sommaire numéroté et repliable** : `Markdown::headings()` calcule une
+  numérotation hiérarchique (`1`, `1.1`, `1.1.1`, remise à zéro des niveaux
+  profonds). `MarkdownPreview` construit un arbre des titres par niveau ;
+  chaque parent reçoit une flèche `pan-down`/`pan-end` et un état replié
+  indépendant. Le rendu de la liste est reconstruit à chaque pli/dépli et
+  conserve une correspondance ligne affichée → index de titre pour
+  l’activation. Les titres sans enfant reçoivent un espaceur pour aligner les
+  libellés. Limitations : pas de mémorisation de l’état replié entre
+  documents, pas de « tout replier ».
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

@@ -319,6 +319,21 @@ list row:selected {
     background-color: #2a2d2e;
 }
 
+.markdown-toc-toggle-icon {
+    -gtk-icon-size: 12px;
+    padding: 0;
+    min-height: 0;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #8a8a8a;
+}
+
+.markdown-toc-toggle-icon:hover {
+    color: #ffffff;
+}
+
 .search-options {
     padding: 0 4px;
 }
