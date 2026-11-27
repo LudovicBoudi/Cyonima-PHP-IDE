@@ -167,6 +167,12 @@ ouvre le fichier à la ligne. Les définitions conditionnelles, les fermetures e
 les classes anonymes ne sont pas indexées ; le résultat est limité à 5 000
 symboles.
 
+L'index est conservé en mémoire et incrémental : chaque fichier est identifié
+par sa taille et sa date de modification, et n'est réanalysé que s'il change.
+Les fichiers disparus sont retirés du cache. Une sauvegarde ou un remplacement
+projet invalide les fichiers concernés pour forcer leur réanalyse à la
+prochaine ouverture de Ctrl+T.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête

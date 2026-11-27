@@ -8,8 +8,8 @@ namespace Cyonima\Runtime;
  * Index de symboles PHP pour la recherche rapide (Ctrl+T).
  *
  * Parcours par tokenizer : classes, interfaces, traits, énumérations,
- * fonctions et méthodes, avec espace de noms. Pas d'analyse sémantique :
- * les définitions conditionnelles et les fermetures sont ignorées.
+ * fonctions et méthodes, avec espace de noms. L'index est incrémental : un
+ * fichier n'est réanalysé que si sa taille ou sa date de modification change.
  */
 final class SymbolIndex
 {
@@ -24,29 +24,86 @@ final class SymbolIndex
         'method' => 'méthode',
     ];
 
-    /** @return list<array{name: string, shortName: string, kind: string, path: string, line: int}> */
-    public static function scan(string $root): array
+    /** @var array<string, array{mtime: int, size: int, symbols: list<array{name: string, shortName: string, kind: string, path: string, line: int}>}> */
+    private array $cache = [];
+
+    private string $root;
+
+    private int $lastScanned = 0;
+
+    public function __construct(string $root)
     {
-        $root = realpath($root) ?: $root;
+        $this->root = realpath($root) ?: $root;
+    }
+
+    public function root(): string
+    {
+        return $this->root;
+    }
+
+    /**
+     * Rafraîchit l'index et retourne les symboles triés.
+     *
+     * @return list<array{name: string, shortName: string, kind: string, path: string, line: int}>
+     */
+    public function refresh(): array
+    {
+        clearstatcache(true);
+
+        $files = array_values(array_filter(
+            ProjectSearch::files($this->root),
+            static fn (string $file): bool => strtolower(pathinfo($file, PATHINFO_EXTENSION)) === 'php',
+        ));
+
+        $present = array_fill_keys($files, true);
+
+        foreach (array_keys($this->cache) as $cached) {
+            if (!isset($present[$cached])) {
+                unset($this->cache[$cached]);
+            }
+        }
+
         $symbols = [];
+        $this->lastScanned = 0;
 
-        foreach (ProjectSearch::files($root) as $file) {
-            if (strtolower(pathinfo($file, PATHINFO_EXTENSION)) !== 'php') {
+        foreach ($files as $file) {
+            $mtime = @filemtime($file);
+            $size = @filesize($file);
+
+            if ($mtime === false || $size === false) {
                 continue;
             }
 
-            $code = @file_get_contents($file);
+            $cached = $this->cache[$file] ?? null;
 
-            if ($code === false || str_contains($code, "\0")) {
-                continue;
+            if ($cached === null || $cached['mtime'] !== $mtime || $cached['size'] !== $size) {
+                $code = @file_get_contents($file);
+
+                if ($code === false || str_contains($code, "\0")) {
+                    unset($this->cache[$file]);
+                    continue;
+                }
+
+                $relative = str_starts_with($file, $this->root . DIRECTORY_SEPARATOR)
+                    ? substr($file, strlen($this->root) + 1)
+                    : $file;
+
+                $fileSymbols = [];
+
+                foreach (self::scanCode($code) as $symbol) {
+                    $symbol['path'] = $relative;
+                    $fileSymbols[] = $symbol;
+                }
+
+                $this->cache[$file] = [
+                    'mtime' => $mtime,
+                    'size' => $size,
+                    'symbols' => $fileSymbols,
+                ];
+                $this->lastScanned++;
             }
 
-            $relative = str_starts_with($file, $root . DIRECTORY_SEPARATOR)
-                ? substr($file, strlen($root) + 1)
-                : $file;
-
-            foreach (self::scanCode($code) as $symbol) {
-                $symbol['path'] = $relative;
+            foreach ($this->cache[$file]['symbols'] as $symbol) {
                 $symbols[] = $symbol;
 
                 if (count($symbols) >= self::MAX_SYMBOLS) {
@@ -62,6 +119,32 @@ final class SymbolIndex
         });
 
         return $symbols;
+    }
+
+    public function invalidate(?string $path = null): void
+    {
+        if ($path === null) {
+            $this->cache = [];
+            return;
+        }
+
+        $absolute = realpath($path) ?: $path;
+        unset($this->cache[$absolute]);
+    }
+
+    /** @return array{files: int, scanned: int} */
+    public function stats(): array
+    {
+        return [
+            'files' => count($this->cache),
+            'scanned' => $this->lastScanned,
+        ];
+    }
+
+    /** @return list<array{name: string, shortName: string, kind: string, path: string, line: int}> */
+    public static function scan(string $root): array
+    {
+        return (new self($root))->refresh();
     }
 
     public static function kindLabel(string $kind): string

@@ -566,7 +566,16 @@ $editor->onChanged(function () use (
     });
 });
 
-$save = function () use ($editor, $window, $updateTab, $refreshGit, &$documents, &$currentFile, &$dirty): bool {
+$save = function () use (
+    $editor,
+    $window,
+    $updateTab,
+    $refreshGit,
+    $symbolSearch,
+    &$documents,
+    &$currentFile,
+    &$dirty,
+): bool {
     if ($currentFile === null) {
         $window->toast('Aucun fichier ouvert');
         return false;
@@ -574,6 +583,7 @@ $save = function () use ($editor, $window, $updateTab, $refreshGit, &$documents,
 
     $content = $editor->text();
     file_put_contents($currentFile, $content);
+    $symbolSearch->invalidate($currentFile);
     $dirty = false;
 
     if (isset($documents[$currentFile])) {
@@ -994,10 +1004,21 @@ $searchPanel = new SearchPanel(
     function (string $path, int $line) use ($openFile): void {
         $openFile($path, $line);
     },
-    function (array $report) use ($root, $window, $openFile, &$currentFile, &$dirty): void {
+    function (array $report) use (
+        $root,
+        $window,
+        $openFile,
+        $symbolSearch,
+        &$currentFile,
+        &$dirty,
+    ): void {
         if ($report['replacements'] === 0) {
             $window->toast('Aucun remplacement');
             return;
+        }
+
+        foreach ($report['files'] as $file) {
+            $symbolSearch->invalidate($root . DIRECTORY_SEPARATOR . $file['path']);
         }
 
         $window->toast(sprintf(

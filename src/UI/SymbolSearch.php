@@ -15,6 +15,7 @@ final class SymbolSearch
 {
     private readonly string $root;
     private QuickPick $pick;
+    private SymbolIndex $index;
 
     /** @var list<array{name: string, shortName: string, kind: string, path: string, line: int}> */
     private array $symbols = [];
@@ -29,6 +30,7 @@ final class SymbolSearch
     {
         $this->root = realpath($root) ?: $root;
         $this->onOpen = $onOpen(...);
+        $this->index = new SymbolIndex($this->root);
 
         $this->pick = new QuickPick(
             $window,
@@ -49,7 +51,7 @@ final class SymbolSearch
 
     public function refresh(): static
     {
-        $this->symbols = SymbolIndex::scan($this->root);
+        $this->symbols = $this->index->refresh();
         $this->byLabel = [];
         $items = [];
         $seen = [];
@@ -116,6 +118,17 @@ final class SymbolSearch
     public function symbols(): array
     {
         return $this->symbols;
+    }
+
+    public function invalidate(string $path): static
+    {
+        $this->index->invalidate($path);
+        return $this;
+    }
+
+    public function cachedFileCount(): int
+    {
+        return $this->index->stats()['files'];
     }
 
     public function move(int $delta): void

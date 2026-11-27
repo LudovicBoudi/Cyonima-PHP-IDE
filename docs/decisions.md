@@ -1068,6 +1068,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   symboles, pas de constantes/propriétés, définitions conditionnelles et
   classes anonymes ignorées, espace de noms à accolades non suivi.
 
+103. **Indexation incrémentale des symboles** : `SymbolIndex` devient une
+  instance avec cache mémoire `chemin => {mtime, size, symboles}`. À chaque
+  `refresh()`, `clearstatcache` est appelé, les fichiers `.php` sont listés via
+  `ProjectSearch::files`, les entrées disparues sont retirées et seuls les
+  fichiers dont la taille ou la mtime change sont relus/tokenisés. `stats()`
+  expose le nombre de fichiers en cache et le nombre analysé lors du dernier
+  passage. `SymbolSearch` réutilise l'instance ; `invalidate($path)` est appelé
+  après sauvegarde et après remplacement projet. Le cache est propre au
+  processus, sans persistance disque.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

@@ -10503,6 +10503,33 @@ T::ok(in_array('Fallback\\Sample', $fallbackNames, true), 'symboles : repli sans
 T::ok(in_array('Fallback\\Sample::method', $fallbackNames, true), 'symboles : repli sans tokenizer (méthode)');
 T::ok(in_array('Fallback\\helper', $fallbackNames, true), 'symboles : repli sans tokenizer (fonction)');
 
+$incrementalRoot = sys_get_temp_dir() . '/cyonima_symbols_inc_' . getmypid();
+$removeTree($incrementalRoot);
+mkdir($incrementalRoot, 0775, true);
+file_put_contents($incrementalRoot . '/A.php', "<?php\nclass A {}\n");
+file_put_contents($incrementalRoot . '/B.php', "<?php\nclass B {}\n");
+
+$incremental = new SymbolIndex($incrementalRoot);
+T::same(2, count($incremental->refresh()), 'indexation : premier scan');
+T::same(2, $incremental->stats()['files'], 'indexation : fichiers en cache');
+T::same(2, $incremental->stats()['scanned'], 'indexation : fichiers analysés');
+
+T::same(2, count($incremental->refresh()), 'indexation : second scan');
+T::same(0, $incremental->stats()['scanned'], 'indexation : fichiers inchangés ignorés');
+
+file_put_contents($incrementalRoot . '/A.php', "<?php\nclass A {}\nclass C {}\n");
+T::same(3, count($incremental->refresh()), 'indexation : fichier modifié réanalysé');
+T::same(1, $incremental->stats()['scanned'], 'indexation : seul le fichier modifié est analysé');
+
+unlink($incrementalRoot . '/B.php');
+T::same(2, count($incremental->refresh()), 'indexation : fichier supprimé retiré');
+T::same(1, $incremental->stats()['files'], 'indexation : cache nettoyé');
+
+$incremental->invalidate($incrementalRoot . '/A.php');
+T::same(2, count($incremental->refresh()), 'indexation : invalidation ciblée');
+T::same(1, $incremental->stats()['scanned'], 'indexation : fichier invalidé réanalysé');
+$removeTree($incrementalRoot);
+
 $symbolWindow = new UI\Window('Recherche de symboles');
 $symbolWindow->present();
 
