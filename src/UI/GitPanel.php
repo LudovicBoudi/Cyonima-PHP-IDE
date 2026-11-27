@@ -31,6 +31,7 @@ final class GitPanel extends Widget
     private Entry $messageEntry;
     private IconButton $refreshButton;
     private Button $stageButton;
+    private Button $abortButton;
     private Button $commitButton;
     private RawListBox $list;
 
@@ -40,7 +41,7 @@ final class GitPanel extends Widget
     /** @var list<RawListBoxRow> */
     private array $branchRows = [];
 
-    /** @var list<array{path: string, index: string, worktree: string, staged: bool}> */
+    /** @var list<array{path: string, index: string, worktree: string, staged: bool, conflict: bool}> */
     private array $entries = [];
 
     /** @var \Closure(string): void */
@@ -116,10 +117,15 @@ final class GitPanel extends Widget
         $this->stageButton = (new Button('Indexer tout'))
             ->cssClass('git-action')
             ->onClicked(fn (): bool => $this->stageAll());
+        $this->abortButton = (new Button('Abandonner'))
+            ->cssClass('git-action')
+            ->tooltip('Abandonner le merge en cours')
+            ->onClicked(fn (): array => $this->abortMerge())
+            ->visible(false);
 
         $toolbar = (new Box(Orientation::HORIZONTAL, 4))
             ->cssClass('git-toolbar')
-            ->append($this->refreshButton, $this->stageButton);
+            ->append($this->refreshButton, $this->stageButton, $this->abortButton);
 
         $this->branchEntry = new Entry('Nouvelle branche');
         $this->branchCreateButton = (new Button('Créer'))
@@ -186,24 +192,35 @@ final class GitPanel extends Widget
         $this->entries = $this->repository?->status() ?? [];
         $branch = $this->repository?->branch() ?? '—';
         $staged = 0;
+        $conflicts = 0;
 
         foreach ($this->entries as $entry) {
             if ($entry['staged']) {
                 $staged++;
+            }
+
+            if ($entry['conflict']) {
+                $conflicts++;
             }
         }
 
         if ($this->repository === null) {
             $this->summaryLabel->setText('Dépôt Git introuvable');
         } else {
-            $this->summaryLabel->setText(sprintf(
+            $summary = sprintf(
                 '%s · %d modification%s · %d indexée%s',
                 $branch,
                 count($this->entries),
                 count($this->entries) > 1 ? 's' : '',
                 $staged,
                 $staged > 1 ? 's' : '',
-            ));
+            );
+
+            if ($conflicts > 0) {
+                $summary .= sprintf(' · %d conflit%s', $conflicts, $conflicts > 1 ? 's' : '');
+            }
+
+            $this->summaryLabel->setText($summary);
         }
 
         $this->stageButton->sensitive($this->repository !== null);
@@ -213,6 +230,10 @@ final class GitPanel extends Widget
         $this->branchCreateButton->sensitive($this->repository !== null);
         $this->mergeEntry->sensitive($this->repository !== null);
         $this->mergeButton->sensitive($this->repository !== null);
+        $this->abortButton->visible(
+            $this->repository !== null
+            && ($conflicts > 0 || $this->repository->mergeInProgress()),
+        );
         $this->buildRows();
 
         if ($this->onStatus !== null) {
@@ -227,7 +248,7 @@ final class GitPanel extends Widget
         return count($this->entries);
     }
 
-    /** @return list<array{path: string, index: string, worktree: string, staged: bool}> */
+    /** @return list<array{path: string, index: string, worktree: string, staged: bool, conflict: bool}> */
     public function entries(): array
     {
         return $this->entries;
@@ -370,6 +391,70 @@ final class GitPanel extends Widget
         return $result;
     }
 
+    public function conflictCount(): int
+    {
+        return count($this->conflicts());
+    }
+
+    /** @return list<array{path: string, index: string, worktree: string, staged: bool, conflict: bool}> */
+    public function conflicts(): array
+    {
+        return array_values(array_filter(
+            $this->entries,
+            static fn (array $entry): bool => $entry['conflict'],
+        ));
+    }
+
+    public function mergeInProgress(): bool
+    {
+        return $this->repository?->mergeInProgress() ?? false;
+    }
+
+    public function resolve(string $path): bool
+    {
+        if ($this->repository === null) {
+            return false;
+        }
+
+        $ok = $this->repository->resolve($path);
+        $this->refresh();
+
+        $message = $ok ? 'Git : conflit résolu → ' . $path : 'Git : résolution impossible → ' . $path;
+
+        if ($ok && $this->conflictCount() === 0 && $this->mergeInProgress()) {
+            $message .= ' · committez pour terminer le merge';
+        }
+
+        $this->notify($message, !$ok);
+
+        if ($ok && $this->onBranchChanged !== null) {
+            ($this->onBranchChanged)($this->branch());
+        }
+
+        return $ok;
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function abortMerge(): array
+    {
+        if ($this->repository === null) {
+            return ['ok' => false, 'output' => 'Dépôt Git introuvable'];
+        }
+
+        $result = $this->repository->abortMerge();
+        $this->notify(
+            $result['ok'] ? 'Git : merge abandonné' : 'Git : ' . $result['output'],
+            !$result['ok'],
+        );
+        $this->refresh();
+
+        if ($result['ok'] && $this->onBranchChanged !== null) {
+            ($this->onBranchChanged)($this->branch());
+        }
+
+        return $result;
+    }
+
     public function stageAll(): bool
     {
         if ($this->repository === null) {
@@ -427,6 +512,10 @@ final class GitPanel extends Widget
 
         if ($entry === null) {
             return false;
+        }
+
+        if ($entry['conflict']) {
+            return $this->resolve($entry['path']);
         }
 
         if ($entry['staged'] && $entry['worktree'] === ' ') {
@@ -553,6 +642,7 @@ final class GitPanel extends Widget
                 ->expand(true, false);
 
             $label->cssClass(match (true) {
+                $entry['conflict'] => 'git-conflict',
                 $entry['index'] === '?' => 'git-untracked',
                 $entry['staged'] => 'git-staged',
                 default => 'git-modified',
@@ -567,13 +657,17 @@ final class GitPanel extends Widget
                 ->onClicked(fn (): bool => $this->showDiff($position));
 
             $fullyStaged = $entry['staged'] && $entry['worktree'] === ' ';
-            $toggle = $fullyStaged
-                ? (new IconButton('list-remove-symbolic', 'Désindexer'))
+            $toggle = $entry['conflict']
+                ? (new IconButton('emblem-ok-symbolic', 'Marquer résolu'))
                     ->cssClass('git-row-action')
-                    ->onClicked(fn (): bool => $this->unstage($entry['path']))
-                : (new IconButton('list-add-symbolic', 'Indexer'))
-                    ->cssClass('git-row-action')
-                    ->onClicked(fn (): bool => $this->stage($entry['path']));
+                    ->onClicked(fn (): bool => $this->resolve($entry['path']))
+                : ($fullyStaged
+                    ? (new IconButton('list-remove-symbolic', 'Désindexer'))
+                        ->cssClass('git-row-action')
+                        ->onClicked(fn (): bool => $this->unstage($entry['path']))
+                    : (new IconButton('list-add-symbolic', 'Indexer'))
+                        ->cssClass('git-row-action')
+                        ->onClicked(fn (): bool => $this->stage($entry['path'])));
 
             $content = (new Box(Orientation::HORIZONTAL, 4))
                 ->append($label, $open, $diffButton, $toggle);

@@ -10350,6 +10350,52 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     T::same(0, $gitPanel->count(), 'git UI : statut après fusion');
     T::ok(!$gitPanel->mergeBranch('branche-absente')['ok'], 'git UI : fusion inconnue');
 
+    T::ok($repository?->createBranch('conflict-feature')['ok'] ?? false, 'git : branche de conflit');
+    file_put_contents($gitRoot . '/conflict.txt', "version fonctionnalité\n");
+    $repository?->stageAll();
+    $repository?->commit('version fonctionnalité');
+    $repository?->switchBranch($originalBranch);
+    file_put_contents($gitRoot . '/conflict.txt', "version originale\n");
+    $repository?->stageAll();
+    $repository?->commit('version originale');
+
+    $conflictMerge = $repository?->merge('conflict-feature') ?? ['ok' => true, 'output' => ''];
+    T::ok(!$conflictMerge['ok'], 'git : fusion en conflit détectée');
+    T::ok($repository?->mergeInProgress() ?? false, 'git : merge en cours');
+    $conflicts = $repository?->conflicts() ?? [];
+    T::same(1, count($conflicts), 'git : fichier en conflit');
+    T::same('conflict.txt', $conflicts[0]['path'] ?? null, 'git : chemin en conflit');
+    T::ok($conflicts[0]['conflict'] ?? false, 'git : état de conflit');
+
+    $gitPanel->refresh();
+    T::same(1, $gitPanel->conflictCount(), 'git UI : conflits détectés');
+    T::ok($gitPanel->mergeInProgress(), 'git UI : merge en cours');
+    file_put_contents($gitRoot . '/conflict.txt', "résolu\n");
+    T::ok($gitPanel->resolve('conflict.txt'), 'git UI : résolution de conflit');
+    T::same(0, $gitPanel->conflictCount(), 'git UI : conflits résolus');
+    T::ok($gitPanel->mergeInProgress(), 'git UI : merge à terminer');
+    $gitPanel->setMessage('fusion résolue');
+    $resolvedCommit = $gitPanel->commit();
+    T::ok($resolvedCommit['ok'], 'git UI : commit de fusion');
+    T::ok(!$gitPanel->mergeInProgress(), 'git UI : merge terminé');
+    T::same(0, $gitPanel->count(), 'git UI : statut propre après résolution');
+
+    $repository?->createBranch('abort-feature');
+    file_put_contents($gitRoot . '/conflict.txt', "abandon fonctionnalité\n");
+    $repository?->stageAll();
+    $repository?->commit('abandon fonctionnalité');
+    $repository?->switchBranch($originalBranch);
+    file_put_contents($gitRoot . '/conflict.txt', "abandon original\n");
+    $repository?->stageAll();
+    $repository?->commit('abandon original');
+    $repository?->merge('abort-feature');
+    $gitPanel->refresh();
+    T::same(1, $gitPanel->conflictCount(), 'git UI : conflit à abandonner');
+    $abortResult = $gitPanel->abortMerge();
+    T::ok($abortResult['ok'], 'git UI : merge abandonné');
+    T::ok(!$gitPanel->mergeInProgress(), 'git UI : merge interrompu');
+    T::same(0, $gitPanel->conflictCount(), 'git UI : conflits nettoyés');
+
     $noRepositoryPanel = new GitPanel(
         sys_get_temp_dir() . '/cyonima_git_absent_' . getmypid(),
         static function (string $path): void {

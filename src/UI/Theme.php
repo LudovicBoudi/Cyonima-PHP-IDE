@@ -409,6 +409,11 @@ list row:selected {
     color: #cca700;
 }
 
+.git-conflict {
+    color: #f48771;
+    font-weight: 600;
+}
+
 .git-row-action {
     -gtk-icon-size: 13px;
     padding: 1px;

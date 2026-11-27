@@ -77,9 +77,15 @@ courante étant marquée `●`. Un clic bascule via `git checkout`. Le champ
 « Nouvelle branche » et **Créer** lancent `git checkout -b`. Le champ
 « Fusionner une branche » et **Fusionner** lancent `git merge --no-edit`.
 Après une bascule ou une fusion réussie, le fichier courant est rechargé s'il
-n'a pas de modifications non enregistrées. En cas de conflit, la sortie Git
-est journalisée dans Sortie et la liste des fichiers est rafraîchie pour
-montrer les états `UU` ; la résolution reste manuelle.
+n'a pas de modifications non enregistrées.
+
+En cas de conflit, la sortie Git est journalisée dans Sortie, la liste est
+rafraîchie et le résumé affiche le nombre de conflits. Les fichiers concernés
+sont marqués en rouge et leur bouton d'action devient **Marquer résolu**
+(`git add -A -- <fichier>`). Une fois tous les conflits résolus, une
+notification rappelle qu'il faut committer pour terminer le merge. Le bouton
+**Abandonner** apparaît tant qu'un merge est en cours et lance
+`git merge --abort`.
 
 Le diff d'un fichier s'ouvre dans l'onglet **DIFF** du panneau bas
 (`DiffPanel`) : vue en lecture seule colorée par GtkSourceView. Les fichiers
@@ -87,7 +93,7 @@ suivis affichent leurs diffs indexé et non indexé ; un fichier non suivi est
 comparé à `/dev/null` pour montrer son contenu complet.
 
 Limites : pas de rebase, push/pull, suppression ni renommage de branche, pas
-d'assistant de résolution de conflits ; le diff est textuel, sans édition ni
+d'éditeur de conflits à trois volets ; le diff est textuel, sans édition ni
 navigation entre hunks.
 
 ## Onglets multiples

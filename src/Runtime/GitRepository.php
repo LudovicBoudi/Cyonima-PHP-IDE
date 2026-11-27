@@ -132,6 +132,57 @@ final class GitRepository
         return $this->result(['merge', '--no-edit', $branch]);
     }
 
+    public function mergeInProgress(): bool
+    {
+        $result = $this->git(['rev-parse', '--git-path', 'MERGE_HEAD']);
+
+        if ($result['exit'] !== 0) {
+            return false;
+        }
+
+        $path = trim($result['stdout']);
+
+        if ($path === '') {
+            return false;
+        }
+
+        if (!str_starts_with($path, '/')) {
+            $path = $this->root . '/' . $path;
+        }
+
+        clearstatcache(true, $path);
+
+        return is_file($path);
+    }
+
+    /** @return list<array{path: string, index: string, worktree: string, staged: bool, conflict: bool}> */
+    public function conflicts(): array
+    {
+        return array_values(array_filter(
+            $this->status(),
+            static fn (array $entry): bool => $entry['conflict'],
+        ));
+    }
+
+    public function resolve(string $path): bool
+    {
+        return $this->git(['add', '-A', '--', $path])['exit'] === 0;
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function abortMerge(): array
+    {
+        return $this->result(['merge', '--abort']);
+    }
+
+    public static function isConflictState(string $index, string $worktree): bool
+    {
+        return $index === 'U'
+            || $worktree === 'U'
+            || ($index === 'A' && $worktree === 'A')
+            || ($index === 'D' && $worktree === 'D');
+    }
+
     /** @return array{ok: bool, output: string} */
     private function result(array $arguments): array
     {
@@ -142,7 +193,7 @@ final class GitRepository
     }
 
     /**
-     * @return list<array{path: string, index: string, worktree: string, staged: bool}>
+     * @return list<array{path: string, index: string, worktree: string, staged: bool, conflict: bool}>
      */
     public function status(): array
     {
@@ -176,6 +227,7 @@ final class GitRepository
                 'index' => $state,
                 'worktree' => $worktree,
                 'staged' => $state !== ' ' && $state !== '?',
+                'conflict' => self::isConflictState($state, $worktree),
             ];
         }
 

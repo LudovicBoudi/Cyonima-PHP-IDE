@@ -1045,6 +1045,18 @@ Trois écarts assumés par rapport au miroir strict du C :
   Limitations : pas de rebase, de résolution assistée des conflits, ni de
   merge de branches distantes.
 
+101. **Assistant de conflits** : `GitRepository::status()` ajoute un drapeau
+  `conflict` calculé sur les codes porcelain (`U`, `AA`, `DD`).
+  `conflicts()` filtre ces entrées, `mergeInProgress()` teste la présence de
+  `MERGE_HEAD` (avec `clearstatcache`, le cache de stat de PHP masquant sa
+  suppression), `resolve()` indexe `git add -A -- <fichier>` et
+  `abortMerge()` lance `git merge --abort`. `GitPanel` affiche les conflits en
+  rouge, remplace l'action de ligne par **Marquer résolu**, ajoute le nombre de
+  conflits au résumé et affiche un bouton **Abandonner** tant que le merge
+  dure. Après résolution du dernier conflit, l'utilisateur est invité à
+  committer. Limitations : pas d'éditeur de conflits à trois volets ni de
+  résolution automatique.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |
