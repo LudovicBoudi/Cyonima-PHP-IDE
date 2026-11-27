@@ -993,6 +993,18 @@ Trois écarts assumés par rapport au miroir strict du C :
   zéro. Limitations : la sortie du terminal VTE n'est pas recopiée, pas de
   canaux filtrables ni d'export du journal.
 
+96. **Intégration Git** : `GitRepository` découvre la racine via
+  `rev-parse --show-toplevel`, lit la branche, le statut porcelain v1 `-z`, les
+  diffs indexé/non indexé et expose `stage`, `stageAll`, `unstage` et `commit`.
+  Les commandes passent par `proc_open` avec un tableau d'arguments,
+  `GIT_TERMINAL_PROMPT=0` et `-C <racine>` : pas de shell ni d'invite
+  interactive. `GitPanel` affiche branche, compteur, fichiers et états, permet
+  l'indexation globale et le commit des fichiers indexés ; un clic ouvre le
+  fichier. La branche alimente la barre de statut et le panneau se rafraîchit
+  après sauvegarde. La palette expose actualiser, indexer tout et diff (dans
+  Sortie). Limitations : pas de branches/merge/push/pull, pas de staging
+  fichier par fichier, pas de résolution de conflits.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

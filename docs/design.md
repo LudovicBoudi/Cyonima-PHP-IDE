@@ -30,7 +30,7 @@ Composants :
 | Barre de menus | `MenuBar` : boutons + `GtkPopover` |
 | Actions | `IconButton` (Enregistrer, Déboguer, Exécuter) |
 | Barre d'activité | `Box` vertical de 48 px, icônes symboliques, indicateur bleu |
-| Panneau latéral | `EXPLORER`, `RECHERCHE`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
+| Panneau latéral | `EXPLORER`, `RECHERCHE`, `GIT`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
 | Onglets | un onglet par fichier, point de modification, fermeture, bascule |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
 | Panneau bas | onglets cliquables PROBLÈMES / SORTIE / TERMINAL, diagnostics, journal + VTE |
@@ -57,6 +57,22 @@ La zone latérale et l'éditeur sont dans un `GtkPaned` horizontal (position
 initiale 270 px, largeur minimale 180 px). `resize_start_child=false` : quand on
 redimensionne la fenêtre, c'est l'éditeur qui grandit, pas l'explorateur. Le
 séparateur se glisse à la souris.
+
+## Git
+
+Le bouton Git de la barre d'activité ouvre le panneau `GIT`. `GitRepository`
+découvre la racine du dépôt, lit la branche et le statut porcelain, et expose
+indexation, désindexation, commit et diff. Le panneau affiche la branche, le
+nombre de modifications et les fichiers avec leurs codes d'état
+(`??`, `M`, `A`, `D`…). Un clic ouvre le fichier. **Indexer tout** lance
+`git add -A` ; le champ de message et **Commit** créent le commit des fichiers
+indexés. La branche courante remplace le libellé statique dans la barre de
+statut, et le statut est rafraîchi après chaque sauvegarde. Les commandes
+Git sont aussi disponibles dans la palette : actualiser, indexer tout,
+afficher le diff (envoyé dans le panneau Sortie).
+
+Limites : pas de gestion de branches, de merge, de push/pull ni de staging
+fichier par fichier depuis l'interface.
 
 ## Onglets multiples
 
@@ -184,7 +200,7 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Problèmes, Sortie, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, Problèmes, Sortie, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
@@ -286,5 +302,7 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - la navigation rapide liste les fichiers mais pas les symboles ni les commandes ;
 - la palette ne mémorise pas les commandes récentes et ne permet pas de
   personnaliser les raccourcis ;
+- l'intégration Git couvre le statut local et le commit, pas les branches
+  distantes ni les conflits ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

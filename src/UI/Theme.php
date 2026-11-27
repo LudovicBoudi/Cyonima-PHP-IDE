@@ -353,6 +353,45 @@ list row:selected {
     padding: 4px 8px;
 }
 
+.git-summary {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 4px 6px;
+}
+
+.git-toolbar {
+    padding: 0 4px;
+}
+
+.git-action {
+    font-size: 11px;
+    padding: 3px 8px;
+    min-height: 0;
+}
+
+.git-row {
+    color: #cccccc;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+
+.git-row:hover {
+    background-color: #2a2d2e;
+}
+
+.git-untracked {
+    color: #73c991;
+}
+
+.git-staged {
+    color: #75beff;
+}
+
+.git-modified {
+    color: #cca700;
+}
+
 .quick-open {
     background-color: #252526;
     border: 1px solid #3f3f46;

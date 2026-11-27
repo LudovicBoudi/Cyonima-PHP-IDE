@@ -9,6 +9,7 @@ use Cyonima\Compiler\CompilerException;
 use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Diagnostics;
+use Cyonima\Runtime\GitRepository;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
@@ -24,6 +25,7 @@ use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\DebugPanel;
 use Cyonima\App\DesignerWindow;
 use Cyonima\UI\FileBrowser;
+use Cyonima\UI\GitPanel;
 use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
 use Cyonima\UI\MenuBar;
@@ -430,6 +432,38 @@ $outputPanel = new OutputPanel();
 $outputPanel->append('Cyonima IDE prêt', 'IDE');
 $showOutput = null;
 
+$statusBranch = null;
+$gitPanel = new GitPanel(
+    $root,
+    function (string $path) use ($openFile): void {
+        $openFile($path);
+    },
+    function (string $branch, int $changes) use (&$statusBranch): void {
+        if ($statusBranch !== null) {
+            $statusBranch->text($branch);
+        }
+    },
+    function (string $message, bool $error) use ($window, $outputPanel, &$showOutput): void {
+        $outputPanel->append($message, 'Git');
+        $window->toast($message, $error ? 6000 : 3000);
+
+        if ($error && $showOutput !== null) {
+            ($showOutput)();
+        }
+    },
+);
+$refreshGit = function () use ($gitPanel): void {
+    $gitPanel->refresh();
+};
+$showGitDiff = function () use ($gitPanel, $outputPanel, &$showOutput): void {
+    $diff = $gitPanel->diff();
+    $outputPanel->append($diff !== '' ? $diff : 'Git : aucune différence', 'Git');
+
+    if ($showOutput !== null) {
+        ($showOutput)();
+    }
+};
+
 $complete = null;
 $intellisenseTimer = null;
 $suppressIntellisenseUntil = 0.0;
@@ -506,7 +540,7 @@ $editor->onChanged(function () use (
     });
 });
 
-$save = function () use ($editor, $window, $updateTab, &$documents, &$currentFile, &$dirty): bool {
+$save = function () use ($editor, $window, $updateTab, $refreshGit, &$documents, &$currentFile, &$dirty): bool {
     if ($currentFile === null) {
         $window->toast('Aucun fichier ouvert');
         return false;
@@ -523,6 +557,7 @@ $save = function () use ($editor, $window, $updateTab, &$documents, &$currentFil
 
     $window->subtitle(basename($currentFile));
     $updateTab($currentFile, false);
+    $refreshGit();
     $window->toast('Enregistré : ' . basename($currentFile));
 
     return true;
@@ -888,6 +923,7 @@ $activityBar->raw()->setSizeRequest(48, -1);
 
 $explorerButton = (new IconButton('folder-symbolic', 'Explorateur'))->cssClass('active');
 $searchButton = (new IconButton('edit-find-symbolic', 'Recherche'));
+$gitButton = (new IconButton('view-list-symbolic', 'Git'));
 $debugActivity = (new IconButton('applications-engineering-symbolic', 'Débogage'));
 $assetsButton = (new IconButton('folder-pictures-symbolic', 'Assets'));
 $designerActivity = (new IconButton('applications-graphics-symbolic', 'Concepteur d\'interface'));
@@ -897,6 +933,7 @@ $activitySpacer = (new Box(Orientation::VERTICAL, 0))->expand(false, true);
 $activityBar->append(
     $explorerButton,
     $searchButton,
+    $gitButton,
     $debugActivity,
     $assetsButton,
     $designerActivity,
@@ -962,7 +999,14 @@ $searchPanel = new SearchPanel(
 
 $panelTitle = (new Label('EXPLORER'))->cssClass('panel-header')->expand(true, false);
 $refreshButton = (new IconButton('view-refresh-symbolic', 'Rafraîchir'))
-    ->onClicked(function () use ($browser, $assetPanel, $projectProperties, $searchPanel, &$activePanel): void {
+    ->onClicked(function () use (
+        $browser,
+        $assetPanel,
+        $projectProperties,
+        $searchPanel,
+        $gitPanel,
+        &$activePanel,
+    ): void {
         if ($activePanel === 'assets') {
             $assetPanel->refresh();
             return;
@@ -978,6 +1022,11 @@ $refreshButton = (new IconButton('view-refresh-symbolic', 'Rafraîchir'))
             return;
         }
 
+        if ($activePanel === 'git') {
+            $gitPanel->refresh();
+            return;
+        }
+
         $browser->refresh();
     });
 $panelHeader = (new Box(Orientation::HORIZONTAL, 4))
@@ -986,12 +1035,20 @@ $panelHeader = (new Box(Orientation::HORIZONTAL, 4))
 
 $explorerPage = (new ScrolledWindow($browser))->expand();
 $searchPage = (new ScrolledWindow($searchPanel))->expand()->visible(false);
+$gitPage = (new ScrolledWindow($gitPanel))->expand()->visible(false);
 $debugPage = (new ScrolledWindow($debugPanel))->expand()->visible(false);
 $assetsPage = (new ScrolledWindow($assetPanel))->expand()->visible(false);
 $propertiesPage = (new ScrolledWindow($projectProperties))->expand()->visible(false);
 
 $panelPages = (new Box(Orientation::VERTICAL, 0))
-    ->append($explorerPage, $searchPage, $debugPage, $assetsPage, $propertiesPage)
+    ->append(
+        $explorerPage,
+        $searchPage,
+        $gitPage,
+        $debugPage,
+        $assetsPage,
+        $propertiesPage,
+    )
     ->expand();
 
 $sidePanel = (new Box(Orientation::VERTICAL, 0))
@@ -999,154 +1056,60 @@ $sidePanel = (new Box(Orientation::VERTICAL, 0))
     ->append($panelHeader, $panelPages);
 $sidePanel->raw()->setSizeRequest(180, -1);
 
-$showExplorer = function () use (
-    $explorerPage,
-    $searchPage,
-    $debugPage,
-    $assetsPage,
-    $propertiesPage,
-    $explorerButton,
-    $searchButton,
-    $debugActivity,
-    $assetsButton,
-    $settingsButton,
-    $panelTitle,
-    &$activePanel,
-): void {
-    $explorerPage->visible(true);
-    $searchPage->visible(false);
-    $debugPage->visible(false);
-    $assetsPage->visible(false);
-    $propertiesPage->visible(false);
-    $explorerButton->cssClass('active');
-    $searchButton->removeCssClass('active');
-    $debugActivity->removeCssClass('active');
-    $assetsButton->removeCssClass('active');
-    $settingsButton->removeCssClass('active');
-    $panelTitle->text('EXPLORER');
-    $activePanel = 'explorer';
-};
+$sidePanelMap = [
+    'explorer' => [$explorerPage, $explorerButton, 'EXPLORER'],
+    'search' => [$searchPage, $searchButton, 'RECHERCHE'],
+    'git' => [$gitPage, $gitButton, 'GIT'],
+    'debug' => [$debugPage, $debugActivity, 'DÉBOGAGE'],
+    'assets' => [$assetsPage, $assetsButton, 'ASSETS'],
+    'properties' => [$propertiesPage, $settingsButton, 'PROPRIÉTÉS'],
+];
 
-$showSearchPanel = function () use (
-    $explorerPage,
-    $searchPage,
-    $debugPage,
-    $assetsPage,
-    $propertiesPage,
-    $explorerButton,
-    $searchButton,
-    $debugActivity,
-    $assetsButton,
-    $settingsButton,
+$showSidePanel = function (string $name) use (
+    &$sidePanelMap,
+    &$activePanel,
     $panelTitle,
     $searchPanel,
-    &$activePanel,
-): void {
-    $explorerPage->visible(false);
-    $searchPage->visible(true);
-    $debugPage->visible(false);
-    $assetsPage->visible(false);
-    $propertiesPage->visible(false);
-    $searchButton->cssClass('active');
-    $explorerButton->removeCssClass('active');
-    $debugActivity->removeCssClass('active');
-    $assetsButton->removeCssClass('active');
-    $settingsButton->removeCssClass('active');
-    $panelTitle->text('RECHERCHE');
-    $activePanel = 'search';
-    $searchPanel->focus();
-};
-
-$showDebugPanel = function () use (
-    $explorerPage,
-    $searchPage,
-    $debugPage,
-    $assetsPage,
-    $propertiesPage,
-    $explorerButton,
-    $searchButton,
-    $debugActivity,
-    $assetsButton,
-    $settingsButton,
-    $panelTitle,
-    &$activePanel,
-): void {
-    $explorerPage->visible(false);
-    $searchPage->visible(false);
-    $debugPage->visible(true);
-    $assetsPage->visible(false);
-    $propertiesPage->visible(false);
-    $debugActivity->cssClass('active');
-    $explorerButton->removeCssClass('active');
-    $searchButton->removeCssClass('active');
-    $assetsButton->removeCssClass('active');
-    $settingsButton->removeCssClass('active');
-    $panelTitle->text('DÉBOGAGE');
-    $activePanel = 'debug';
-};
-
-$showAssetsPanel = function () use (
-    $explorerPage,
-    $searchPage,
-    $debugPage,
-    $assetsPage,
-    $propertiesPage,
-    $explorerButton,
-    $searchButton,
-    $debugActivity,
-    $assetsButton,
-    $settingsButton,
-    $panelTitle,
     $assetPanel,
-    &$activePanel,
+    $projectProperties,
+    $gitPanel,
 ): void {
-    $explorerPage->visible(false);
-    $searchPage->visible(false);
-    $debugPage->visible(false);
-    $assetsPage->visible(true);
-    $propertiesPage->visible(false);
-    $assetsButton->cssClass('active');
-    $explorerButton->removeCssClass('active');
-    $searchButton->removeCssClass('active');
-    $debugActivity->removeCssClass('active');
-    $settingsButton->removeCssClass('active');
-    $panelTitle->text('ASSETS');
-    $activePanel = 'assets';
-    $assetPanel->refresh();
+    if (!isset($sidePanelMap[$name])) {
+        return;
+    }
+
+    foreach ($sidePanelMap as $key => [$page, $button, $title]) {
+        $page->visible($key === $name);
+
+        if ($key === $name) {
+            $button->cssClass('active');
+        } else {
+            $button->removeCssClass('active');
+        }
+    }
+
+    $panelTitle->text($sidePanelMap[$name][2]);
+    $activePanel = $name;
+
+    match ($name) {
+        'search' => $searchPanel->focus(),
+        'assets' => $assetPanel->refresh(),
+        'properties' => $projectProperties->refresh(),
+        'git' => $gitPanel->refresh(),
+        default => null,
+    };
 };
 
-$showPropertiesPanel = function () use (
-    $explorerPage,
-    $searchPage,
-    $debugPage,
-    $assetsPage,
-    $propertiesPage,
-    $explorerButton,
-    $searchButton,
-    $debugActivity,
-    $assetsButton,
-    $settingsButton,
-    $panelTitle,
-    $projectProperties,
-    &$activePanel,
-): void {
-    $explorerPage->visible(false);
-    $searchPage->visible(false);
-    $debugPage->visible(false);
-    $assetsPage->visible(false);
-    $propertiesPage->visible(true);
-    $settingsButton->cssClass('active');
-    $explorerButton->removeCssClass('active');
-    $searchButton->removeCssClass('active');
-    $debugActivity->removeCssClass('active');
-    $assetsButton->removeCssClass('active');
-    $panelTitle->text('PROPRIÉTÉS');
-    $activePanel = 'properties';
-    $projectProperties->refresh();
-};
+$showExplorer = fn () => $showSidePanel('explorer');
+$showSearchPanel = fn () => $showSidePanel('search');
+$showGitPanel = fn () => $showSidePanel('git');
+$showDebugPanel = fn () => $showSidePanel('debug');
+$showAssetsPanel = fn () => $showSidePanel('assets');
+$showPropertiesPanel = fn () => $showSidePanel('properties');
 
 $explorerButton->onClicked(fn () => $showExplorer());
 $searchButton->onClicked(fn () => $showSearchPanel());
+$gitButton->onClicked(fn () => $showGitPanel());
 $debugActivity->onClicked(fn () => $showDebugPanel());
 $assetsButton->onClicked(fn () => $showAssetsPanel());
 $designerActivity->onClicked(fn () => $openDesigner());
@@ -1259,7 +1222,7 @@ $body = (new Box(Orientation::HORIZONTAL, 0))
 
 // --- Barre de statut -------------------------------------------------------
 $statusProject = (new Label($projectName))->cssClass('status-item');
-$statusBranch = (new Label('main'))->cssClass('status-item');
+$statusBranch = (new Label($gitPanel->branch()))->cssClass('status-item');
 $statusSpaces = (new Label('Espaces : 4'))->cssClass('status-item');
 $statusEncoding = (new Label('UTF-8'))->cssClass('status-item');
 $statusPhp = (new Label('PHP 8.3'))->cssClass('status-item');
@@ -1370,6 +1333,10 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
     ['label' => 'Affichage : Sortie', 'action' => fn () => ($showBottomTab)('output')],
     ['label' => 'Sortie : vider', 'action' => fn () => $outputPanel->clear()],
+    ['label' => 'Affichage : Git', 'action' => fn () => $showGitPanel()],
+    ['label' => 'Git : actualiser', 'action' => fn () => $refreshGit()],
+    ['label' => 'Git : indexer tout', 'action' => fn () => $gitPanel->stageAll()],
+    ['label' => 'Git : afficher le diff', 'action' => fn () => $showGitDiff()],
     ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
     ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
     ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1414,6 +1381,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Recherche', 'action' => $showSearchPanel],
         ['label' => 'Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
         ['label' => 'Sortie', 'action' => fn () => ($showBottomTab)('output')],
+        ['label' => 'Git', 'action' => fn () => $showGitPanel()],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
@@ -1495,6 +1463,8 @@ if ($auto) {
         $problemsPanel->set($diagnostics->all());
         $refreshProblemsTab();
     });
+    Loop::after(215, fn () => ($showGitPanel)());
+    Loop::after(225, fn () => ($showExplorer)());
     Loop::after(230, fn () => ($showBottomTab)('problems'));
     Loop::after(250, function () use ($outputPanel): void {
         $outputPanel->append('Sortie de démonstration', 'Auto');

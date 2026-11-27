@@ -20,6 +20,7 @@ use Cyonima\Runtime\AdwApplication;
 use Cyonima\Runtime\Application;
 use Cyonima\Runtime\Async;
 use Cyonima\Runtime\Errors;
+use Cyonima\Runtime\GitRepository;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
@@ -44,6 +45,7 @@ use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
+use Cyonima\UI\GitPanel;
 use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\QuickOpen;
@@ -10162,6 +10164,103 @@ T::ok(
 );
 $outputPanel->clear();
 T::same(0, $outputPanel->count(), 'sortie UI : vidage');
+
+// ---------------------------------------------------------------------------
+T::section('71. Git — dépôt local');
+
+if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
+    T::skip('git : commande disponible');
+    T::skip('git : statut, index et commit');
+} else {
+    $gitRoot = sys_get_temp_dir() . '/cyonima_git_' . getmypid();
+    $removeTree($gitRoot);
+    mkdir($gitRoot, 0775, true);
+
+    $git = function (string $arguments) use ($gitRoot): string {
+        return (string) shell_exec(
+            'git -C ' . escapeshellarg($gitRoot) . ' ' . $arguments . ' 2>&1',
+        );
+    };
+
+    $git('init -q');
+    $git('config user.email "test@example.com"');
+    $git('config user.name "Test Cyonima"');
+    file_put_contents($gitRoot . '/a.txt', "one\n");
+
+    $repository = GitRepository::discover($gitRoot);
+    T::ok($repository !== null, 'git : dépôt découvert');
+    T::same(realpath($gitRoot), $repository?->root(), 'git : racine du dépôt');
+    T::ok($repository?->branch() !== '—', 'git : branche courante');
+
+    $gitStatus = $repository?->status() ?? [];
+    T::same(1, count($gitStatus), 'git : fichier non suivi');
+    T::same('a.txt', $gitStatus[0]['path'] ?? null, 'git : chemin relatif');
+    T::same('?', $gitStatus[0]['index'] ?? null, 'git : état index');
+    T::ok(!($gitStatus[0]['staged'] ?? true), 'git : non indexé');
+
+    T::ok($repository?->stageAll() ?? false, 'git : indexation globale');
+    $gitStatus = $repository?->status() ?? [];
+    T::ok($gitStatus[0]['staged'] ?? false, 'git : fichier indexé');
+    T::ok(
+        str_contains($repository?->diff(null, true) ?? '', '+one'),
+        'git : diff indexé',
+    );
+
+    $gitCommit = $repository?->commit('initial') ?? ['ok' => false, 'output' => ''];
+    T::ok($gitCommit['ok'], 'git : commit créé');
+    T::same(0, count($repository?->status() ?? []), 'git : statut propre');
+    T::ok(!($repository?->commit('')['ok'] ?? true), 'git : message vide refusé');
+
+    file_put_contents($gitRoot . '/a.txt', "one\ntwo\n");
+    T::ok(
+        str_contains($repository?->diff() ?? '', '+two'),
+        'git : diff non indexé',
+    );
+
+    $gitOpened = null;
+    $gitBranches = [];
+    $gitMessages = [];
+    $gitPanel = new GitPanel(
+        $gitRoot,
+        function (string $path) use (&$gitOpened): void {
+            $gitOpened = $path;
+        },
+        function (string $branch, int $changes) use (&$gitBranches): void {
+            $gitBranches[] = [$branch, $changes];
+        },
+        function (string $message, bool $error) use (&$gitMessages): void {
+            $gitMessages[] = [$message, $error];
+        },
+    );
+
+    T::same(1, $gitPanel->count(), 'git UI : fichier modifié');
+    T::ok($gitPanel->branch() !== '—', 'git UI : branche');
+    $gitPanel->activateRow(0);
+    T::same(
+        realpath($gitRoot) . '/a.txt',
+        $gitOpened,
+        'git UI : ouverture du fichier',
+    );
+
+    T::ok($gitPanel->stageAll(), 'git UI : indexation');
+    $gitPanel->setMessage('commit depuis le panneau');
+    $uiCommit = $gitPanel->commit();
+    T::ok($uiCommit['ok'], 'git UI : commit');
+    T::same(0, $gitPanel->count(), 'git UI : liste rafraîchie');
+    T::same('', $gitPanel->message(), 'git UI : message vidé');
+    T::ok($gitMessages !== [], 'git UI : notification');
+
+    $noRepositoryPanel = new GitPanel(
+        sys_get_temp_dir() . '/cyonima_git_absent_' . getmypid(),
+        static function (string $path): void {
+        },
+    );
+    T::same(0, $noRepositoryPanel->count(), 'git UI : dépôt absent');
+    T::same('—', $noRepositoryPanel->branch(), 'git UI : branche absente');
+    T::ok(!$noRepositoryPanel->commit()['ok'], 'git UI : commit sans dépôt');
+
+    $removeTree($gitRoot);
+}
 
 $removeTree($templateRoot);
 
