@@ -1150,6 +1150,15 @@ Trois écarts assumés par rapport au miroir strict du C :
   enveloppées par Pango, donc l’alignement reste approximatif à l’intérieur
   d’un paragraphe ; pas de synchronisation horizontale.
 
+111. **Historique de recherches** : `SearchHistory` persiste les requêtes dans
+  `Config::dir()/search-history.json`, déduplique, borne à 20 entrées et
+  ignore les requêtes vides. `FindBar` l’alimente lors des actions
+  rechercher/remplacer, expose `historyPrevious()`/`historyNext()` sur
+  `Alt+↑`/`Alt+↓`, et un bouton d’historique revient à la requête précédente.
+  La palette permet de vider l’historique. Les tests injectent un fichier
+  temporaire pour ne pas toucher au profil utilisateur. Limitations : pas de
+  liste déroulante, pas d’horodatage ni de synchronisation entre profils.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

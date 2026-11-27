@@ -267,6 +267,16 @@ list row:selected {
     padding: 0 6px;
 }
 
+.find-history-row {
+    color: #cccccc;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.find-history-row:hover {
+    background-color: #2a2d2e;
+}
+
 .find-action {
     font-size: 11px;
     padding: 3px 8px;

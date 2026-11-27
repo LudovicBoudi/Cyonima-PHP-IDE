@@ -49,6 +49,7 @@ use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\Runtime\ScrollSync;
+use Cyonima\Runtime\SearchHistory;
 use Cyonima\Runtime\WorkspaceWatcher;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
@@ -10649,7 +10650,10 @@ try {
 }
 
 $findEditor = new CodeEditor('php', "one two one\nAlpha");
-$findBar = new FindBar($findEditor);
+$findHistoryFile = sys_get_temp_dir() . '/cyonima_find_history_' . getmypid() . '.json';
+@unlink($findHistoryFile);
+$findHistory = new SearchHistory($findHistoryFile);
+$findBar = new FindBar($findEditor, $findHistory);
 
 T::same(2, $findBar->setQuery('one')->matchCount(), 'éditeur UI : occurrences');
 T::ok($findBar->findNext(), 'éditeur UI : suivant');
@@ -10681,6 +10685,29 @@ T::same(2, $findBar->replaceAll(), 'éditeur UI : remplacement regex');
 T::same("def/abc jkl/ghi", $findEditor->text(), 'éditeur UI : références arrière appliquées');
 $findBar->setOption('regex', false);
 $findEditor->setText("three two three\nAlpha");
+
+$historyFile = sys_get_temp_dir() . '/cyonima_history_' . getmypid() . '.json';
+@unlink($historyFile);
+$historyEditor = new CodeEditor('php', "alpha beta");
+$history = new SearchHistory($historyFile);
+$historyBar = new FindBar($historyEditor, $history);
+$historyBar->setQuery('alpha')->findNext();
+$historyBar->setQuery('beta')->findNext();
+T::same(['beta', 'alpha'], $history->all(), 'historique : requêtes mémorisées');
+$historyBar->historyPrevious();
+T::same('beta', $historyBar->query(), 'historique : plus récente');
+$historyBar->historyPrevious();
+T::same('alpha', $historyBar->query(), 'historique : précédente');
+$historyBar->historyNext();
+T::same('beta', $historyBar->query(), 'historique : suivante');
+$reloadedHistory = new SearchHistory($historyFile);
+T::same(['beta', 'alpha'], $reloadedHistory->all(), 'historique : persistance');
+$reloadedHistory->add('alpha');
+T::same(['alpha', 'beta'], $reloadedHistory->all(), 'historique : déduplication');
+$historyBar->clearHistory();
+T::same(0, $history->count(), 'historique : vidage');
+T::same(0, (new SearchHistory($historyFile))->count(), 'historique : vidage persistant');
+@unlink($historyFile);
 
 $findWindow = new UI\Window('Recherche éditeur');
 $findWindow->setChild($findBar);

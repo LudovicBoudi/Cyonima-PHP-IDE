@@ -1543,6 +1543,11 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Navigation : rechercher un symbole', 'detail' => 'Ctrl+T', 'action' => fn () => $symbolSearch->present()],
     ['label' => 'Édition : rechercher', 'detail' => 'Ctrl+F', 'action' => fn () => $findBar->show()],
     ['label' => 'Édition : remplacer', 'detail' => 'Ctrl+H', 'action' => fn () => $findBar->showReplace()],
+    ['label' => 'Recherche : requête précédente', 'action' => function () use ($findBar): void {
+        $findBar->show();
+        $findBar->historyPrevious();
+    }],
+    ['label' => 'Recherche : vider l’historique', 'action' => fn () => $findBar->clearHistory()],
     ['label' => 'Affichage : aperçu Markdown', 'detail' => 'Ctrl+Shift+V', 'action' => fn () => $togglePreview()],
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],

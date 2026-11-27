@@ -8,6 +8,7 @@ use Cyonima\Gtk\Raw\Box as RawBox;
 use Cyonima\Gtk\Raw\EventControllerKey as RawEventControllerKey;
 use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Runtime\GtkText;
+use Cyonima\Runtime\SearchHistory;
 use Cyonima\Runtime\TextSearch;
 
 /**
@@ -25,6 +26,10 @@ final class FindBar extends Widget
     private Button $caseButton;
     private Button $wordButton;
     private Button $regexButton;
+    private IconButton $historyButton;
+
+    private SearchHistory $history;
+    private int $historyIndex = -1;
 
     /** @var list<array{start: int, end: int, text: string}> */
     private array $matches = [];
@@ -40,10 +45,13 @@ final class FindBar extends Widget
     private bool $shown = false;
     private bool $suppress = false;
 
-    public function __construct(private readonly CodeEditor $editor)
-    {
+    public function __construct(
+        private readonly CodeEditor $editor,
+        ?SearchHistory $history = null,
+    ) {
         parent::__construct(RawBox::new(Orientation::VERTICAL, 4));
 
+        $this->history = $history ?? SearchHistory::default();
         $this->cssClass('find-bar');
         GtkText::installSearchTags($this->editor->buffer()->handle());
 
@@ -67,6 +75,9 @@ final class FindBar extends Widget
 
         $this->statusLabel = (new Label(''))->cssClass('find-status');
 
+        $this->historyButton = (new IconButton('document-open-recent-symbolic', 'Historique (Alt+↑/↓)'))
+            ->onClicked(fn (): static => $this->historyPrevious());
+
         $findRow = (new Box(Orientation::HORIZONTAL, 4))
             ->append(
                 $this->findEntry->expand(),
@@ -76,6 +87,7 @@ final class FindBar extends Widget
                 $this->wordButton,
                 $this->regexButton,
                 $this->statusLabel,
+                $this->historyButton,
                 $close,
             );
 
@@ -221,6 +233,55 @@ final class FindBar extends Widget
         return $this->matches;
     }
 
+    public function history(): SearchHistory
+    {
+        return $this->history;
+    }
+
+    public function clearHistory(): static
+    {
+        $this->history->clear();
+        $this->historyIndex = -1;
+        return $this;
+    }
+
+    public function historyPrevious(): static
+    {
+        if ($this->history->count() === 0) {
+            return $this;
+        }
+
+        $this->historyIndex = min($this->history->count() - 1, $this->historyIndex + 1);
+        $query = $this->history->at($this->historyIndex);
+
+        if ($query !== null) {
+            $this->setQuery($query);
+        }
+
+        return $this;
+    }
+
+    public function historyNext(): static
+    {
+        if ($this->history->count() === 0 || $this->historyIndex <= 0) {
+            return $this;
+        }
+
+        $this->historyIndex--;
+        $query = $this->history->at($this->historyIndex);
+
+        if ($query !== null) {
+            $this->setQuery($query);
+        }
+
+        return $this;
+    }
+
+    public function showHistory(): static
+    {
+        return $this->historyPrevious();
+    }
+
     public function currentMatch(): ?array
     {
         return $this->matches[$this->currentIndex] ?? null;
@@ -267,6 +328,8 @@ final class FindBar extends Widget
 
     public function findNext(): bool
     {
+        $this->remember();
+
         if ($this->refreshMatches() === 0) {
             return false;
         }
@@ -283,6 +346,8 @@ final class FindBar extends Widget
 
     public function findPrevious(): bool
     {
+        $this->remember();
+
         if ($this->refreshMatches() === 0) {
             return false;
         }
@@ -315,6 +380,8 @@ final class FindBar extends Widget
 
     public function replaceCurrent(): bool
     {
+        $this->remember();
+
         if ($this->refreshMatches() === 0) {
             return false;
         }
@@ -350,6 +417,8 @@ final class FindBar extends Widget
 
     public function replaceAll(): int
     {
+        $this->remember();
+
         if ($this->refreshMatches() === 0) {
             return 0;
         }
@@ -388,6 +457,18 @@ final class FindBar extends Widget
         return $this;
     }
 
+    private function remember(): void
+    {
+        $query = trim($this->findEntry->text());
+
+        if ($query === '') {
+            return;
+        }
+
+        $this->history->add($query);
+        $this->historyIndex = -1;
+    }
+
     private function keyController(callable $handler): RawEventControllerKey
     {
         $controller = RawEventControllerKey::new();
@@ -401,6 +482,18 @@ final class FindBar extends Widget
 
     private function handleFindKey(int $keyval, int $state): bool
     {
+        if (($state & 8) !== 0) { // GDK_MOD1_MASK
+            if ($keyval === 0xff52) { // Alt+Haut
+                $this->historyPrevious();
+                return true;
+            }
+
+            if ($keyval === 0xff54) { // Alt+Bas
+                $this->historyNext();
+                return true;
+            }
+        }
+
         if ($keyval === 0xff1b) {
             $this->hide();
             return true;
