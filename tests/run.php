@@ -9826,6 +9826,14 @@ T::same(
     'remplacement : références arrière',
 );
 
+file_put_contents($replaceRoot . '/src/g.php', "needle\n");
+ProjectSearch::replace($replaceRoot, 'needle', '$1');
+T::same(
+    "\$1\n",
+    file_get_contents($replaceRoot . '/src/g.php'),
+    'remplacement : dollar littéral hors regex',
+);
+
 file_put_contents($replaceRoot . '/src/e.php', "needles needle\n");
 $wordReport = ProjectSearch::replace(
     $replaceRoot,
@@ -10618,6 +10626,16 @@ T::ok(
     !str_contains(TextSearch::replaceAll($findText, 'needle', 'thread'), 'needle'),
     'éditeur : remplacement global',
 );
+T::same(
+    'bar-foo',
+    TextSearch::replaceMatch('foobar', '(foo)(bar)', '$2-$1', ['regex' => true]),
+    'éditeur : références arrière',
+);
+T::same(
+    '$1',
+    TextSearch::replaceMatch('foo', 'foo', '$1'),
+    'éditeur : dollar littéral',
+);
 
 try {
     TextSearch::matches($findText, '(', ['regex' => true]);
@@ -10650,6 +10668,15 @@ $findBar->setOption('caseSensitive', true);
 T::same(0, $findBar->matchCount(), 'éditeur UI : casse sensible');
 $findBar->setOption('caseSensitive', false);
 T::same(1, $findBar->matchCount(), 'éditeur UI : retour insensible');
+
+$findEditor->setText("abc-def ghi-jkl");
+$findBar->setQuery('(\w+)-(\w+)');
+$findBar->setOption('regex', true);
+$findBar->setReplacement('$2/$1');
+T::same(2, $findBar->replaceAll(), 'éditeur UI : remplacement regex');
+T::same("def/abc jkl/ghi", $findEditor->text(), 'éditeur UI : références arrière appliquées');
+$findBar->setOption('regex', false);
+$findEditor->setText("three two three\nAlpha");
 
 $findWindow = new UI\Window('Recherche éditeur');
 $findWindow->setChild($findBar);

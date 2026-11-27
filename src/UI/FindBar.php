@@ -327,7 +327,12 @@ final class FindBar extends Widget
         }
 
         $match = $this->matches[$index];
-        $replacement = $this->replaceEntry->text();
+        $replacement = TextSearch::replaceMatch(
+            $match['text'],
+            $this->findEntry->text(),
+            $this->replaceEntry->text(),
+            $this->options,
+        );
 
         $this->suppress = true;
         $this->editor->replaceRange($match['start'], $match['end'], $replacement);
@@ -351,11 +356,13 @@ final class FindBar extends Widget
 
         $matches = $this->matches;
         $replacement = $this->replaceEntry->text();
+        $query = $this->findEntry->text();
 
         $this->suppress = true;
 
         foreach (array_reverse($matches) as $match) {
-            $this->editor->replaceRange($match['start'], $match['end'], $replacement);
+            $value = TextSearch::replaceMatch($match['text'], $query, $replacement, $this->options);
+            $this->editor->replaceRange($match['start'], $match['end'], $value);
         }
 
         $this->suppress = false;

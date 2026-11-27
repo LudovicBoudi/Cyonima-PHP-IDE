@@ -195,11 +195,14 @@ entier et les expressions régulières ; `Entrée`/`Maj+Entrée` parcourent les
 occurrences avec bouclage, et le compteur affiche `position/total`.
 **Remplacer** traite l'occurrence sélectionnée, **Tout remplacer** applique les
 remplacements de la fin vers le début pour préserver les offsets, en conservant
-l'historique d'annulation. Toutes les occurrences sont surlignées via deux
-`GtkTextTag` (courante en orange, autres en brun), dans la limite de 500
-surlignages ; les tags sont retirés à la fermeture. `Échap` ferme la barre et
-rend le focus à l'éditeur. Les remplacements passent par
-`CodeEditor::replaceRange` et déclenchent les signaux normaux de modification.
+l'historique d'annulation. En mode expression régulière, les références arrière
+(`$1`, `$2`…) sont développées occurrence par occurrence ; hors regex, le
+remplacement est strictement littéral (un `$1` saisi reste `$1`). Toutes les
+occurrences sont surlignées via deux `GtkTextTag` (courante en orange, autres
+en brun), dans la limite de 500 surlignages ; les tags sont retirés à la
+fermeture. `Échap` ferme la barre et rend le focus à l'éditeur. Les
+remplacements passent par `CodeEditor::replaceRange` et déclenchent les signaux
+normaux de modification.
 
 ## Recherche projet
 

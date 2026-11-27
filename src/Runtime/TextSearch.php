@@ -69,13 +69,52 @@ final class TextSearch
         }
 
         $pattern = self::pattern($query, $options);
-        $result = @preg_replace($pattern, $replacement, $text);
+        $result = @preg_replace($pattern, self::replacement($replacement, $options), $text);
 
         if ($result === null) {
             throw new \InvalidArgumentException('Expression régulière invalide : ' . $query);
         }
 
         return $result;
+    }
+
+    /**
+     * Remplace une correspondance unique, en développant les références
+     * arrière seulement en mode expression régulière.
+     *
+     * @param array{caseSensitive?: bool, wholeWord?: bool, regex?: bool} $options
+     *
+     * @throws \InvalidArgumentException quand l'expression régulière est invalide
+     */
+    public static function replaceMatch(
+        string $match,
+        string $query,
+        string $replacement,
+        array $options = [],
+    ): string {
+        if ($query === '') {
+            return $replacement;
+        }
+
+        $pattern = self::pattern($query, $options);
+        $result = @preg_replace($pattern, self::replacement($replacement, $options), $match);
+
+        if ($result === null) {
+            throw new \InvalidArgumentException('Expression régulière invalide : ' . $query);
+        }
+
+        return $result;
+    }
+
+    /** @param array{caseSensitive?: bool, wholeWord?: bool, regex?: bool} $options */
+    private static function replacement(string $replacement, array $options): string
+    {
+        if ((bool) ($options['regex'] ?? false)) {
+            return $replacement;
+        }
+
+        // En mode littéral, `$1` et `\1` ne doivent pas être interprétés.
+        return str_replace(['\\', '$'], ['\\\\', '\\$'], $replacement);
     }
 
     /** @param array{caseSensitive?: bool, wholeWord?: bool, regex?: bool} $options */

@@ -1110,6 +1110,14 @@ Trois écarts assumés par rapport au miroir strict du C :
   pour rester fluide ; les correspondances au-delà restent navigables.
   Limitations : couleurs fixes, pas de configuration utilisateur.
 
+107. **Références arrière par occurrence** : `TextSearch::replaceMatch()`
+  applique le remplacement à la correspondance exacte, en développant `$1`,
+  `$2`… uniquement en mode regex. Hors regex, `TextSearch` et `ProjectSearch`
+  échappent `$` et `\` avant `preg_replace`, donc un remplacement littéral
+  contenant `$1` reste inchangé. `FindBar` utilise `replaceMatch` pour
+  « Remplacer » et pour chaque occurrence de « Tout remplacer ». Limitations :
+  pas de syntaxe `${1}` étendue ni de transformations conditionnelles.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

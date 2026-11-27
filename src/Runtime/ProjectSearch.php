@@ -149,6 +149,7 @@ final class ProjectSearch
         }
 
         $pattern = self::pattern($query, $options, true);
+        $replacement = self::replacement($replacement, $options);
         $root = realpath($root) ?: $root;
         $files = [];
         $replacements = 0;
@@ -231,5 +232,15 @@ final class ProjectSearch
         return str_starts_with($path, $root . DIRECTORY_SEPARATOR)
             ? substr($path, strlen($root) + 1)
             : $path;
+    }
+
+    /** @param array{caseSensitive?: bool, wholeWord?: bool, regex?: bool} $options */
+    private static function replacement(string $replacement, array $options): string
+    {
+        if ((bool) ($options['regex'] ?? false)) {
+            return $replacement;
+        }
+
+        return str_replace(['\\', '$'], ['\\\\', '\\$'], $replacement);
     }
 }
