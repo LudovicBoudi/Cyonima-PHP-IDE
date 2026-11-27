@@ -1374,6 +1374,10 @@ $commandPalette = new CommandPalette($window, [
         $showGitPanel();
         $gitPanel->focusBranchEntry();
     }],
+    ['label' => 'Git : fusionner une branche', 'action' => function () use ($showGitPanel, $gitPanel): void {
+        $showGitPanel();
+        $gitPanel->focusMergeEntry();
+    }],
     ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
     ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
     ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1423,6 +1427,10 @@ $menuBar = (new MenuBar())
         ['label' => 'Changer de branche…', 'action' => function () use ($showGitPanel, $gitPanel): void {
             $showGitPanel();
             $gitPanel->openBranches();
+        }],
+        ['label' => 'Fusionner une branche…', 'action' => function () use ($showGitPanel, $gitPanel): void {
+            $showGitPanel();
+            $gitPanel->focusMergeEntry();
         }],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],

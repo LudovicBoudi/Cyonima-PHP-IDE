@@ -26,6 +26,8 @@ final class GitPanel extends Widget
     private RawListBox $branchList;
     private Entry $branchEntry;
     private Button $branchCreateButton;
+    private Entry $mergeEntry;
+    private Button $mergeButton;
     private Entry $messageEntry;
     private IconButton $refreshButton;
     private Button $stageButton;
@@ -128,6 +130,15 @@ final class GitPanel extends Widget
         $branchRow = (new Box(Orientation::HORIZONTAL, 4))
             ->append($this->branchEntry->expand(), $this->branchCreateButton);
 
+        $this->mergeEntry = new Entry('Fusionner une branche');
+        $this->mergeButton = (new Button('Fusionner'))
+            ->cssClass('git-action')
+            ->onClicked(fn (): array => $this->mergeBranch($this->mergeEntry->text()));
+        $this->mergeEntry->onActivate(fn (): array => $this->mergeBranch($this->mergeEntry->text()));
+
+        $mergeRow = (new Box(Orientation::HORIZONTAL, 4))
+            ->append($this->mergeEntry->expand(), $this->mergeButton);
+
         $this->messageEntry = new Entry('Message de commit');
         $this->commitButton = (new Button('Commit'))
             ->cssClass('git-action')
@@ -145,6 +156,7 @@ final class GitPanel extends Widget
         $this->raw()->append($this->summaryLabel);
         $this->raw()->append($this->branchButton->raw());
         $this->raw()->append($branchRow->raw());
+        $this->raw()->append($mergeRow->raw());
         $this->raw()->append($toolbar->raw());
         $this->raw()->append($this->messageEntry->raw());
         $this->raw()->append($this->commitButton->raw());
@@ -199,6 +211,8 @@ final class GitPanel extends Widget
         $this->branchButton->label($branch)->sensitive($this->repository !== null);
         $this->branchEntry->sensitive($this->repository !== null);
         $this->branchCreateButton->sensitive($this->repository !== null);
+        $this->mergeEntry->sensitive($this->repository !== null);
+        $this->mergeButton->sensitive($this->repository !== null);
         $this->buildRows();
 
         if ($this->onStatus !== null) {
@@ -314,6 +328,46 @@ final class GitPanel extends Widget
     {
         $this->branchEntry->raw()->grabFocus();
         return $this;
+    }
+
+    public function setMergeBranch(string $branch): static
+    {
+        $this->mergeEntry->setText($branch);
+        return $this;
+    }
+
+    public function focusMergeEntry(): static
+    {
+        $this->mergeEntry->raw()->grabFocus();
+        return $this;
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function mergeBranch(string $branch): array
+    {
+        if ($this->repository === null) {
+            return ['ok' => false, 'output' => 'Dépôt Git introuvable'];
+        }
+
+        $branch = trim($branch);
+        $result = $this->repository->merge($branch);
+        $this->notify(
+            $result['ok'] ? 'Git : fusion de ' . $branch . ' terminée' : 'Git : ' . $result['output'],
+            !$result['ok'],
+        );
+
+        // Même en cas de conflit, la liste doit refléter l'état du dépôt.
+        $this->refresh();
+
+        if ($result['ok']) {
+            $this->mergeEntry->setText('');
+
+            if ($this->onBranchChanged !== null) {
+                ($this->onBranchChanged)($this->branch());
+            }
+        }
+
+        return $result;
     }
 
     public function stageAll(): bool

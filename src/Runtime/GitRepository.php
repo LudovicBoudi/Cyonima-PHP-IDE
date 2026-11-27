@@ -117,6 +117,22 @@ final class GitRepository
     }
 
     /** @return array{ok: bool, output: string} */
+    public function merge(string $branch): array
+    {
+        $branch = trim($branch);
+
+        if ($branch === '') {
+            return ['ok' => false, 'output' => 'Nom de branche vide'];
+        }
+
+        if (!in_array($branch, $this->branches(), true)) {
+            return ['ok' => false, 'output' => 'Branche inconnue : ' . $branch];
+        }
+
+        return $this->result(['merge', '--no-edit', $branch]);
+    }
+
+    /** @return array{ok: bool, output: string} */
     private function result(array $arguments): array
     {
         $result = $this->git($arguments);

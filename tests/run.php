@@ -10313,6 +10313,43 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     T::same('', $gitPanel->message(), 'git UI : message vidé');
     T::ok($gitMessages !== [], 'git UI : notification');
 
+    T::ok($repository?->createBranch('merge-feature')['ok'], 'git : branche de fusion');
+    file_put_contents($gitRoot . '/a.txt', "one\ntwo\nthree\n");
+    T::ok($repository?->stageAll() ?? false, 'git : indexation avant fusion');
+    T::ok(($repository?->commit('travail sur la branche')['ok'] ?? false), 'git : commit de branche');
+    T::ok(($repository?->switchBranch($originalBranch)['ok'] ?? false), 'git : retour avant fusion');
+    file_put_contents($gitRoot . '/b.txt', "base\n");
+    T::ok($repository?->stageAll() ?? false, 'git : indexation originale');
+    T::ok(($repository?->commit('travail original')['ok'] ?? false), 'git : commit original');
+
+    $repositoryMerge = $repository?->merge('merge-feature') ?? ['ok' => false, 'output' => ''];
+    T::ok($repositoryMerge['ok'], 'git : fusion de branche');
+    T::ok(
+        str_contains((string) file_get_contents($gitRoot . '/a.txt'), 'three'),
+        'git : contenu fusionné',
+    );
+    T::same(0, count($repository?->status() ?? []), 'git : statut propre après fusion');
+    T::ok(
+        !($repository?->merge('branche-absente')['ok'] ?? true),
+        'git : fusion avec branche inconnue refusée',
+    );
+
+    T::ok($repository?->createBranch('ui-feature')['ok'] ?? false, 'git UI : branche de fusion');
+    file_put_contents($gitRoot . '/ui.txt', "ui\n");
+    $repository?->stageAll();
+    $repository?->commit('fonctionnalité UI');
+    $repository?->switchBranch($originalBranch);
+
+    T::same(
+        $gitPanel,
+        $gitPanel->setMergeBranch('ui-feature'),
+        'git UI : champ de fusion',
+    );
+    $uiMerge = $gitPanel->mergeBranch('ui-feature');
+    T::ok($uiMerge['ok'], 'git UI : fusion de branche');
+    T::same(0, $gitPanel->count(), 'git UI : statut après fusion');
+    T::ok(!$gitPanel->mergeBranch('branche-absente')['ok'], 'git UI : fusion inconnue');
+
     $noRepositoryPanel = new GitPanel(
         sys_get_temp_dir() . '/cyonima_git_absent_' . getmypid(),
         static function (string $path): void {

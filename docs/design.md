@@ -74,17 +74,21 @@ afficher le diff du projet, changer ou créer une branche.
 
 Le bouton de branche ouvre un popover listant les branches locales, la branche
 courante étant marquée `●`. Un clic bascule via `git checkout`. Le champ
-« Nouvelle branche » et **Créer** lancent `git checkout -b`. Après une bascule
-réussie, le fichier courant est rechargé s'il n'a pas de modifications non
-enregistrées.
+« Nouvelle branche » et **Créer** lancent `git checkout -b`. Le champ
+« Fusionner une branche » et **Fusionner** lancent `git merge --no-edit`.
+Après une bascule ou une fusion réussie, le fichier courant est rechargé s'il
+n'a pas de modifications non enregistrées. En cas de conflit, la sortie Git
+est journalisée dans Sortie et la liste des fichiers est rafraîchie pour
+montrer les états `UU` ; la résolution reste manuelle.
 
 Le diff d'un fichier s'ouvre dans l'onglet **DIFF** du panneau bas
 (`DiffPanel`) : vue en lecture seule colorée par GtkSourceView. Les fichiers
 suivis affichent leurs diffs indexé et non indexé ; un fichier non suivi est
 comparé à `/dev/null` pour montrer son contenu complet.
 
-Limites : pas de merge, rebase, push/pull, suppression ni renommage de
-branche ; le diff est textuel, sans édition ni navigation entre hunks.
+Limites : pas de rebase, push/pull, suppression ni renommage de branche, pas
+d'assistant de résolution de conflits ; le diff est textuel, sans édition ni
+navigation entre hunks.
 
 ## Onglets multiples
 
@@ -212,7 +216,7 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 

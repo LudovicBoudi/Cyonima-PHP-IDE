@@ -1036,6 +1036,15 @@ Trois écarts assumés par rapport au miroir strict du C :
   Le popover est détaché dans le destructeur du panneau. Limitations : pas de
   merge, rebase, push/pull, suppression, renommage ni branches distantes.
 
+100. **Merge de branches** : `GitRepository::merge()` vérifie que la branche
+  existe puis lance `git merge --no-edit <branche>`. `GitPanel` ajoute un champ
+  « Fusionner une branche » et un bouton **Fusionner** ; le résultat est
+  notifié, le panneau est rafraîchi dans tous les cas (les conflits apparaissent
+  en `UU`) et le fichier courant est rechargé si la fusion réussit et qu'il est
+  propre. La palette et le menu Affichage exposent « fusionner une branche ».
+  Limitations : pas de rebase, de résolution assistée des conflits, ni de
+  merge de branches distantes.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |
