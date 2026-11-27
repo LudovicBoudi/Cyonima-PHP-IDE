@@ -359,6 +359,23 @@ list row:selected {
     padding: 4px 6px;
 }
 
+.git-branch {
+    color: #cccccc;
+    font-size: 12px;
+    padding: 3px 8px;
+    background-color: #2d2d30;
+}
+
+.git-branch-row {
+    color: #cccccc;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.git-branch-row:hover {
+    background-color: #2a2d2e;
+}
+
 .git-toolbar {
     padding: 0 4px;
 }

@@ -10216,6 +10216,30 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     T::same(0, count($repository?->status() ?? []), 'git : statut propre');
     T::ok(!($repository?->commit('')['ok'] ?? true), 'git : message vide refusé');
 
+    $originalBranch = $repository?->branch() ?? '';
+    T::ok(
+        in_array($originalBranch, $repository?->branches() ?? [], true),
+        'git : branche listée',
+    );
+    $branchCreated = $repository?->createBranch('feature') ?? ['ok' => false, 'output' => ''];
+    T::ok($branchCreated['ok'], 'git : création de branche');
+    T::same('feature', $repository?->branch(), 'git : branche active après création');
+    T::ok(
+        in_array('feature', $repository?->branches() ?? [], true),
+        'git : nouvelle branche listée',
+    );
+    $branchBack = $repository?->switchBranch($originalBranch) ?? ['ok' => false, 'output' => ''];
+    T::ok($branchBack['ok'], 'git : bascule de branche');
+    T::same($originalBranch, $repository?->branch(), 'git : branche d’origine restaurée');
+    T::ok(
+        !($repository?->switchBranch('branche-absente')['ok'] ?? true),
+        'git : branche inconnue refusée',
+    );
+    T::ok(
+        !($repository?->createBranch('')['ok'] ?? true),
+        'git : nom de branche vide refusé',
+    );
+
     file_put_contents($gitRoot . '/a.txt', "one\ntwo\n");
     T::ok(
         str_contains($repository?->diff() ?? '', '+two'),
@@ -10230,6 +10254,7 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     $gitBranches = [];
     $gitMessages = [];
     $gitDiff = null;
+    $gitBranchChanged = null;
     $gitPanel = new GitPanel(
         $gitRoot,
         function (string $path) use (&$gitOpened): void {
@@ -10244,10 +10269,24 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
         function (string $path, string $diff) use (&$gitDiff): void {
             $gitDiff = [$path, $diff];
         },
+        function (string $branch) use (&$gitBranchChanged): void {
+            $gitBranchChanged = $branch;
+        },
     );
 
     T::same(1, $gitPanel->count(), 'git UI : fichier modifié');
     T::ok($gitPanel->branch() !== '—', 'git UI : branche');
+    T::ok(
+        in_array('feature', $gitPanel->branches(), true),
+        'git UI : branches listées',
+    );
+    T::ok($gitPanel->createBranch('ui-branch')['ok'], 'git UI : création de branche');
+    T::same('ui-branch', $gitPanel->branch(), 'git UI : branche créée active');
+    T::same('ui-branch', $gitBranchChanged, 'git UI : notification de branche');
+    T::ok($gitPanel->switchBranch($originalBranch)['ok'], 'git UI : bascule de branche');
+    T::same($originalBranch, $gitPanel->branch(), 'git UI : branche restaurée');
+    T::ok(!$gitPanel->switchBranch('branche-absente')['ok'], 'git UI : branche inconnue');
+    T::same($gitPanel, $gitPanel->focusBranchEntry(), 'git UI : focus nouvelle branche');
     $gitPanel->activateRow(0);
     T::same(
         realpath($gitRoot) . '/a.txt',

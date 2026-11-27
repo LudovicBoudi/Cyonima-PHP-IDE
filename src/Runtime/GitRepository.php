@@ -71,6 +71,60 @@ final class GitRepository
         return $branch === '' ? '—' : $branch;
     }
 
+    /** @return list<string> branches locales */
+    public function branches(): array
+    {
+        $result = $this->git(['for-each-ref', '--format=%(refname:short)', 'refs/heads']);
+
+        if ($result['exit'] !== 0) {
+            return [];
+        }
+
+        $lines = preg_split('/\R/', trim($result['stdout'])) ?: [];
+
+        return array_values(array_filter(
+            array_map('trim', $lines),
+            static fn (string $branch): bool => $branch !== '',
+        ));
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function createBranch(string $name): array
+    {
+        $name = trim($name);
+
+        if ($name === '') {
+            return ['ok' => false, 'output' => 'Nom de branche vide'];
+        }
+
+        return $this->result(['checkout', '-b', $name]);
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function switchBranch(string $name): array
+    {
+        $name = trim($name);
+
+        if ($name === '') {
+            return ['ok' => false, 'output' => 'Nom de branche vide'];
+        }
+
+        if (!in_array($name, $this->branches(), true)) {
+            return ['ok' => false, 'output' => 'Branche inconnue : ' . $name];
+        }
+
+        return $this->result(['checkout', $name]);
+    }
+
+    /** @return array{ok: bool, output: string} */
+    private function result(array $arguments): array
+    {
+        $result = $this->git($arguments);
+        $output = trim($result['stdout'] . "\n" . $result['stderr']);
+
+        return ['ok' => $result['exit'] === 0, 'output' => $output];
+    }
+
     /**
      * @return list<array{path: string, index: string, worktree: string, staged: bool}>
      */

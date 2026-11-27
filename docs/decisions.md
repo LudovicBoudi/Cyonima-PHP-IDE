@@ -1025,6 +1025,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   « afficher le diff du projet » cible désormais cet onglet. Limitations : pas
   de navigation entre hunks, pas d'édition du patch, pas de diff binaire.
 
+99. **Gestion des branches locales** : `GitRepository::branches()` liste
+  `refs/heads` via `for-each-ref` ; `createBranch()` lance
+  `git checkout -b <nom>` et `switchBranch()` vérifie l'existence puis lance
+  `git checkout <nom>`. Les noms vides ou inconnus sont refusés. `GitPanel`
+  expose un bouton de branche ouvrant un popover (branche courante marquée
+  `●`), un champ « Nouvelle branche » et un bouton **Créer**. Une bascule
+  réussie rafraîchit le panneau, met à jour la barre de statut et notifie
+  l'IDE via `onBranchChanged`, qui recharge le fichier courant s'il est propre.
+  Le popover est détaché dans le destructeur du panneau. Limitations : pas de
+  merge, rebase, push/pull, suppression, renommage ni branches distantes.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

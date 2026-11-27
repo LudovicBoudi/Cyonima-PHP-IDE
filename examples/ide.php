@@ -462,6 +462,13 @@ $gitPanel = new GitPanel(
             ($showDiff)();
         }
     },
+    function (string $branch) use (&$currentFile, &$dirty, $openFile, $window): void {
+        $window->toast('Branche courante : ' . $branch);
+
+        if ($currentFile !== null && !$dirty && is_file($currentFile)) {
+            $openFile($currentFile, 0, true);
+        }
+    },
 );
 $refreshGit = function () use ($gitPanel): void {
     $gitPanel->refresh();
@@ -1359,6 +1366,14 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Git : actualiser', 'action' => fn () => $refreshGit()],
     ['label' => 'Git : indexer tout', 'action' => fn () => $gitPanel->stageAll()],
     ['label' => 'Git : afficher le diff', 'action' => fn () => $showGitDiff()],
+    ['label' => 'Git : changer de branche', 'action' => function () use ($showGitPanel, $gitPanel): void {
+        $showGitPanel();
+        $gitPanel->openBranches();
+    }],
+    ['label' => 'Git : créer une branche', 'action' => function () use ($showGitPanel, $gitPanel): void {
+        $showGitPanel();
+        $gitPanel->focusBranchEntry();
+    }],
     ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
     ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
     ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1405,6 +1420,10 @@ $menuBar = (new MenuBar())
         ['label' => 'Sortie', 'action' => fn () => ($showBottomTab)('output')],
         ['label' => 'Diff', 'action' => fn () => ($showBottomTab)('diff')],
         ['label' => 'Git', 'action' => fn () => $showGitPanel()],
+        ['label' => 'Changer de branche…', 'action' => function () use ($showGitPanel, $gitPanel): void {
+            $showGitPanel();
+            $gitPanel->openBranches();
+        }],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],

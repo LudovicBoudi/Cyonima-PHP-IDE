@@ -9,6 +9,7 @@ use Cyonima\Gtk\Raw\Label as RawLabel;
 use Cyonima\Gtk\Raw\ListBox as RawListBox;
 use Cyonima\Gtk\Raw\ListBoxRow as RawListBoxRow;
 use Cyonima\Gtk\Raw\Orientation;
+use Cyonima\Gtk\Raw\Popover as RawPopover;
 use Cyonima\Runtime\GitRepository;
 
 /**
@@ -20,6 +21,11 @@ final class GitPanel extends Widget
     private string $base;
 
     private RawLabel $summaryLabel;
+    private Button $branchButton;
+    private RawPopover $branchPopover;
+    private RawListBox $branchList;
+    private Entry $branchEntry;
+    private Button $branchCreateButton;
     private Entry $messageEntry;
     private IconButton $refreshButton;
     private Button $stageButton;
@@ -28,6 +34,9 @@ final class GitPanel extends Widget
 
     /** @var list<RawListBoxRow> */
     private array $rows = [];
+
+    /** @var list<RawListBoxRow> */
+    private array $branchRows = [];
 
     /** @var list<array{path: string, index: string, worktree: string, staged: bool}> */
     private array $entries = [];
@@ -44,12 +53,16 @@ final class GitPanel extends Widget
     /** @var (\Closure(string, string): void)|null */
     private ?\Closure $onDiff;
 
+    /** @var (\Closure(string): void)|null */
+    private ?\Closure $onBranchChanged;
+
     public function __construct(
         string $root,
         callable $onOpen,
         ?callable $onStatus = null,
         ?callable $onMessage = null,
         ?callable $onDiff = null,
+        ?callable $onBranchChanged = null,
     ) {
         parent::__construct(RawBox::new(Orientation::VERTICAL, 6));
 
@@ -59,10 +72,42 @@ final class GitPanel extends Widget
         $this->onStatus = $onStatus === null ? null : $onStatus(...);
         $this->onMessage = $onMessage === null ? null : $onMessage(...);
         $this->onDiff = $onDiff === null ? null : $onDiff(...);
+        $this->onBranchChanged = $onBranchChanged === null ? null : $onBranchChanged(...);
 
         $this->summaryLabel = RawLabel::new('');
         $this->summaryLabel->setXalign(0.0);
         $this->summaryLabel->addCssClass('git-summary');
+
+        $this->branchButton = (new Button('—'))
+            ->cssClass('git-branch')
+            ->tooltip('Changer de branche')
+            ->onClicked(fn (): bool => $this->openBranches());
+
+        $this->branchList = RawListBox::new();
+        $this->branchList->setSelectionMode(1);
+        $this->branchList->setActivateOnSingleClick(true);
+        $this->branchList->setSizeRequest(220, -1);
+        $this->branchList->onRowActivated(function ($listBox, $row): void {
+            $wrapped = RawListBoxRow::wrap($row, false);
+            $branches = $this->branches();
+            $branch = $branches[$wrapped->getIndex()] ?? null;
+
+            if ($branch !== null) {
+                $this->switchBranch($branch);
+            }
+        });
+
+        $branchContent = RawBox::new(Orientation::VERTICAL, 0);
+        $branchContent->append($this->branchList);
+
+        $this->branchPopover = RawPopover::new();
+        $this->branchPopover->setHasArrow(true);
+        $this->branchPopover->setAutohide(true);
+        $this->branchPopover->setChild($branchContent);
+        $this->branchPopover->setParent($this->branchButton->raw());
+        $this->branchPopover->onClosed(function (): void {
+            $this->clearBranchRows();
+        });
 
         $this->refreshButton = (new IconButton('view-refresh-symbolic', 'Actualiser Git'))
             ->onClicked(fn (): int => $this->refresh());
@@ -73,6 +118,15 @@ final class GitPanel extends Widget
         $toolbar = (new Box(Orientation::HORIZONTAL, 4))
             ->cssClass('git-toolbar')
             ->append($this->refreshButton, $this->stageButton);
+
+        $this->branchEntry = new Entry('Nouvelle branche');
+        $this->branchCreateButton = (new Button('Créer'))
+            ->cssClass('git-action')
+            ->onClicked(fn (): array => $this->createBranch($this->branchEntry->text()));
+        $this->branchEntry->onActivate(fn (): array => $this->createBranch($this->branchEntry->text()));
+
+        $branchRow = (new Box(Orientation::HORIZONTAL, 4))
+            ->append($this->branchEntry->expand(), $this->branchCreateButton);
 
         $this->messageEntry = new Entry('Message de commit');
         $this->commitButton = (new Button('Commit'))
@@ -89,12 +143,23 @@ final class GitPanel extends Widget
         });
 
         $this->raw()->append($this->summaryLabel);
+        $this->raw()->append($this->branchButton->raw());
+        $this->raw()->append($branchRow->raw());
         $this->raw()->append($toolbar->raw());
         $this->raw()->append($this->messageEntry->raw());
         $this->raw()->append($this->commitButton->raw());
         $this->raw()->append($this->list);
 
         $this->refresh();
+    }
+
+    public function __destruct()
+    {
+        if ($this->branchPopover->getVisible()) {
+            $this->branchPopover->popdown();
+        }
+
+        $this->branchPopover->unparent();
     }
 
     public function raw(): RawBox
@@ -131,6 +196,9 @@ final class GitPanel extends Widget
 
         $this->stageButton->sensitive($this->repository !== null);
         $this->commitButton->sensitive($this->repository !== null);
+        $this->branchButton->label($branch)->sensitive($this->repository !== null);
+        $this->branchEntry->sensitive($this->repository !== null);
+        $this->branchCreateButton->sensitive($this->repository !== null);
         $this->buildRows();
 
         if ($this->onStatus !== null) {
@@ -156,6 +224,76 @@ final class GitPanel extends Widget
         return $this->repository?->branch() ?? '—';
     }
 
+    /** @return list<string> */
+    public function branches(): array
+    {
+        return $this->repository?->branches() ?? [];
+    }
+
+    public function openBranches(): bool
+    {
+        if ($this->repository === null) {
+            return false;
+        }
+
+        $this->populateBranches();
+        $this->branchPopover->popup();
+
+        return true;
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function switchBranch(string $branch): array
+    {
+        if ($this->repository === null) {
+            return ['ok' => false, 'output' => 'Dépôt Git introuvable'];
+        }
+
+        $result = $this->repository->switchBranch(trim($branch));
+        $this->notify(
+            $result['ok'] ? 'Git : branche → ' . $branch : 'Git : ' . $result['output'],
+            !$result['ok'],
+        );
+
+        if ($result['ok']) {
+            $this->branchPopover->popdown();
+            $this->refresh();
+
+            if ($this->onBranchChanged !== null) {
+                ($this->onBranchChanged)($branch);
+            }
+        }
+
+        return $result;
+    }
+
+    /** @return array{ok: bool, output: string} */
+    public function createBranch(string $name): array
+    {
+        if ($this->repository === null) {
+            return ['ok' => false, 'output' => 'Dépôt Git introuvable'];
+        }
+
+        $name = trim($name);
+        $result = $this->repository->createBranch($name);
+        $this->notify(
+            $result['ok'] ? 'Git : branche créée → ' . $name : 'Git : ' . $result['output'],
+            !$result['ok'],
+        );
+
+        if ($result['ok']) {
+            $this->branchEntry->setText('');
+            $this->branchPopover->popdown();
+            $this->refresh();
+
+            if ($this->onBranchChanged !== null) {
+                ($this->onBranchChanged)($name);
+            }
+        }
+
+        return $result;
+    }
+
     public function repository(): ?GitRepository
     {
         return $this->repository;
@@ -169,6 +307,12 @@ final class GitPanel extends Widget
     public function setMessage(string $message): static
     {
         $this->messageEntry->setText($message);
+        return $this;
+    }
+
+    public function focusBranchEntry(): static
+    {
+        $this->branchEntry->raw()->grabFocus();
         return $this;
     }
 
@@ -304,6 +448,36 @@ final class GitPanel extends Widget
     public function activateRow(int $index): void
     {
         $this->openIndex($index);
+    }
+
+    private function populateBranches(): void
+    {
+        $this->clearBranchRows();
+        $current = $this->branch();
+
+        foreach ($this->branches() as $branch) {
+            $label = (new Label(($branch === $current ? '● ' : '') . $branch))
+                ->cssClass('git-branch-row');
+
+            $row = RawListBoxRow::new();
+            $row->setChild($label->raw());
+            $row->setActivatable(true);
+            $this->branchList->append($row);
+            $this->branchRows[] = $row;
+
+            if ($branch === $current) {
+                $this->branchList->selectRow($row);
+            }
+        }
+    }
+
+    private function clearBranchRows(): void
+    {
+        foreach ($this->branchRows as $row) {
+            $this->branchList->remove($row);
+        }
+
+        $this->branchRows = [];
     }
 
     private function buildRows(): void

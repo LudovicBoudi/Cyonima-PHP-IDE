@@ -70,15 +70,21 @@ d'outils. Le champ de message et **Commit** créent le commit des fichiers
 indexés. La branche courante remplace le libellé statique dans la barre de
 statut, et le statut est rafraîchi après chaque sauvegarde. Les commandes
 Git sont aussi disponibles dans la palette : actualiser, indexer tout,
-afficher le diff du projet.
+afficher le diff du projet, changer ou créer une branche.
+
+Le bouton de branche ouvre un popover listant les branches locales, la branche
+courante étant marquée `●`. Un clic bascule via `git checkout`. Le champ
+« Nouvelle branche » et **Créer** lancent `git checkout -b`. Après une bascule
+réussie, le fichier courant est rechargé s'il n'a pas de modifications non
+enregistrées.
 
 Le diff d'un fichier s'ouvre dans l'onglet **DIFF** du panneau bas
 (`DiffPanel`) : vue en lecture seule colorée par GtkSourceView. Les fichiers
 suivis affichent leurs diffs indexé et non indexé ; un fichier non suivi est
 comparé à `/dev/null` pour montrer son contenu complet.
 
-Limites : pas de gestion de branches, de merge, de push/pull ni de résolution
-de conflits ; le diff est textuel, sans édition ni navigation entre hunks.
+Limites : pas de merge, rebase, push/pull, suppression ni renommage de
+branche ; le diff est textuel, sans édition ni navigation entre hunks.
 
 ## Onglets multiples
 
@@ -206,7 +212,7 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Git, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
