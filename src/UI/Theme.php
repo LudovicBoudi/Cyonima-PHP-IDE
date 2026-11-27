@@ -255,6 +255,30 @@ list row:selected {
     padding: 4px;
 }
 
+.search-options {
+    padding: 0 4px;
+}
+
+.search-toggle {
+    padding: 1px 8px;
+    min-height: 22px;
+    font-size: 12px;
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: #969696;
+}
+
+.search-toggle:hover {
+    background-color: #2a2d2e;
+    color: #cccccc;
+}
+
+.search-toggle.active {
+    background-color: #094771;
+    border-color: #007acc;
+    color: #ffffff;
+}
+
 .search-count {
     color: #8a8a8a;
     font-size: 11px;

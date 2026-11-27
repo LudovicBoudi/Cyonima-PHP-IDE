@@ -65,8 +65,15 @@ est lancée par Entrée ou par le bouton ; `ProjectSearch` parcourt récursiveme
 les fichiers texte du projet (1 Mio max, `vendor`, `node_modules`, `dist`,
 `build`, `build-dir` et `.git` exclus). Chaque résultat affiche
 `chemin:ligne  extrait` et un clic ouvre le fichier dans l'éditeur avec le
-curseur positionné sur la ligne. La recherche est insensible à la casse et
-limitée à 200 résultats ; il n'y a ni index ni remplacement pour l'instant.
+curseur positionné sur la ligne. La recherche est limitée à 200 résultats ; il
+n'y a ni index ni remplacement sélectif pour l'instant.
+
+Trois bascules s'appliquent à la recherche et au remplacement : casse (`Aa`),
+mot entier (`Ab|`) et expression régulière (`.*`). Le champ « Remplacer par »
+et le bouton « Tout remplacer » réécrivent toutes les occurrences des fichiers
+correspondants, puis rafraîchissent la liste. L'IDE affiche le bilan et
+recharge le fichier courant s'il a été modifié, sauf s'il reste des
+modifications non enregistrées.
 
 ## Fenêtre de démarrage
 
@@ -213,6 +220,6 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - les menus (Fichier, Édition, Affichage…) déclenchent les actions principales,
   mais restent gérés par l'IDE plutôt que par des `GAction` partagées ;
 - la barre de titre garde les boutons de fenêtre GNOME, simplement aplatis ;
-- la recherche projet est un parcours de fichiers sans index ni remplacement ;
+- la recherche projet est un parcours de fichiers sans index ni aperçu diff ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

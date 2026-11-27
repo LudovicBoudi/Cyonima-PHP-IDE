@@ -928,6 +928,18 @@ Trois écarts assumés par rapport au miroir strict du C :
   de résultats et une liste activable ; l’IDE ouvre le fichier et positionne
   le curseur sur la ligne. Recherche insensible à la casse, sans index.
 
+90. **Remplacement projet** : `ProjectSearch::replace` réutilise le même
+  parcours et les mêmes exclusions que la recherche. Les options
+  `caseSensitive`, `wholeWord` et `regex` s’appliquent à la recherche comme au
+  remplacement ; les références arrière (`$1`) sont supportées en mode regex.
+  Le remplacement est appliqué fichier par fichier avec verrou d’écriture et
+  renvoie le détail (`files`, `changes`, `replacements`). `SearchPanel` expose
+  les trois bascules, un champ de remplacement, « Tout remplacer », et
+  rafraîchit les résultats. L’IDE notifie le bilan et recharge le fichier
+  courant s’il a été modifié, sauf s’il contient des changements non
+  enregistrés. Limitations : pas d’aperçu diff, pas d’annulation globale, pas
+  de remplacement sélectif par résultat.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

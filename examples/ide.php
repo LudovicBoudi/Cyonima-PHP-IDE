@@ -554,6 +554,38 @@ $searchPanel = new SearchPanel(
     function (string $path, int $line) use ($openFile): void {
         $openFile($path, $line);
     },
+    function (array $report) use ($root, $window, $openFile, &$currentFile, &$dirty): void {
+        if ($report['replacements'] === 0) {
+            $window->toast('Aucun remplacement');
+            return;
+        }
+
+        $window->toast(sprintf(
+            '%d remplacement(s) dans %d fichier(s)',
+            $report['replacements'],
+            $report['changes'],
+        ));
+
+        if ($currentFile === null) {
+            return;
+        }
+
+        foreach ($report['files'] as $file) {
+            $absolute = $root . '/' . $file['path'];
+
+            if (realpath($absolute) !== realpath($currentFile)) {
+                continue;
+            }
+
+            if ($dirty) {
+                $window->toast('Fichier courant modifié : non rechargé après remplacement', 8000);
+                return;
+            }
+
+            $openFile($absolute);
+            return;
+        }
+    },
 );
 
 $panelTitle = (new Label('EXPLORER'))->cssClass('panel-header')->expand(true, false);

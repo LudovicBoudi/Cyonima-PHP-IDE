@@ -9727,6 +9727,162 @@ T::same(2, $searchOpened[1] ?? null, 'recherche UI : ligne ouverte');
 
 $removeTree($searchRoot);
 
+// ---------------------------------------------------------------------------
+T::section('65. IDE — remplacement projet');
+
+$replaceRoot = sys_get_temp_dir() . '/cyonima_replace_' . getmypid();
+$removeTree($replaceRoot);
+mkdir($replaceRoot . '/src', 0775, true);
+mkdir($replaceRoot . '/vendor', 0775, true);
+
+file_put_contents(
+    $replaceRoot . '/src/a.php',
+    "<?php\n\$value = 'Needle';\necho 'needle';\n",
+);
+file_put_contents(
+    $replaceRoot . '/src/b.md',
+    "# Notes\nUne needle minuscule.\nNeedle encore.\n",
+);
+file_put_contents(
+    $replaceRoot . '/src/c.php',
+    "needles needle\n",
+);
+file_put_contents(
+    $replaceRoot . '/vendor/ignored.php',
+    "needle\n",
+);
+
+T::same(
+    2,
+    count(ProjectSearch::search($replaceRoot, 'Needle', 200, ['caseSensitive' => true])),
+    'remplacement : recherche sensible à la casse',
+);
+T::same(
+    0,
+    count(ProjectSearch::search($replaceRoot, 'needl', 200, ['wholeWord' => true])),
+    'remplacement : mot entier exclut les préfixes',
+);
+T::same(
+    5,
+    count(ProjectSearch::search($replaceRoot, 'n[a-z]+dle', 200, ['regex' => true])),
+    'remplacement : recherche par expression régulière',
+);
+
+try {
+    ProjectSearch::search($replaceRoot, '(', 200, ['regex' => true]);
+    T::ok(false, 'remplacement : expression invalide signalée');
+} catch (\InvalidArgumentException) {
+    T::ok(true, 'remplacement : expression invalide signalée');
+}
+
+$replaceReport = ProjectSearch::replace($replaceRoot, 'needle', 'thread');
+T::same(3, $replaceReport['changes'], 'remplacement : fichiers modifiés');
+T::same(6, $replaceReport['replacements'], 'remplacement : occurrences remplacées');
+T::same(
+    "threads thread\n",
+    file_get_contents($replaceRoot . '/src/c.php'),
+    'remplacement : contenu réécrit',
+);
+T::same(
+    "needle\n",
+    file_get_contents($replaceRoot . '/vendor/ignored.php'),
+    'remplacement : vendor préservé',
+);
+T::same(
+    ['files' => [], 'changes' => 0, 'replacements' => 0],
+    ProjectSearch::replace($replaceRoot, ''),
+    'remplacement : requête vide',
+);
+
+file_put_contents($replaceRoot . '/src/d.php', "abc-123 abc-456\n");
+$regexReport = ProjectSearch::replace(
+    $replaceRoot,
+    'abc-(\d+)',
+    'id:$1',
+    ['regex' => true],
+);
+T::same(2, $regexReport['replacements'], 'remplacement : expression régulière');
+T::same(
+    "id:123 id:456\n",
+    file_get_contents($replaceRoot . '/src/d.php'),
+    'remplacement : références arrière',
+);
+
+file_put_contents($replaceRoot . '/src/e.php', "needles needle\n");
+$wordReport = ProjectSearch::replace(
+    $replaceRoot,
+    'needle',
+    'thread',
+    ['wholeWord' => true],
+);
+T::same(1, $wordReport['replacements'], 'remplacement : mot entier');
+T::same(
+    "needles thread\n",
+    file_get_contents($replaceRoot . '/src/e.php'),
+    'remplacement : mot entier préservé',
+);
+
+file_put_contents($replaceRoot . '/src/f.php', "Needle needle\n");
+$caseReport = ProjectSearch::replace(
+    $replaceRoot,
+    'Needle',
+    'Thread',
+    ['caseSensitive' => true],
+);
+T::same(1, $caseReport['replacements'], 'remplacement : casse respectée');
+T::same(
+    "Thread needle\n",
+    file_get_contents($replaceRoot . '/src/f.php'),
+    'remplacement : casse préservée',
+);
+
+$uiRoot = sys_get_temp_dir() . '/cyonima_replace_ui_' . getmypid();
+$removeTree($uiRoot);
+mkdir($uiRoot . '/src', 0775, true);
+file_put_contents($uiRoot . '/src/one.php', "alpha beta alpha\n");
+file_put_contents($uiRoot . '/src/two.php', "Alpha\n");
+
+$replaceUiReport = null;
+$replacePanel = new SearchPanel(
+    $uiRoot,
+    function (string $path, int $line): void {
+    },
+    function (array $report) use (&$replaceUiReport): void {
+        $replaceUiReport = $report;
+    },
+);
+
+T::same(2, $replacePanel->search('alpha'), 'remplacement UI : résultats');
+$replacePanel->setOption('caseSensitive', true);
+T::same(1, $replacePanel->search('alpha'), 'remplacement UI : option casse');
+$replacePanel->setOption('caseSensitive', false);
+$replacePanel->setOption('wholeWord', true);
+T::same(0, $replacePanel->search('alp'), 'remplacement UI : option mot entier');
+$replacePanel->setOption('wholeWord', false);
+$replacePanel->setOption('regex', true);
+T::same(0, $replacePanel->search('('), 'remplacement UI : expression invalide');
+$replacePanel->setOption('regex', false);
+T::same(
+    ['caseSensitive' => false, 'wholeWord' => false, 'regex' => false],
+    $replacePanel->options(),
+    'remplacement UI : options rétablies',
+);
+
+$replacePanel->setQuery('alpha')->setReplacement('gamma');
+$uiReport = $replacePanel->replaceAll();
+T::same(2, $uiReport['changes'], 'remplacement UI : fichiers modifiés');
+T::same(3, $uiReport['replacements'], 'remplacement UI : occurrences');
+T::same($uiReport, $replaceUiReport, 'remplacement UI : notification');
+T::same(0, $replacePanel->resultCount(), 'remplacement UI : résultats rafraîchis');
+T::same(
+    "gamma beta gamma\n",
+    file_get_contents($uiRoot . '/src/one.php'),
+    'remplacement UI : contenu réécrit',
+);
+
+$removeTree($uiRoot);
+$removeTree($replaceRoot);
+
 $removeTree($templateRoot);
 
 $removeTree($phpRoot);
