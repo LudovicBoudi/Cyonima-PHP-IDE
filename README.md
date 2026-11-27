@@ -20,7 +20,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | 🟡 design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition, terminal, LSP, Xdebug ; reste la recherche projet |
+| M5 — IDE MVP | ✅ design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition, terminal, LSP, Xdebug, recherche projet |
 | M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 56 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -294,10 +294,13 @@ un fichier temporaire et l'envoie au shell du terminal.
 
 Interface inspirée de Visual Studio : fenêtre de démarrage avec modèles,
 barre de menus fonctionnelle (Fichier, Édition, Affichage, Exécuter, Aide),
-barre d'activité, panneau latéral redimensionnable (explorateur, débogage,
-assets, propriétés), onglet d'éditeur, panneau terminal et barre de statut bleue.
+barre d'activité, panneau latéral redimensionnable (explorateur, recherche,
+débogage, assets, propriétés), onglet d'éditeur, panneau terminal et barre de
+statut bleue.
 IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré) avec
 filtrage de la liste pendant la frappe.
+La recherche projet parcourt les fichiers texte, exclut les dépendances et
+ouvre un résultat à la ligne exacte.
 Détail dans [`docs/design.md`](docs/design.md).
 
 ![Aperçu de l'IDE](docs/screenshot-ide.png)
@@ -491,7 +494,80 @@ $ids = $todos->hasMany('todos', 'user_id', $user->id)->ids();
 ```
 
 `BelongsTo` expose `row()`, `exists()`, `id()` ; `HasMany` expose `ids()`,
-`count()` et `exists()`. Voir `examples/native-relations.php`.
+`count()`, `exists()` et `statement()`. Voir `examples/native-relations.php`.
+
+Eager loading simple :
+
+```php
+$owners = $users->findMany($userIds);
+$byId = [];
+
+while ($owners->step() === 1) {
+    $row = $owners->row();
+    $user = new User('');
+    $user->hydrate($row);
+    $byId[strval($user->id)] = $user;
+}
+
+$owners->finalize();
+```
+
+`findMany`, `whereIn` et `HasMany::statement()` exécutent une seule requête
+préparée pour N identifiants. Voir `examples/native-eager.php`.
+
+Query builder :
+
+```php
+$statement = $users->query()
+    ->whereString('name', 'LIKE', 'A%')
+    ->orderBy('id', false)
+    ->limit(10)
+    ->get();
+
+while ($statement->step() === 1) {
+    $row = $statement->row();
+}
+
+$statement->finalize();
+```
+
+Voir `examples/native-query-builder.php`.
+
+Jointures typées :
+
+```php
+$statement = $users->query()
+    ->join('tasks', 'tasks.user_id', 'users.id')
+    ->selectAs('users.name', 'user_name')
+    ->selectAs('tasks.title', 'task_title')
+    ->get();
+```
+
+`join` et `leftJoin` acceptent des références qualifiées (`table.colonne`) ;
+`selectAs` évite les collisions de row maps. Voir `examples/native-joins.php`.
+
+Les requêtes préparées sont disponibles :
+
+```php
+$insert = $db->prepare('INSERT INTO users (name) VALUES (?)');
+$insert->bindString(1, "O'Reilly");
+$insert->execute();
+$insert->finalize();
+
+$select = $db->prepare('SELECT * FROM users WHERE id = ?');
+$select->bindInt(1, 1);
+
+if ($select->step() === 1) {
+    $row = $select->row();
+}
+```
+
+`Statement` fournit `bind*`, `step`, `execute`, `reset`, `finalize`,
+`column*`, `row` et `error`. Voir `examples/native-prepared.php`.
+
+Les helpers ORM (`Table`, `Repository`, `BelongsTo`, `HasMany`) utilisent
+désormais ces requêtes préparées pour toutes les valeurs ; `quote()` reste
+disponible pour le SQL personnalisé.
 
 La validation typée fournit des règles réutilisables :
 
@@ -523,8 +599,10 @@ d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
 `?string`, `?Classe`, `?Interface`, `?callable`, les namespaces, les imports et
 la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, la
 console native `Cyonima\Console` (commandes, arguments, options, aide), la
-couche `Cyonima\Database` (connexion SQLite, repositories, migrations), l’ORM
-léger (`Entity`, `Table`, relations `BelongsTo`/`HasMany`, transactions), la
+couche `Cyonima\Database` (connexion SQLite, repositories, migrations,
+requêtes préparées), l’ORM
+léger (`Entity`, `Table`, relations `BelongsTo`/`HasMany`, eager loading
+simple, query builder, jointures typées, transactions), la
 validation typée `Cyonima\Validation`, les templates `.ui` compilés vers GTK,
 les fragments et includes, les listes GTK (`StringList`, `ObjectList`,
 `DropDown`, `ListBox`, `ListView`), les menus popover (`MenuButton`,

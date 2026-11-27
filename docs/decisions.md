@@ -881,6 +881,53 @@ Trois écarts assumés par rapport au miroir strict du C :
   `belongsTo`, validation, menu natif, raccourci, `ListView` et widgets
   préconstruits. Un mode `--auto` ferme l’application pour les tests.
 
+84. **Requêtes préparées SQLite** : `Connection::prepare()` crée un
+  `Statement` (`bindInt/Float/String/Bool/Null`, `step`, `execute`, `reset`,
+  `finalize`, `columnInt/Float/String/Bool`, `row`, `error`). Les statements
+  sont suivis dans un registre natif et utilisent `sqlite3_bind_*`,
+  `sqlite3_step`, `sqlite3_column_*`. Les erreurs de préparation lèvent une
+  `RuntimeException`. Le `Statement` doit être finalisé explicitement. Les
+  helpers ORM continuent d’utiliser `quote()`.
+
+85. **ORM sur requêtes préparées** : `Table::insert`, `update`, `find`,
+  `findWhere`, `delete`, `exists`, `count`, `ids` et les méthodes `HasMany`
+  utilisent `Connection::prepare`, `bind*`, `step` et `finalize` au lieu de
+  concaténer les valeurs. Les valeurs restent des `array<string,string>` et
+  sont liées en `string` ; les identifiants entiers sont liés en `int`.
+  `Connection::quote()` reste disponible pour le SQL personnalisé.
+
+86. **Eager loading simple** : `Table::findMany(array<int>)` et
+  `whereIn(column, array<int>)` préparent un `SELECT ... WHERE ... IN (...)`
+  et retournent un `Statement` à parcourir. `HasMany::statement()` fait de même
+  pour une clé étrangère. Les résultats restent des row maps hydratées
+  explicitement dans des maps `array<string,Entity>` indexées par id. Une seule
+  requête remplace N appels à `find()`. Limitations : pas de graphe d’objets
+  automatique, pas de jointures typées, liste d’ids non paginée.
+
+87. **Query builder typé** : `Table::query()` / `Repository::query()`
+  retournent un `QueryBuilder` qui construit un `SELECT` préparé avec
+  `select(array<string>)`, `whereString/Int/Float/Bool`, `whereNull`,
+  `whereNotNull`, `orderBy`, `limit`, `offset`, `get()`, `count()` et
+  `exists()`. Les colonnes passent par la validation d’identifiants ; les
+  opérateurs sont limités à `=`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE` ; les
+  valeurs sont liées via `Statement`. Limitations : pas de jointures,
+  d’agrégats personnalisés ni de sous-requêtes.
+
+88. **Jointures typées** : `QueryBuilder::join` / `leftJoin` ajoutent des
+  `INNER JOIN` / `LEFT JOIN` avec table, colonne gauche et colonne droite.
+  `selectAs(column, alias)` permet des row maps sans collision ;
+  `Table::reference()` valide les références qualifiées (`users.name`). Les
+  conditions et `orderBy` acceptent aussi ces références. Les valeurs restent
+  liées par statements préparés. Limitations : pas d’alias de table, pas de
+  jointures multiples sur la même table, pas d’agrégats ni de sous-requêtes.
+
+89. **Recherche projet** : `ProjectSearch` parcourt récursivement les fichiers
+  texte sous un projet, exclut `vendor`, `node_modules`, `dist`, `build`,
+  `build-dir`, `.git`, limite la taille des fichiers et le nombre de résultats,
+  et ignore les contenus binaires. `SearchPanel` ajoute une requête, un compte
+  de résultats et une liste activable ; l’IDE ouvre le fichier et positionne
+  le curseur sur la ligne. Recherche insensible à la casse, sans index.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

@@ -64,6 +64,81 @@ final class SqliteModule implements NativeModule
                 ['handle' => 'int', 'value' => 'string'],
                 'string',
             ),
+            'sqlite_prepare' => new NativeFunction(
+                'sqlite_prepare',
+                ['handle' => 'int', 'sql' => 'string'],
+                'int',
+            ),
+            'sqlite_finalize' => new NativeFunction(
+                'sqlite_finalize',
+                ['statement' => 'int'],
+                'void',
+            ),
+            'sqlite_reset' => new NativeFunction(
+                'sqlite_reset',
+                ['statement' => 'int'],
+                'void',
+            ),
+            'sqlite_step' => new NativeFunction(
+                'sqlite_step',
+                ['statement' => 'int'],
+                'int',
+            ),
+            'sqlite_bind_int' => new NativeFunction(
+                'sqlite_bind_int',
+                ['statement' => 'int', 'index' => 'int', 'value' => 'int'],
+                'bool',
+            ),
+            'sqlite_bind_float' => new NativeFunction(
+                'sqlite_bind_float',
+                ['statement' => 'int', 'index' => 'int', 'value' => 'float'],
+                'bool',
+            ),
+            'sqlite_bind_string' => new NativeFunction(
+                'sqlite_bind_string',
+                ['statement' => 'int', 'index' => 'int', 'value' => 'string'],
+                'bool',
+            ),
+            'sqlite_bind_bool' => new NativeFunction(
+                'sqlite_bind_bool',
+                ['statement' => 'int', 'index' => 'int', 'value' => 'bool'],
+                'bool',
+            ),
+            'sqlite_bind_null' => new NativeFunction(
+                'sqlite_bind_null',
+                ['statement' => 'int', 'index' => 'int'],
+                'bool',
+            ),
+            'sqlite_column_int' => new NativeFunction(
+                'sqlite_column_int',
+                ['statement' => 'int', 'index' => 'int'],
+                'int',
+            ),
+            'sqlite_column_float' => new NativeFunction(
+                'sqlite_column_float',
+                ['statement' => 'int', 'index' => 'int'],
+                'float',
+            ),
+            'sqlite_column_string' => new NativeFunction(
+                'sqlite_column_string',
+                ['statement' => 'int', 'index' => 'int'],
+                'string',
+            ),
+            'sqlite_column_bool' => new NativeFunction(
+                'sqlite_column_bool',
+                ['statement' => 'int', 'index' => 'int'],
+                'bool',
+            ),
+            'sqlite_statement_row_string' => new NativeFunction(
+                'sqlite_statement_row_string',
+                ['statement' => 'int'],
+                'array<string,string>',
+            ),
+            'sqlite_statement_error' => new NativeFunction(
+                'sqlite_statement_error',
+                ['statement' => 'int'],
+                'string',
+            ),
         ];
     }
 
@@ -78,6 +153,47 @@ final class SqliteModule implements NativeModule
             static sqlite3 *cy_native_sqlite_db(cy_int handle)
             {
                 return (sqlite3 *) (intptr_t) handle;
+            }
+
+            static sqlite3_stmt **cy_native_sqlite_statements = NULL;
+            static int cy_native_sqlite_statement_count = 0;
+            static int cy_native_sqlite_statement_capacity = 0;
+
+            static cy_int cy_native_sqlite_register_statement(sqlite3_stmt *statement)
+            {
+                if (statement == NULL) {
+                    return 0;
+                }
+
+                if (cy_native_sqlite_statement_count >= cy_native_sqlite_statement_capacity) {
+                    int capacity = cy_native_sqlite_statement_capacity == 0
+                        ? 8
+                        : cy_native_sqlite_statement_capacity * 2;
+                    sqlite3_stmt **statements = (sqlite3_stmt **) realloc(
+                        cy_native_sqlite_statements,
+                        sizeof(sqlite3_stmt *) * (size_t) capacity
+                    );
+
+                    if (statements == NULL) {
+                        return 0;
+                    }
+
+                    cy_native_sqlite_statements = statements;
+                    cy_native_sqlite_statement_capacity = capacity;
+                }
+
+                cy_native_sqlite_statements[cy_native_sqlite_statement_count] = statement;
+
+                return ++cy_native_sqlite_statement_count;
+            }
+
+            static sqlite3_stmt *cy_native_sqlite_statement(cy_int handle)
+            {
+                if (handle <= 0 || handle > cy_native_sqlite_statement_count) {
+                    return NULL;
+                }
+
+                return cy_native_sqlite_statements[handle - 1];
             }
 
             static cy_int fn_sqlite_open(const char *path)
@@ -334,6 +450,238 @@ final class SqliteModule implements NativeModule
                 sqlite3_free(quoted);
 
                 return copy;
+            }
+
+            static cy_int fn_sqlite_prepare(cy_int handle, const char *sql)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_prepare(handle, sql);
+
+                if (statement == NULL) {
+                    return 0;
+                }
+
+                cy_int result = cy_native_sqlite_register_statement(statement);
+
+                if (result == 0) {
+                    sqlite3_finalize(statement);
+                }
+
+                return result;
+            }
+
+            static void fn_sqlite_finalize(cy_int handle)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return;
+                }
+
+                sqlite3_finalize(statement);
+                cy_native_sqlite_statements[handle - 1] = NULL;
+            }
+
+            static void fn_sqlite_reset(cy_int handle)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return;
+                }
+
+                sqlite3_reset(statement);
+                sqlite3_clear_bindings(statement);
+            }
+
+            static cy_int fn_sqlite_step(cy_int handle)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return -1;
+                }
+
+                int status = sqlite3_step(statement);
+
+                if (status == SQLITE_ROW) {
+                    return 1;
+                }
+
+                if (status == SQLITE_DONE) {
+                    return 0;
+                }
+
+                return -1;
+            }
+
+            static bool fn_sqlite_bind_int(cy_int handle, cy_int index, cy_int value)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL || index <= 0) {
+                    return false;
+                }
+
+                return sqlite3_bind_int64(
+                    statement,
+                    (int) index,
+                    (sqlite3_int64) value
+                ) == SQLITE_OK;
+            }
+
+            static bool fn_sqlite_bind_float(cy_int handle, cy_int index, cy_float value)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL || index <= 0) {
+                    return false;
+                }
+
+                return sqlite3_bind_double(
+                    statement,
+                    (int) index,
+                    (double) value
+                ) == SQLITE_OK;
+            }
+
+            static bool fn_sqlite_bind_string(cy_int handle, cy_int index, const char *value)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL || index <= 0) {
+                    return false;
+                }
+
+                return sqlite3_bind_text(
+                    statement,
+                    (int) index,
+                    value == NULL ? "" : value,
+                    -1,
+                    SQLITE_TRANSIENT
+                ) == SQLITE_OK;
+            }
+
+            static bool fn_sqlite_bind_bool(cy_int handle, cy_int index, bool value)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL || index <= 0) {
+                    return false;
+                }
+
+                return sqlite3_bind_int(
+                    statement,
+                    (int) index,
+                    value ? 1 : 0
+                ) == SQLITE_OK;
+            }
+
+            static bool fn_sqlite_bind_null(cy_int handle, cy_int index)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL || index <= 0) {
+                    return false;
+                }
+
+                return sqlite3_bind_null(statement, (int) index) == SQLITE_OK;
+            }
+
+            static cy_int fn_sqlite_column_int(cy_int handle, cy_int index)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return 0;
+                }
+
+                return (cy_int) sqlite3_column_int64(statement, (int) index);
+            }
+
+            static cy_float fn_sqlite_column_float(cy_int handle, cy_int index)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return 0.0;
+                }
+
+                return (cy_float) sqlite3_column_double(statement, (int) index);
+            }
+
+            static const char *fn_sqlite_column_string(cy_int handle, cy_int index)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return "";
+                }
+
+                const unsigned char *text = sqlite3_column_text(
+                    statement,
+                    (int) index
+                );
+
+                if (text == NULL) {
+                    return "";
+                }
+
+                return cy_strdup((const char *) text);
+            }
+
+            static bool fn_sqlite_column_bool(cy_int handle, cy_int index)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return false;
+                }
+
+                return sqlite3_column_int(statement, (int) index) != 0;
+            }
+
+            static CyMap *fn_sqlite_statement_row_string(cy_int handle)
+            {
+                CyMap *result = cy_map_new();
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return result;
+                }
+
+                int columns = sqlite3_column_count(statement);
+
+                for (int index = 0; index < columns; index++) {
+                    const char *name = sqlite3_column_name(statement, index);
+                    const unsigned char *text = sqlite3_column_text(statement, index);
+                    const char *value = "";
+
+                    if (text != NULL) {
+                        value = cy_strdup((const char *) text);
+                    }
+
+                    cy_map_set_string_string(
+                        result,
+                        cy_strdup(name == NULL ? "" : name),
+                        value
+                    );
+                }
+
+                return result;
+            }
+
+            static const char *fn_sqlite_statement_error(cy_int handle)
+            {
+                sqlite3_stmt *statement = cy_native_sqlite_statement(handle);
+
+                if (statement == NULL) {
+                    return "";
+                }
+
+                sqlite3 *db = sqlite3_db_handle(statement);
+                const char *message = sqlite3_errmsg(db);
+
+                return cy_strdup(message == NULL ? "" : message);
             }
             C;
     }

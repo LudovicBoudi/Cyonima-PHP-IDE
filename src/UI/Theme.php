@@ -251,6 +251,26 @@ list row:selected {
     padding: 4px 8px;
 }
 
+.search-toolbar {
+    padding: 4px;
+}
+
+.search-count {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
+.search-result {
+    color: #cccccc;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+
+.search-result:hover {
+    background-color: #2a2d2e;
+}
+
 .tab-bar {
     background-color: #252526;
     border-bottom: 1px solid #3f3f46;

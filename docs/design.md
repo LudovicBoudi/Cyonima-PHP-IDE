@@ -30,7 +30,7 @@ Composants :
 | Barre de menus | `MenuBar` : boutons + `GtkPopover` |
 | Actions | `IconButton` (Enregistrer, Déboguer, Exécuter) |
 | Barre d'activité | `Box` vertical de 48 px, icônes symboliques, indicateur bleu |
-| Panneau latéral | `EXPLORER`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
+| Panneau latéral | `EXPLORER`, `RECHERCHE`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
 | Onglet | nom du fichier, point de modification, fermeture |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
 | Panneau bas | onglets PROBLÈMES / SORTIE / TERMINAL + VTE |
@@ -57,6 +57,16 @@ La zone latérale et l'éditeur sont dans un `GtkPaned` horizontal (position
 initiale 270 px, largeur minimale 180 px). `resize_start_child=false` : quand on
 redimensionne la fenêtre, c'est l'éditeur qui grandit, pas l'explorateur. Le
 séparateur se glisse à la souris.
+
+## Recherche projet
+
+Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
+est lancée par Entrée ou par le bouton ; `ProjectSearch` parcourt récursivement
+les fichiers texte du projet (1 Mio max, `vendor`, `node_modules`, `dist`,
+`build`, `build-dir` et `.git` exclus). Chaque résultat affiche
+`chemin:ligne  extrait` et un clic ouvre le fichier dans l'éditeur avec le
+curseur positionné sur la ligne. La recherche est insensible à la casse et
+limitée à 200 résultats ; il n'y a ni index ni remplacement pour l'instant.
 
 ## Fenêtre de démarrage
 
@@ -200,7 +210,9 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 
 ## Écarts assumés avec Visual Studio
 
-- les menus (Fichier, Édition…) sont décoratifs pour l'instant ;
+- les menus (Fichier, Édition, Affichage…) déclenchent les actions principales,
+  mais restent gérés par l'IDE plutôt que par des `GAction` partagées ;
 - la barre de titre garde les boutons de fenêtre GNOME, simplement aplatis ;
-- pas encore de panneau Recherche ni de gestion de solutions ;
+- la recherche projet est un parcours de fichiers sans index ni remplacement ;
+- pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

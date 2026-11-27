@@ -1056,8 +1056,46 @@ echo $migrator->run();
 ```text
 exec, queryInt, queryFloat, queryBool, queryString, row, columnInt
 quote, lastInsertId, changes, error
-begin, commit, rollback, transaction(callable), close
+begin, commit, rollback, transaction(callable), prepare(sql), close
 ```
+
+### Requêtes préparées
+
+```php
+$insert = $db->prepare(
+    'INSERT INTO users (name, score) VALUES (?, ?)'
+);
+$insert->bindString(1, "O'Reilly");
+$insert->bindInt(2, 42);
+$insert->execute();
+$insert->finalize();
+
+$select = $db->prepare('SELECT * FROM users WHERE id = ?');
+$select->bindInt(1, 1);
+
+if ($select->step() === 1) {
+    $name = $select->columnString(1);
+    $row = $select->row();
+}
+
+$select->finalize();
+```
+
+`Statement` :
+
+```text
+bindInt, bindFloat, bindString, bindBool, bindNull
+step() → 1 ligne, 0 terminé, -1 erreur
+execute() → bool
+reset(), finalize()
+columnInt, columnFloat, columnString, columnBool
+row() → array<string,string>
+error()
+```
+
+Les index de bind sont 1-based. `Connection::prepare()` lève une
+`RuntimeException` si la requête est invalide. `finalize()` est explicite ; un
+statement non finalisé reste ouvert jusqu’à la fin du processus.
 
 `Repository` :
 
@@ -1076,21 +1114,27 @@ tableName, count, exists(id), delete(id), row, execute, lastId, changes, store
 Nouvelles fonctions du module SQLite :
 
 ```text
-sqlite_query_row_string    → array<string,string>
-sqlite_query_column_int    → array<int>
-sqlite_quote               → échappement SQL (%Q)
+sqlite_query_row_string          → array<string,string>
+sqlite_query_column_int          → array<int>
+sqlite_quote                     → échappement SQL (%Q)
+sqlite_prepare, sqlite_step, sqlite_reset, sqlite_finalize
+sqlite_bind_int/float/string/bool/null
+sqlite_column_int/float/string/bool
+sqlite_statement_row_string, sqlite_statement_error
 ```
 
 Limites actuelles :
 
 - helpers `exists`/`delete` supposent une clé primaire entière `id` ;
-- pas de requêtes préparées : `quote()` est fourni pour les valeurs ;
+- les helpers ORM utilisent encore `quote()` plutôt que les statements
+  préparés ;
 - les row maps sont des `array<string,string>` (caster avec `intval`,
   `floatval`, etc.) ;
 - pas de jointures typées ni de migrations descendantes.
 
 Un exemple complet est fourni dans
-[`examples/native-database.php`](../examples/native-database.php).
+[`examples/native-database.php`](../examples/native-database.php) et
+[`examples/native-prepared.php`](../examples/native-prepared.php).
 
 ### ORM léger
 
@@ -1204,9 +1248,12 @@ final class TodoRepository extends Repository
 insert(array<string,string>) → id
 update(id, array<string,string>) → bool
 find(id) / findWhere(column, value) → array<string,string>
+findMany(array<int>) → Statement
+whereIn(column, array<int>) → Statement
 delete(id), exists(id), count(), ids() → array<int>
 belongsTo(table, id) → BelongsTo
 hasMany(table, foreignKey, id) → HasMany
+query() → QueryBuilder
 ```
 
 Relations explicites :
@@ -1226,9 +1273,84 @@ $ids = $relation->ids();
 ```
 
 - `BelongsTo` expose `row()`, `exists()`, `id()` ;
-- `HasMany` expose `ids()`, `count()`, `exists()` ;
+- `HasMany` expose `ids()`, `count()`, `exists()`, `statement()` ;
 - les identifiants de table et de clé étrangère sont validés ;
 - l’hydratation des objets reste explicite.
+
+Eager loading simple :
+
+```php
+$owners = $users->findMany($userIds);
+$byId = [];
+
+while ($owners->step() === 1) {
+    $row = $owners->row();
+    $user = new User('');
+    $user->hydrate($row);
+    $byId[strval($user->id)] = $user;
+}
+
+$owners->finalize();
+
+$statement = $users->hasMany('todos', 'user_id', $user->id)->statement();
+
+while ($statement->step() === 1) {
+    $row = $statement->row();
+    // hydratation
+}
+
+$statement->finalize();
+```
+
+`findMany()` et `whereIn()` exécutent une seule requête préparée pour N
+identifiants, au lieu de N appels à `find()`. Le statement est à finaliser.
+
+Query builder typé :
+
+```php
+$statement = $users->query()
+    ->whereString('name', 'LIKE', 'A%')
+    ->orderBy('id', false)
+    ->limit(10)
+    ->offset(0)
+    ->get();
+
+while ($statement->step() === 1) {
+    $row = $statement->row();
+}
+
+$statement->finalize();
+
+$count = $users->query()->whereBool('active', '=', true)->count();
+
+$statement = $users->query()
+    ->join('tasks', 'tasks.user_id', 'users.id')
+    ->selectAs('users.name', 'user_name')
+    ->selectAs('tasks.title', 'task_title')
+    ->orderBy('users.id', false)
+    ->get();
+```
+
+Méthodes :
+
+```text
+select(array<string>)
+selectAs(column, alias)
+join(table, left, right)
+leftJoin(table, left, right)
+whereString(column, operator, value)
+whereInt / whereFloat / whereBool
+whereNull(column) / whereNotNull(column)
+orderBy(column, descending)
+limit(n) / offset(n)
+get() → Statement
+count() / exists()
+```
+
+Opérateurs autorisés : `=`, `!=`, `<`, `<=`, `>`, `>=`, `LIKE`.
+Les colonnes et références (`users.name`, `tasks.user_id`) sont validées, les
+valeurs liées par requête préparée. Les alias évitent les collisions de noms
+dans les row maps.
 
 Transactions :
 
@@ -1249,14 +1371,18 @@ Limites de l’ORM :
 - mapping et hydratation écrits à la main, sans réflexion ;
 - clé primaire entière `id` et `lastInsertId()` (rowid SQLite) ;
 - relations explicites `BelongsTo` / `HasMany`, sans lazy loading, identity
-  map, cascade ni eager loading ;
-- `all()` et `HasMany::ids()` imposent une requête par identifiant ;
-- pas de requêtes préparées ni de query builder ;
+  map ni cascade ;
+- eager loading simple via `findMany` / `whereIn` / `HasMany::statement`, mais
+  pas de graphe d’objets automatique ;
+- les helpers ORM utilisent des requêtes préparées pour les valeurs ;
+- query builder : `SELECT` avec jointures `INNER`/`LEFT`, mais pas d’agrégats
+  personnalisés, de `GROUP BY`/`HAVING` ni de sous-requêtes ;
 - pas de timestamps automatiques, de soft delete ni de transactions imbriquées.
 
 Un exemple complet est fourni dans
 [`examples/native-orm.php`](../examples/native-orm.php) et
-[`examples/native-relations.php`](../examples/native-relations.php).
+[`examples/native-relations.php`](../examples/native-relations.php) et
+[`examples/native-eager.php`](../examples/native-eager.php).
 
 ### Validation typée
 
@@ -2357,6 +2483,11 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 21 | notifications de modèle et bindings réactifs | livré |
 | 22 | relations ORM `BelongsTo` / `HasMany` | livré |
 | 23 | composition de widgets et application de démonstration | livré |
+| 24 | requêtes préparées SQLite | livré |
+| 25 | ORM branché sur les requêtes préparées | livré |
+| 26 | eager loading simple | livré |
+| 27 | query builder typé | livré |
+| 28 | jointures typées `INNER` / `LEFT` | livré |
 
 La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la

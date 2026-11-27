@@ -27,6 +27,7 @@ use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
 use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\ScrolledWindow;
+use Cyonima\UI\SearchPanel;
 use Cyonima\UI\Terminal;
 use Cyonima\UI\Theme;
 
@@ -101,7 +102,7 @@ $terminal
     });
 
 // --- Ouverture / modification / sauvegarde --------------------------------
-$openFile = function (string $path) use (
+$openFile = function (string $path, int $line = 0) use (
     $editor,
     $window,
     $popup,
@@ -137,7 +138,13 @@ $openFile = function (string $path) use (
     $loading = true;
     $editor->language($language);
     $editor->setText((string) file_get_contents($path));
-    $editor->moveCursorToEnd();
+
+    if ($line > 0) {
+        $editor->moveCursorToLine($line - 1);
+    } else {
+        $editor->moveCursorToEnd();
+    }
+
     $loading = false;
 
     $currentFile = $path;
@@ -542,10 +549,16 @@ $projectProperties = new ProjectPropertiesPanel(
         $window->toast('Licence du projet mise à jour : ' . $license);
     },
 );
+$searchPanel = new SearchPanel(
+    $root,
+    function (string $path, int $line) use ($openFile): void {
+        $openFile($path, $line);
+    },
+);
 
 $panelTitle = (new Label('EXPLORER'))->cssClass('panel-header')->expand(true, false);
 $refreshButton = (new IconButton('view-refresh-symbolic', 'Rafraîchir'))
-    ->onClicked(function () use ($browser, $assetPanel, $projectProperties, &$activePanel): void {
+    ->onClicked(function () use ($browser, $assetPanel, $projectProperties, $searchPanel, &$activePanel): void {
         if ($activePanel === 'assets') {
             $assetPanel->refresh();
             return;
@@ -556,6 +569,11 @@ $refreshButton = (new IconButton('view-refresh-symbolic', 'Rafraîchir'))
             return;
         }
 
+        if ($activePanel === 'search') {
+            $searchPanel->refresh();
+            return;
+        }
+
         $browser->refresh();
     });
 $panelHeader = (new Box(Orientation::HORIZONTAL, 4))
@@ -563,12 +581,13 @@ $panelHeader = (new Box(Orientation::HORIZONTAL, 4))
     ->append($panelTitle, $refreshButton);
 
 $explorerPage = (new ScrolledWindow($browser))->expand();
+$searchPage = (new ScrolledWindow($searchPanel))->expand()->visible(false);
 $debugPage = (new ScrolledWindow($debugPanel))->expand()->visible(false);
 $assetsPage = (new ScrolledWindow($assetPanel))->expand()->visible(false);
 $propertiesPage = (new ScrolledWindow($projectProperties))->expand()->visible(false);
 
 $panelPages = (new Box(Orientation::VERTICAL, 0))
-    ->append($explorerPage, $debugPage, $assetsPage, $propertiesPage)
+    ->append($explorerPage, $searchPage, $debugPage, $assetsPage, $propertiesPage)
     ->expand();
 
 $sidePanel = (new Box(Orientation::VERTICAL, 0))
@@ -578,10 +597,12 @@ $sidePanel->raw()->setSizeRequest(180, -1);
 
 $showExplorer = function () use (
     $explorerPage,
+    $searchPage,
     $debugPage,
     $assetsPage,
     $propertiesPage,
     $explorerButton,
+    $searchButton,
     $debugActivity,
     $assetsButton,
     $settingsButton,
@@ -589,10 +610,12 @@ $showExplorer = function () use (
     &$activePanel,
 ): void {
     $explorerPage->visible(true);
+    $searchPage->visible(false);
     $debugPage->visible(false);
     $assetsPage->visible(false);
     $propertiesPage->visible(false);
     $explorerButton->cssClass('active');
+    $searchButton->removeCssClass('active');
     $debugActivity->removeCssClass('active');
     $assetsButton->removeCssClass('active');
     $settingsButton->removeCssClass('active');
@@ -600,12 +623,44 @@ $showExplorer = function () use (
     $activePanel = 'explorer';
 };
 
-$showDebugPanel = function () use (
+$showSearchPanel = function () use (
     $explorerPage,
+    $searchPage,
     $debugPage,
     $assetsPage,
     $propertiesPage,
     $explorerButton,
+    $searchButton,
+    $debugActivity,
+    $assetsButton,
+    $settingsButton,
+    $panelTitle,
+    $searchPanel,
+    &$activePanel,
+): void {
+    $explorerPage->visible(false);
+    $searchPage->visible(true);
+    $debugPage->visible(false);
+    $assetsPage->visible(false);
+    $propertiesPage->visible(false);
+    $searchButton->cssClass('active');
+    $explorerButton->removeCssClass('active');
+    $debugActivity->removeCssClass('active');
+    $assetsButton->removeCssClass('active');
+    $settingsButton->removeCssClass('active');
+    $panelTitle->text('RECHERCHE');
+    $activePanel = 'search';
+    $searchPanel->focus();
+};
+
+$showDebugPanel = function () use (
+    $explorerPage,
+    $searchPage,
+    $debugPage,
+    $assetsPage,
+    $propertiesPage,
+    $explorerButton,
+    $searchButton,
     $debugActivity,
     $assetsButton,
     $settingsButton,
@@ -613,11 +668,13 @@ $showDebugPanel = function () use (
     &$activePanel,
 ): void {
     $explorerPage->visible(false);
+    $searchPage->visible(false);
     $debugPage->visible(true);
     $assetsPage->visible(false);
     $propertiesPage->visible(false);
     $debugActivity->cssClass('active');
     $explorerButton->removeCssClass('active');
+    $searchButton->removeCssClass('active');
     $assetsButton->removeCssClass('active');
     $settingsButton->removeCssClass('active');
     $panelTitle->text('DÉBOGAGE');
@@ -626,10 +683,12 @@ $showDebugPanel = function () use (
 
 $showAssetsPanel = function () use (
     $explorerPage,
+    $searchPage,
     $debugPage,
     $assetsPage,
     $propertiesPage,
     $explorerButton,
+    $searchButton,
     $debugActivity,
     $assetsButton,
     $settingsButton,
@@ -638,11 +697,13 @@ $showAssetsPanel = function () use (
     &$activePanel,
 ): void {
     $explorerPage->visible(false);
+    $searchPage->visible(false);
     $debugPage->visible(false);
     $assetsPage->visible(true);
     $propertiesPage->visible(false);
     $assetsButton->cssClass('active');
     $explorerButton->removeCssClass('active');
+    $searchButton->removeCssClass('active');
     $debugActivity->removeCssClass('active');
     $settingsButton->removeCssClass('active');
     $panelTitle->text('ASSETS');
@@ -652,10 +713,12 @@ $showAssetsPanel = function () use (
 
 $showPropertiesPanel = function () use (
     $explorerPage,
+    $searchPage,
     $debugPage,
     $assetsPage,
     $propertiesPage,
     $explorerButton,
+    $searchButton,
     $debugActivity,
     $assetsButton,
     $settingsButton,
@@ -664,11 +727,13 @@ $showPropertiesPanel = function () use (
     &$activePanel,
 ): void {
     $explorerPage->visible(false);
+    $searchPage->visible(false);
     $debugPage->visible(false);
     $assetsPage->visible(false);
     $propertiesPage->visible(true);
     $settingsButton->cssClass('active');
     $explorerButton->removeCssClass('active');
+    $searchButton->removeCssClass('active');
     $debugActivity->removeCssClass('active');
     $assetsButton->removeCssClass('active');
     $panelTitle->text('PROPRIÉTÉS');
@@ -677,10 +742,10 @@ $showPropertiesPanel = function () use (
 };
 
 $explorerButton->onClicked(fn () => $showExplorer());
+$searchButton->onClicked(fn () => $showSearchPanel());
 $debugActivity->onClicked(fn () => $showDebugPanel());
 $assetsButton->onClicked(fn () => $showAssetsPanel());
 $designerActivity->onClicked(fn () => $openDesigner());
-$searchButton->onClicked(fn () => $window->toast('Recherche à venir'));
 $settingsButton->onClicked(fn () => $showPropertiesPanel());
 
 // --- Onglet, éditeur, terminal --------------------------------------------
@@ -864,6 +929,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Affichage', [
         ['label' => 'Explorateur', 'action' => $showExplorer],
+        ['label' => 'Recherche', 'action' => $showSearchPanel],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
         ['label' => 'Propriétés du projet', 'action' => $showPropertiesPanel],

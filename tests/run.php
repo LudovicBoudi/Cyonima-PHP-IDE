@@ -33,11 +33,13 @@ use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Compiler\Template\TemplateCompiler;
 use Cyonima\Runtime\FormDocument;
 use Cyonima\Runtime\ProjectFactory;
+use Cyonima\Runtime\ProjectSearch;
 use Cyonima\Runtime\RecentProjects;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
+use Cyonima\UI\SearchPanel;
 
 final class T
 {
@@ -6061,7 +6063,9 @@ T::ok(str_contains($ormCSource, 'CyObj_Cyonima__Database__Entity'), 'ORM : Entit
 T::ok(str_contains($ormCSource, 'CyObj_Cyonima__Database__Table'), 'ORM : Table');
 T::ok(str_contains($ormCSource, 'fn_sqlite_query_column_int'), 'ORM : colonne d’identifiants');
 T::ok(str_contains($ormCSource, 'fn_sqlite_query_row_string'), 'ORM : hydratation par row map');
-T::ok(str_contains($ormCSource, 'fn_sqlite_quote'), 'ORM : quoting des valeurs');
+T::ok(str_contains($ormCSource, 'fn_sqlite_prepare'), 'ORM : requêtes préparées');
+T::ok(str_contains($ormCSource, 'fn_sqlite_bind_string'), 'ORM : bind des valeurs');
+T::ok(str_contains($ormCSource, 'fn_sqlite_quote'), 'ORM : quoting disponible');
 
 $exampleOrmC = (new PhpCompiler($phpRoot))->compile(
     dirname(__DIR__) . '/examples/native-orm.php',
@@ -9321,6 +9325,407 @@ if (!$hasGcc || !$hasSqlite || !$demoGtk) {
         implode("\n", $demoOut),
     );
 }
+
+// ---------------------------------------------------------------------------
+T::section('60. SQLite — requêtes préparées');
+
+$preparedC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-prepared.php',
+    null,
+    'c',
+);
+$preparedCSource = (string) file_get_contents($preparedC['cPath']);
+T::ok(str_contains($preparedCSource, 'fn_sqlite_prepare'), 'préparé : préparation native');
+T::ok(str_contains($preparedCSource, 'fn_sqlite_bind_string'), 'préparé : bind string');
+T::ok(str_contains($preparedCSource, 'fn_sqlite_bind_int'), 'préparé : bind int');
+T::ok(str_contains($preparedCSource, 'fn_sqlite_bind_float'), 'préparé : bind float');
+T::ok(str_contains($preparedCSource, 'fn_sqlite_bind_null'), 'préparé : bind null');
+T::ok(str_contains($preparedCSource, 'fn_sqlite_statement_row_string'), 'préparé : row map');
+
+$preparedErrorSource = <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use RuntimeException;
+
+$db = new Connection(':memory:');
+
+try {
+    $statement = $db->prepare('SELECT FROM');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo "prepare-error\n";
+}
+PHP;
+
+$preparedErrorC = $compilePhp('prepared-error', $preparedErrorSource, 'c');
+T::ok(
+    str_contains((string) file_get_contents($preparedErrorC['cPath']), 'sqlite_prepare'),
+    'préparé : erreur de préparation',
+);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution des requêtes préparées non testée');
+} else {
+    $preparedElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-prepared.php',
+        null,
+        'elf',
+    );
+    $preparedExpected = <<<'TXT'
+O'Reilly 12.5
+O'Reilly note=
+comptes=2
+
+TXT;
+    T::same(
+        $preparedExpected,
+        shell_exec(escapeshellarg((string) $preparedElf['binaryPath']) . ' 2>&1'),
+        'préparé : binds, step, colonnes et row map',
+    );
+
+    $preparedErrorElf = $compilePhp('prepared-error', $preparedErrorSource, 'elf');
+    T::same(
+        "prepare-error\n",
+        shell_exec(escapeshellarg((string) $preparedErrorElf['binaryPath']) . ' 2>&1'),
+        'préparé : préparation invalide rejetée',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('61. ORM — eager loading simple');
+
+$eagerC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-eager.php',
+    null,
+    'c',
+);
+$eagerCSource = (string) file_get_contents($eagerC['cPath']);
+T::ok(
+    str_contains($eagerCSource, 'fn_Cyonima__Database__Table__findMany'),
+    'eager : findMany',
+);
+T::ok(
+    str_contains($eagerCSource, 'fn_Cyonima__Database__Table__whereIn'),
+    'eager : whereIn',
+);
+T::ok(
+    str_contains($eagerCSource, 'fn_Cyonima__Database__HasMany__statement'),
+    'eager : statement de relation',
+);
+T::ok(str_contains($eagerCSource, 'fn_sqlite_prepare'), 'eager : requête préparée');
+
+$eagerGuardSource = <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Table;
+use RuntimeException;
+
+$db = new Connection(':memory:');
+$db->exec('CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER)');
+$table = new Table($db, 'tasks');
+
+try {
+    $statement = $table->whereIn('user_id; DROP', [1]);
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'guard=', $error->getMessage(), "\n";
+}
+PHP;
+
+$eagerGuardC = $compilePhp('eager-guard', $eagerGuardSource, 'c');
+T::ok(
+    str_contains((string) file_get_contents($eagerGuardC['cPath']), 'whereIn'),
+    'eager : garde d’identifiant',
+);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution de l’eager loading non testée');
+} else {
+    $eagerElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-eager.php',
+        null,
+        'elf',
+    );
+    $eagerExpected = <<<'TXT'
+utilisateurs=2 Alice Bob
+tâches=3
+tâches Alice=2
+- Première
+- Deuxième
+vide=0
+
+TXT;
+    T::same(
+        $eagerExpected,
+        shell_exec(escapeshellarg((string) $eagerElf['binaryPath']) . ' 2>&1'),
+        'eager : findMany, whereIn et relation par statement',
+    );
+
+    $eagerGuardElf = $compilePhp('eager-guard', $eagerGuardSource, 'elf');
+    T::same(
+        "guard=identifiant SQL invalide : user_id; DROP\n",
+        shell_exec(escapeshellarg((string) $eagerGuardElf['binaryPath']) . ' 2>&1'),
+        'eager : garde d’identifiant à l’exécution',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('62. ORM — query builder typé');
+
+$queryC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-query-builder.php',
+    null,
+    'c',
+);
+$queryCSource = (string) file_get_contents($queryC['cPath']);
+T::ok(
+    str_contains($queryCSource, 'CyObj_Cyonima__Database__QueryBuilder'),
+    'query builder : classe QueryBuilder',
+);
+T::ok(
+    str_contains($queryCSource, 'CyObj_Cyonima__Database__QueryCondition'),
+    'query builder : conditions',
+);
+T::ok(str_contains($queryCSource, 'fn_sqlite_prepare'), 'query builder : SQL préparé');
+
+$queryGuardSource = <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Table;
+use RuntimeException;
+
+$db = new Connection(':memory:');
+$db->exec('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, note TEXT)');
+$items = new Table($db, 'items');
+$items->insert(['name' => 'Alice', 'note' => '']);
+$items->insert(['name' => 'Bob', 'note' => 'yes']);
+
+$null = $items->query()->whereNull('note');
+echo 'null=', $null->count(), "\n";
+$notNull = $items->query()->whereNotNull('note');
+echo 'notnull=', $notNull->count(), "\n";
+
+try {
+    $items->query()->whereString('name', 'DROP', 'x');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'operator=', $error->getMessage(), "\n";
+}
+
+try {
+    $items->query()->whereString('name; DROP', '=', 'x');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'column=', $error->getMessage(), "\n";
+}
+
+try {
+    $items->query()->limit(-1);
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'limit=', $error->getMessage(), "\n";
+}
+PHP;
+
+file_put_contents($phpRoot . '/src/query-guard.php', $queryGuardSource);
+
+$queryGuardC = (new PhpCompiler($phpRoot))->compile(
+    $phpRoot . '/src/query-guard.php',
+    null,
+    'c',
+);
+$queryGuardCSource = (string) file_get_contents($queryGuardC['cPath']);
+T::ok(
+    str_contains($queryGuardCSource, 'QueryBuilder__whereNull'),
+    'query builder : whereNull',
+);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution du query builder non testée');
+} else {
+    $queryElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-query-builder.php',
+        null,
+        'elf',
+    );
+    $queryExpected = <<<'TXT'
+Carol 30
+count=1
+exists=yes
+active=2 Alice Carol
+float=Bob
+offset=Bob
+
+TXT;
+    T::same(
+        $queryExpected,
+        shell_exec(escapeshellarg((string) $queryElf['binaryPath']) . ' 2>&1'),
+        'query builder : where, order, limit, offset, count',
+    );
+
+    $guardElf = (new PhpCompiler($phpRoot))->compile(
+        $phpRoot . '/src/query-guard.php',
+        null,
+        'elf',
+    );
+    $guardExpected = <<<'TXT'
+null=0
+notnull=2
+operator=opérateur SQL invalide : DROP
+column=identifiant SQL invalide : name; DROP
+limit=limite négative
+
+TXT;
+    T::same(
+        $guardExpected,
+        shell_exec(escapeshellarg((string) $guardElf['binaryPath']) . ' 2>&1'),
+        'query builder : null et gardes',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('63. ORM — jointures typées');
+
+$joinC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-joins.php',
+    null,
+    'c',
+);
+$joinCSource = (string) file_get_contents($joinC['cPath']);
+T::ok(
+    str_contains($joinCSource, 'CyObj_Cyonima__Database__QueryJoin'),
+    'jointures : classe QueryJoin',
+);
+T::ok(
+    str_contains($joinCSource, 'fn_Cyonima__Database__QueryBuilder__join'),
+    'jointures : méthode join',
+);
+T::ok(
+    str_contains($joinCSource, 'fn_Cyonima__Database__QueryBuilder__leftJoin'),
+    'jointures : méthode leftJoin',
+);
+T::ok(
+    str_contains($joinCSource, 'fn_Cyonima__Database__QueryBuilder__selectAs'),
+    'jointures : alias de colonne',
+);
+
+$joinGuardSource = <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Table;
+use RuntimeException;
+
+$db = new Connection(':memory:');
+$db->exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+$db->exec('CREATE TABLE tasks (id INTEGER PRIMARY KEY, user_id INTEGER)');
+$users = new Table($db, 'users');
+
+try {
+    $users->query()->join('tasks', 'tasks.user_id', 'users.id; DROP');
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'join=', $error->getMessage(), "\n";
+}
+PHP;
+
+file_put_contents($phpRoot . '/src/join-guard.php', $joinGuardSource);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution des jointures non testée');
+} else {
+    $joinElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-joins.php',
+        null,
+        'elf',
+    );
+    $joinExpected = <<<'TXT'
+Alice / Compilateur
+Alice / Templates
+Bob / ORM
+inner=3
+Alice / Compilateur
+Alice / Templates
+Bob / ORM
+Carol / —
+left=4
+filtered=1
+guard=identifiant SQL invalide : tasks; DROP
+
+TXT;
+    T::same(
+        $joinExpected,
+        shell_exec(escapeshellarg((string) $joinElf['binaryPath']) . ' 2>&1'),
+        'jointures : inner, left, where et alias',
+    );
+
+    $joinGuardElf = (new PhpCompiler($phpRoot))->compile(
+        $phpRoot . '/src/join-guard.php',
+        null,
+        'elf',
+    );
+    T::same(
+        "join=identifiant SQL invalide : users.id; DROP\n",
+        shell_exec(escapeshellarg((string) $joinGuardElf['binaryPath']) . ' 2>&1'),
+        'jointures : garde de colonne',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('64. IDE — recherche projet');
+
+$searchRoot = sys_get_temp_dir() . '/cyonima_search_' . getmypid();
+$removeTree($searchRoot);
+mkdir($searchRoot . '/src', 0775, true);
+mkdir($searchRoot . '/vendor', 0775, true);
+
+file_put_contents(
+    $searchRoot . '/src/a.php',
+    "<?php\n\$value = 'Needle';\necho \$value;\n",
+);
+file_put_contents(
+    $searchRoot . '/src/b.md',
+    "# Notes\nUne needle minuscule.\n",
+);
+file_put_contents(
+    $searchRoot . '/vendor/ignored.php',
+    "<?php\n\$ignored = 'needle';\n",
+);
+
+$searchFiles = ProjectSearch::files($searchRoot);
+T::same(2, count($searchFiles), 'recherche : vendor exclu');
+$searchResults = ProjectSearch::search($searchRoot, 'needle');
+T::same(2, count($searchResults), 'recherche : insensible à la casse');
+T::same('src/a.php', $searchResults[0]['path'], 'recherche : chemin relatif');
+T::same(2, $searchResults[0]['line'], 'recherche : numéro de ligne');
+T::ok($searchResults[0]['column'] > 0, 'recherche : colonne');
+T::same(
+    [],
+    ProjectSearch::search($searchRoot, ''),
+    'recherche : requête vide',
+);
+T::same(
+    1,
+    count(ProjectSearch::search($searchRoot, 'needle', 1)),
+    'recherche : limite',
+);
+
+$searchOpened = null;
+$searchPanel = new SearchPanel(
+    $searchRoot,
+    function (string $path, int $line) use (&$searchOpened): void {
+        $searchOpened = [$path, $line];
+    },
+);
+T::same(2, $searchPanel->search('needle'), 'recherche UI : résultats');
+$searchPanel->activateRow(0);
+T::same(
+    $searchRoot . '/src/a.php',
+    $searchOpened[0] ?? null,
+    'recherche UI : ouverture du fichier',
+);
+T::same(2, $searchOpened[1] ?? null, 'recherche UI : ligne ouverte');
+
+$removeTree($searchRoot);
 
 $removeTree($templateRoot);
 

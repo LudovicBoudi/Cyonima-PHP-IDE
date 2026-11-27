@@ -1,0 +1,10 @@
+/vendor/
+/.idea/
+/.vscode/
+*.cache
+*.log
+/dist/
+/build-dir/
+/.flatpak-builder/
+/build/
+/.tools/

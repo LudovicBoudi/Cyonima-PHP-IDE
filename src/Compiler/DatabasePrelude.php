@@ -115,11 +115,506 @@ final class DatabasePrelude
                 }
             }
 
+            public function prepare(string $sql): Statement
+            {
+                $statement = sqlite_prepare($this->handle, $sql);
+
+                if ($statement === 0) {
+                    throw new RuntimeException(
+                        'préparation SQL impossible : ' . $this->error()
+                    );
+                }
+
+                return new Statement($this, $statement);
+            }
+
             public function close(): void
             {
                 if ($this->handle !== 0) {
                     sqlite_close($this->handle);
                     $this->handle = 0;
+                }
+            }
+        }
+
+        final class Statement
+        {
+            public Connection $connection;
+            public int $handle;
+
+            public function __construct(Connection $connection, int $handle)
+            {
+                $this->connection = $connection;
+                $this->handle = $handle;
+            }
+
+            public function bindInt(int $index, int $value): bool
+            {
+                return sqlite_bind_int($this->handle, $index, $value);
+            }
+
+            public function bindFloat(int $index, float $value): bool
+            {
+                return sqlite_bind_float($this->handle, $index, $value);
+            }
+
+            public function bindString(int $index, string $value): bool
+            {
+                return sqlite_bind_string($this->handle, $index, $value);
+            }
+
+            public function bindBool(int $index, bool $value): bool
+            {
+                return sqlite_bind_bool($this->handle, $index, $value);
+            }
+
+            public function bindNull(int $index): bool
+            {
+                return sqlite_bind_null($this->handle, $index);
+            }
+
+            public function step(): int
+            {
+                return sqlite_step($this->handle);
+            }
+
+            public function execute(): bool
+            {
+                return $this->step() !== -1;
+            }
+
+            public function reset(): void
+            {
+                sqlite_reset($this->handle);
+            }
+
+            public function finalize(): void
+            {
+                if ($this->handle !== 0) {
+                    sqlite_finalize($this->handle);
+                    $this->handle = 0;
+                }
+            }
+
+            public function columnInt(int $index): int
+            {
+                return sqlite_column_int($this->handle, $index);
+            }
+
+            public function columnFloat(int $index): float
+            {
+                return sqlite_column_float($this->handle, $index);
+            }
+
+            public function columnString(int $index): string
+            {
+                return sqlite_column_string($this->handle, $index);
+            }
+
+            public function columnBool(int $index): bool
+            {
+                return sqlite_column_bool($this->handle, $index);
+            }
+
+            /** @return array<string,string> */
+            public function row(): array
+            {
+                return sqlite_statement_row_string($this->handle);
+            }
+
+            public function error(): string
+            {
+                return sqlite_statement_error($this->handle);
+            }
+        }
+
+        final class QueryCondition
+        {
+            public string $column;
+            public string $operator;
+            public string $value;
+            public int $kind;
+
+            public function __construct(
+                string $column,
+                string $operator,
+                string $value,
+                int $kind
+            ) {
+                $this->column = $column;
+                $this->operator = $operator;
+                $this->value = $value;
+                $this->kind = $kind;
+            }
+        }
+
+        final class QueryJoin
+        {
+            public string $kind;
+            public string $table;
+            public string $left;
+            public string $right;
+
+            public function __construct(
+                string $kind,
+                string $table,
+                string $left,
+                string $right
+            ) {
+                $this->kind = $kind;
+                $this->table = $table;
+                $this->left = $left;
+                $this->right = $right;
+            }
+        }
+
+        final class QueryBuilder
+        {
+            public Connection $connection;
+            public string $table;
+
+            /** @var array<string> */
+            public array $columns;
+
+            /** @var array<QueryCondition> */
+            public array $conditions;
+
+            /** @var array<QueryJoin> */
+            public array $joins;
+
+            public string $orderColumn;
+            public bool $orderDescending;
+            public int $limitValue;
+            public int $offsetValue;
+
+            public function __construct(Connection $connection, string $table)
+            {
+                $store = new Table($connection, $table);
+                $this->connection = $connection;
+                $this->table = $store->table;
+                $this->columns = [];
+                $this->conditions = [];
+                $this->joins = [];
+                $this->orderColumn = '';
+                $this->orderDescending = false;
+                $this->limitValue = -1;
+                $this->offsetValue = 0;
+            }
+
+            /** @param array<string> $columns */
+            public function select(array $columns): QueryBuilder
+            {
+                $store = new Table($this->connection, $this->table);
+                $selected = [];
+
+                foreach ($columns as $column) {
+                    $selected[] = $store->reference($column);
+                }
+
+                $this->columns = $selected;
+
+                return $this;
+            }
+
+            public function selectAs(string $column, string $alias): QueryBuilder
+            {
+                $store = new Table($this->connection, $this->table);
+                $columns = $this->columns;
+                $columns[] = $store->reference($column)
+                    . ' AS ' . $store->column($alias);
+                $this->columns = $columns;
+
+                return $this;
+            }
+
+            public function join(
+                string $table,
+                string $left,
+                string $right
+            ): QueryBuilder {
+                return $this->addJoin('INNER JOIN', $table, $left, $right);
+            }
+
+            public function leftJoin(
+                string $table,
+                string $left,
+                string $right
+            ): QueryBuilder {
+                return $this->addJoin('LEFT JOIN', $table, $left, $right);
+            }
+
+            public function whereString(
+                string $column,
+                string $operator,
+                string $value
+            ): QueryBuilder {
+                return $this->addCondition($column, $operator, $value, 1);
+            }
+
+            public function whereInt(
+                string $column,
+                string $operator,
+                int $value
+            ): QueryBuilder {
+                return $this->addCondition(
+                    $column,
+                    $operator,
+                    strval($value),
+                    2
+                );
+            }
+
+            public function whereFloat(
+                string $column,
+                string $operator,
+                float $value
+            ): QueryBuilder {
+                return $this->addCondition(
+                    $column,
+                    $operator,
+                    strval($value),
+                    3
+                );
+            }
+
+            public function whereBool(
+                string $column,
+                string $operator,
+                bool $value
+            ): QueryBuilder {
+                $stored = '0';
+
+                if ($value) {
+                    $stored = '1';
+                }
+
+                return $this->addCondition($column, $operator, $stored, 4);
+            }
+
+            public function whereNull(string $column): QueryBuilder
+            {
+                return $this->addCondition($column, 'IS NULL', '', 0);
+            }
+
+            public function whereNotNull(string $column): QueryBuilder
+            {
+                return $this->addCondition($column, 'IS NOT NULL', '', 0);
+            }
+
+            public function orderBy(string $column, bool $descending): QueryBuilder
+            {
+                $store = new Table($this->connection, $this->table);
+                $this->orderColumn = $store->reference($column);
+                $this->orderDescending = $descending;
+
+                return $this;
+            }
+
+            public function limit(int $limit): QueryBuilder
+            {
+                if ($limit < 0) {
+                    throw new RuntimeException('limite négative');
+                }
+
+                $this->limitValue = $limit;
+
+                return $this;
+            }
+
+            public function offset(int $offset): QueryBuilder
+            {
+                if ($offset < 0) {
+                    throw new RuntimeException('offset négatif');
+                }
+
+                $this->offsetValue = $offset;
+
+                return $this;
+            }
+
+            public function get(): Statement
+            {
+                $columns = '*';
+
+                if (count($this->columns) > 0) {
+                    $columns = '';
+                    $firstColumn = true;
+
+                    foreach ($this->columns as $column) {
+                        if (!$firstColumn) {
+                            $columns = $columns . ', ';
+                        }
+
+                        $columns = $columns . $column;
+                        $firstColumn = false;
+                    }
+                }
+
+                $sql = 'SELECT ' . $columns . ' FROM ' . $this->table
+                    . $this->joinSql()
+                    . $this->whereSql();
+
+                if ($this->orderColumn !== '') {
+                    $sql = $sql . ' ORDER BY ' . $this->orderColumn;
+
+                    if ($this->orderDescending) {
+                        $sql = $sql . ' DESC';
+                    } else {
+                        $sql = $sql . ' ASC';
+                    }
+                }
+
+                if ($this->limitValue >= 0) {
+                    $sql = $sql . ' LIMIT ' . strval($this->limitValue);
+                } elseif ($this->offsetValue > 0) {
+                    $sql = $sql . ' LIMIT -1';
+                }
+
+                if ($this->offsetValue > 0) {
+                    $sql = $sql . ' OFFSET ' . strval($this->offsetValue);
+                }
+
+                $statement = $this->connection->prepare($sql);
+                $this->bindConditions($statement);
+
+                return $statement;
+            }
+
+            public function count(): int
+            {
+                $statement = $this->connection->prepare(
+                    'SELECT COUNT(*) FROM ' . $this->table
+                    . $this->joinSql()
+                    . $this->whereSql()
+                );
+                $this->bindConditions($statement);
+                $count = 0;
+
+                if ($statement->step() === 1) {
+                    $count = $statement->columnInt(0);
+                }
+
+                $statement->finalize();
+
+                return $count;
+            }
+
+            public function exists(): bool
+            {
+                return $this->count() > 0;
+            }
+
+            private function addJoin(
+                string $kind,
+                string $table,
+                string $left,
+                string $right
+            ): QueryBuilder {
+                $store = new Table($this->connection, $table);
+                $joins = $this->joins;
+                $joins[] = new QueryJoin(
+                    $kind,
+                    $store->table,
+                    $store->reference($left),
+                    $store->reference($right)
+                );
+                $this->joins = $joins;
+
+                return $this;
+            }
+
+            private function addCondition(
+                string $column,
+                string $operator,
+                string $value,
+                int $kind
+            ): QueryBuilder {
+                if ($kind > 0
+                    && $operator !== '='
+                    && $operator !== '!='
+                    && $operator !== '<'
+                    && $operator !== '<='
+                    && $operator !== '>'
+                    && $operator !== '>='
+                    && $operator !== 'LIKE') {
+                    throw new RuntimeException(
+                        'opérateur SQL invalide : ' . $operator
+                    );
+                }
+
+                $store = new Table($this->connection, $this->table);
+                $conditions = $this->conditions;
+                $conditions[] = new QueryCondition(
+                    $store->reference($column),
+                    $operator,
+                    $value,
+                    $kind
+                );
+                $this->conditions = $conditions;
+
+                return $this;
+            }
+
+            private function joinSql(): string
+            {
+                $sql = '';
+
+                foreach ($this->joins as $join) {
+                    $sql = $sql . ' ' . $join->kind . ' ' . $join->table
+                        . ' ON ' . $join->left . ' = ' . $join->right;
+                }
+
+                return $sql;
+            }
+
+            private function whereSql(): string
+            {
+                if (count($this->conditions) === 0) {
+                    return '';
+                }
+
+                $sql = ' WHERE ';
+                $first = true;
+
+                foreach ($this->conditions as $condition) {
+                    if (!$first) {
+                        $sql = $sql . ' AND ';
+                    }
+
+                    $sql = $sql . $condition->column
+                        . ' ' . $condition->operator;
+
+                    if ($condition->kind > 0) {
+                        $sql = $sql . ' ?';
+                    }
+
+                    $first = false;
+                }
+
+                return $sql;
+            }
+
+            private function bindConditions(Statement $statement): void
+            {
+                $index = 1;
+
+                foreach ($this->conditions as $condition) {
+                    if ($condition->kind === 1) {
+                        $statement->bindString($index, $condition->value);
+                        $index = $index + 1;
+                    } elseif ($condition->kind === 2) {
+                        $statement->bindInt($index, intval($condition->value));
+                        $index = $index + 1;
+                    } elseif ($condition->kind === 3) {
+                        $statement->bindFloat($index, floatval($condition->value));
+                        $index = $index + 1;
+                    } elseif ($condition->kind === 4) {
+                        $statement->bindBool(
+                            $index,
+                            $condition->value === '1'
+                        );
+                        $index = $index + 1;
+                    }
                 }
             }
         }
@@ -140,26 +635,24 @@ final class DatabasePrelude
                 return $this->table;
             }
 
+            public function query(): QueryBuilder
+            {
+                return $this->store()->query();
+            }
+
             public function count(): int
             {
-                return $this->connection->queryInt(
-                    'SELECT COUNT(*) FROM ' . $this->table
-                );
+                return $this->store()->count();
             }
 
             public function exists(int $id): bool
             {
-                return $this->connection->queryBool(
-                    'SELECT COUNT(*) > 0 FROM ' . $this->table
-                    . ' WHERE id = ' . strval($id)
-                );
+                return $this->store()->exists($id);
             }
 
             public function delete(int $id): bool
             {
-                return $this->connection->exec(
-                    'DELETE FROM ' . $this->table . ' WHERE id = ' . strval($id)
-                );
+                return $this->store()->delete($id);
             }
 
             /** @return array<string,string> */
@@ -200,6 +693,18 @@ final class DatabasePrelude
             ): HasMany {
                 return $this->store()->hasMany($table, $foreignKey, $id);
             }
+
+            /** @param array<int> $ids */
+            public function findMany(array $ids): Statement
+            {
+                return $this->store()->findMany($ids);
+            }
+
+            /** @param array<int> $ids */
+            public function whereIn(string $column, array $ids): Statement
+            {
+                return $this->store()->whereIn($column, $ids);
+            }
         }
 
         final class Table
@@ -218,7 +723,8 @@ final class DatabasePrelude
             public function insert(array $values): int
             {
                 $columns = '';
-                $literals = '';
+                $placeholders = '';
+                $ordered = [];
                 $first = true;
 
                 foreach ($values as $column => $value) {
@@ -226,11 +732,12 @@ final class DatabasePrelude
 
                     if (!$first) {
                         $columns = $columns . ', ';
-                        $literals = $literals . ', ';
+                        $placeholders = $placeholders . ', ';
                     }
 
                     $columns = $columns . $column;
-                    $literals = $literals . $this->connection->quote($value);
+                    $placeholders = $placeholders . '?';
+                    $ordered[] = $value;
                     $first = false;
                 }
 
@@ -238,10 +745,26 @@ final class DatabasePrelude
                     throw new RuntimeException('insertion sans valeur');
                 }
 
-                $this->connection->exec(
+                $statement = $this->connection->prepare(
                     'INSERT INTO ' . $this->table
-                    . ' (' . $columns . ') VALUES (' . $literals . ')'
+                    . ' (' . $columns . ') VALUES (' . $placeholders . ')'
                 );
+                $index = 1;
+
+                foreach ($ordered as $value) {
+                    $statement->bindString($index, $value);
+                    $index = $index + 1;
+                }
+
+                $executed = $statement->execute();
+                $error = $statement->error();
+                $statement->finalize();
+
+                if (!$executed) {
+                    throw new RuntimeException(
+                        'insertion impossible : ' . $this->table . ' — ' . $error
+                    );
+                }
 
                 $id = $this->connection->lastInsertId();
 
@@ -258,6 +781,7 @@ final class DatabasePrelude
             public function update(int $id, array $values): bool
             {
                 $assignments = '';
+                $ordered = [];
                 $first = true;
 
                 foreach ($values as $column => $value) {
@@ -267,8 +791,8 @@ final class DatabasePrelude
                         $assignments = $assignments . ', ';
                     }
 
-                    $assignments = $assignments . $column
-                        . ' = ' . $this->connection->quote($value);
+                    $assignments = $assignments . $column . ' = ?';
+                    $ordered[] = $value;
                     $first = false;
                 }
 
@@ -276,19 +800,84 @@ final class DatabasePrelude
                     return false;
                 }
 
-                return $this->connection->exec(
+                $statement = $this->connection->prepare(
                     'UPDATE ' . $this->table . ' SET ' . $assignments
-                    . ' WHERE id = ' . strval($id)
+                    . ' WHERE id = ?'
                 );
+                $index = 1;
+
+                foreach ($ordered as $value) {
+                    $statement->bindString($index, $value);
+                    $index = $index + 1;
+                }
+
+                $statement->bindInt($index, $id);
+                $executed = $statement->execute();
+                $statement->finalize();
+
+                return $executed;
             }
 
             /** @return array<string,string> */
             public function find(int $id): array
             {
-                return $this->connection->row(
+                $statement = $this->connection->prepare(
                     'SELECT * FROM ' . $this->table
-                    . ' WHERE id = ' . strval($id) . ' LIMIT 1'
+                    . ' WHERE id = ? LIMIT 1'
                 );
+                $statement->bindInt(1, $id);
+                $row = [];
+
+                if ($statement->step() === 1) {
+                    $row = $statement->row();
+                }
+
+                $statement->finalize();
+
+                return $row;
+            }
+
+            /** @param array<int> $ids */
+            public function findMany(array $ids): Statement
+            {
+                return $this->whereIn('id', $ids);
+            }
+
+            /** @param array<int> $ids */
+            public function whereIn(string $column, array $ids): Statement
+            {
+                $this->assertIdentifier($column);
+
+                if (count($ids) === 0) {
+                    return $this->connection->prepare(
+                        'SELECT * FROM ' . $this->table . ' WHERE 0'
+                    );
+                }
+
+                $placeholders = '';
+                $first = true;
+
+                foreach ($ids as $id) {
+                    if (!$first) {
+                        $placeholders = $placeholders . ', ';
+                    }
+
+                    $placeholders = $placeholders . '?';
+                    $first = false;
+                }
+
+                $statement = $this->connection->prepare(
+                    'SELECT * FROM ' . $this->table . ' WHERE ' . $column
+                    . ' IN (' . $placeholders . ') ORDER BY id'
+                );
+                $index = 1;
+
+                foreach ($ids as $id) {
+                    $statement->bindInt($index, $id);
+                    $index = $index + 1;
+                }
+
+                return $statement;
             }
 
             /** @return array<string,string> */
@@ -296,40 +885,83 @@ final class DatabasePrelude
             {
                 $this->assertIdentifier($column);
 
-                return $this->connection->row(
+                $statement = $this->connection->prepare(
                     'SELECT * FROM ' . $this->table . ' WHERE ' . $column
-                    . ' = ' . $this->connection->quote($value) . ' LIMIT 1'
+                    . ' = ? LIMIT 1'
                 );
+                $statement->bindString(1, $value);
+                $row = [];
+
+                if ($statement->step() === 1) {
+                    $row = $statement->row();
+                }
+
+                $statement->finalize();
+
+                return $row;
             }
 
             public function delete(int $id): bool
             {
-                return $this->connection->exec(
-                    'DELETE FROM ' . $this->table . ' WHERE id = ' . strval($id)
+                $statement = $this->connection->prepare(
+                    'DELETE FROM ' . $this->table . ' WHERE id = ?'
                 );
+                $statement->bindInt(1, $id);
+                $deleted = $statement->execute();
+                $statement->finalize();
+
+                return $deleted;
             }
 
             public function exists(int $id): bool
             {
-                return $this->connection->queryBool(
+                $statement = $this->connection->prepare(
                     'SELECT COUNT(*) > 0 FROM ' . $this->table
-                    . ' WHERE id = ' . strval($id)
+                    . ' WHERE id = ?'
                 );
+                $statement->bindInt(1, $id);
+                $exists = false;
+
+                if ($statement->step() === 1) {
+                    $exists = $statement->columnBool(0);
+                }
+
+                $statement->finalize();
+
+                return $exists;
             }
 
             public function count(): int
             {
-                return $this->connection->queryInt(
+                $statement = $this->connection->prepare(
                     'SELECT COUNT(*) FROM ' . $this->table
                 );
+                $count = 0;
+
+                if ($statement->step() === 1) {
+                    $count = $statement->columnInt(0);
+                }
+
+                $statement->finalize();
+
+                return $count;
             }
 
             /** @return array<int> */
             public function ids(): array
             {
-                return $this->connection->columnInt(
+                $statement = $this->connection->prepare(
                     'SELECT id FROM ' . $this->table . ' ORDER BY id'
                 );
+                $ids = [];
+
+                while ($statement->step() === 1) {
+                    $ids[] = $statement->columnInt(0);
+                }
+
+                $statement->finalize();
+
+                return $ids;
             }
 
             public function column(string $name): string
@@ -337,6 +969,18 @@ final class DatabasePrelude
                 $this->assertIdentifier($name);
 
                 return $name;
+            }
+
+            public function reference(string $name): string
+            {
+                $this->assertIdentifier($name);
+
+                return $name;
+            }
+
+            public function query(): QueryBuilder
+            {
+                return new QueryBuilder($this->connection, $this->table);
             }
 
             public function belongsTo(string $table, int $id): BelongsTo
@@ -432,30 +1076,69 @@ final class DatabasePrelude
             /** @return array<int> */
             public function ids(): array
             {
-                return $this->connection->columnInt(
+                $statement = $this->connection->prepare(
                     'SELECT id FROM ' . $this->table
-                    . ' WHERE ' . $this->foreignKey
-                    . ' = ' . strval($this->foreignId)
+                    . ' WHERE ' . $this->foreignKey . ' = ?'
                     . ' ORDER BY id'
                 );
+                $statement->bindInt(1, $this->foreignId);
+                $ids = [];
+
+                while ($statement->step() === 1) {
+                    $ids[] = $statement->columnInt(0);
+                }
+
+                $statement->finalize();
+
+                return $ids;
+            }
+
+            public function statement(): Statement
+            {
+                $statement = $this->connection->prepare(
+                    'SELECT * FROM ' . $this->table
+                    . ' WHERE ' . $this->foreignKey . ' = ?'
+                    . ' ORDER BY id'
+                );
+                $statement->bindInt(1, $this->foreignId);
+
+                return $statement;
             }
 
             public function count(): int
             {
-                return $this->connection->queryInt(
+                $statement = $this->connection->prepare(
                     'SELECT COUNT(*) FROM ' . $this->table
-                    . ' WHERE ' . $this->foreignKey
-                    . ' = ' . strval($this->foreignId)
+                    . ' WHERE ' . $this->foreignKey . ' = ?'
                 );
+                $statement->bindInt(1, $this->foreignId);
+                $count = 0;
+
+                if ($statement->step() === 1) {
+                    $count = $statement->columnInt(0);
+                }
+
+                $statement->finalize();
+
+                return $count;
             }
 
             public function exists(): bool
             {
-                return $this->connection->queryBool(
+                $statement = $this->connection->prepare(
                     'SELECT COUNT(*) > 0 FROM ' . $this->table
-                    . ' WHERE ' . $this->foreignKey
-                    . ' = ' . strval($this->foreignId)
+                    . ' WHERE ' . $this->foreignKey . ' = ?'
                 );
+                $statement->bindInt(1, $this->foreignId);
+                $exists = false;
+
+                if ($statement->step() === 1) {
+                    $exists = $statement->columnBool(0);
+                }
+
+                $statement->finalize();
+
+                return $exists;
             }
         }
 
