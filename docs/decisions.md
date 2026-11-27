@@ -1057,6 +1057,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   committer. Limitations : pas d'éditeur de conflits à trois volets ni de
   résolution automatique.
 
+102. **Recherche de symboles** : `SymbolIndex::scan()` parcourt les fichiers
+  `.php` retournés par `ProjectSearch::files` et utilise `token_get_all` pour
+  relever classes, interfaces, traits, énumérations, fonctions et méthodes.
+  L'espace de noms est reconstruit et les méthodes sont qualifiées
+  `Namespace\Classe::méthode` ; la profondeur des accolades distingue méthodes
+  et fonctions. `SymbolSearch` réutilise `QuickPick` et le filtre flou
+  `matchLabels`, affiche le type et `chemin:ligne`, et ouvre le fichier via
+  `openFile`. Raccourci `Ctrl+T`, menu Affichage et palette. Limites : 5 000
+  symboles, pas de constantes/propriétés, définitions conditionnelles et
+  classes anonymes ignorées, espace de noms à accolades non suivi.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

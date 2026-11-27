@@ -37,6 +37,7 @@ use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\ScrolledWindow;
 use Cyonima\UI\SearchPanel;
+use Cyonima\UI\SymbolSearch;
 use Cyonima\UI\Terminal;
 use Cyonima\UI\Theme;
 
@@ -421,6 +422,14 @@ $quickOpen = new QuickOpen($window, $root, function (string $path) use ($openFil
     $openFile($path);
 });
 
+$symbolSearch = new SymbolSearch(
+    $window,
+    $root,
+    function (string $path, int $line) use ($root, $openFile): void {
+        $openFile($root . DIRECTORY_SEPARATOR . $path, $line);
+    },
+);
+
 $commandPalette = null;
 
 $diagnostics = new Diagnostics();
@@ -770,6 +779,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $closeTab,
     $nextTab,
     $quickOpen,
+    $symbolSearch,
     &$commandPalette,
 ): bool {
     Loop::after(0, $updateCursor);
@@ -800,6 +810,10 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
             } else {
                 $quickOpen->present();
             }
+            return true;
+        }
+        if ($keyval === 0x74) { // Ctrl+T
+            $symbolSearch->present();
             return true;
         }
         if ($keyval === 0x77) { // Ctrl+W
@@ -1356,6 +1370,7 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Fichier : Onglet suivant', 'detail' => 'Ctrl+Tab', 'action' => fn () => $nextTab(1)],
     ['label' => 'Fichier : Onglet précédent', 'detail' => 'Ctrl+Shift+Tab', 'action' => fn () => $nextTab(-1)],
     ['label' => 'Navigation : Aller au fichier', 'detail' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
+    ['label' => 'Navigation : rechercher un symbole', 'detail' => 'Ctrl+T', 'action' => fn () => $symbolSearch->present()],
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
@@ -1433,6 +1448,7 @@ $menuBar = (new MenuBar())
             $gitPanel->focusMergeEntry();
         }],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
+        ['label' => 'Rechercher un symbole…', 'shortcut' => 'Ctrl+T', 'action' => fn () => $symbolSearch->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
         ['label' => 'Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1459,7 +1475,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+P Aller au fichier · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+P Fichier · Ctrl+T Symbole · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1527,6 +1543,11 @@ if ($auto) {
     Loop::after(270, fn () => ($showBottomTab)('output'));
     Loop::after(290, fn () => ($showBottomTab)('terminal'));
 
+    Loop::after(180, function () use ($symbolSearch): void {
+        $symbolSearch->present();
+        $symbolSearch->setQuery('hello');
+        $symbolSearch->dismiss();
+    });
     Loop::after(200, function () use ($quickOpen): void {
         $quickOpen->present();
         $quickOpen->setQuery('hello');

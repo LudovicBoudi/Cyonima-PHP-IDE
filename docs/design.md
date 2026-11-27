@@ -156,6 +156,17 @@ sortie, sa durée et ses sorties standard/erreur sont ajoutés à la fin. Un
 bouton `Vider` et la commande de palette `Sortie : vider` remettent le journal
 à zéro.
 
+## Recherche de symboles
+
+`Ctrl+T` ouvre une recherche de définitions PHP du projet, construite sur le
+même popover que Ctrl+P. `SymbolIndex` parcourt les fichiers `.php` avec
+`token_get_all` et relève classes, interfaces, traits, énumérations, fonctions
+et méthodes, en tenant compte de l'espace de noms et de la classe englobante.
+Chaque entrée affiche le nom qualifié, le type et `chemin:ligne` ; le choix
+ouvre le fichier à la ligne. Les définitions conditionnelles, les fermetures et
+les classes anonymes ne sont pas indexées ; le résultat est limité à 5 000
+symboles.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
@@ -222,11 +233,11 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aller au fichier, rechercher un symbole, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
-Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+Shift+P`, `Ctrl+W`,
+Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+T`, `Ctrl+Shift+P`, `Ctrl+W`,
 `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`,
 `Ctrl+Espace` et `F5`.
 
@@ -321,7 +332,8 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - la barre de titre garde les boutons de fenêtre GNOME, simplement aplatis ;
 - la recherche projet est un parcours de fichiers sans index ni aperçu diff ;
 - les onglets ne se réorganisent pas par glisser-déposer et ne défilent pas ;
-- la navigation rapide liste les fichiers mais pas les symboles ni les commandes ;
+- la recherche de symboles ne voit que les définitions statiques, pas les
+  constantes, propriétés ni membres dynamiques ;
 - la palette ne mémorise pas les commandes récentes et ne permet pas de
   personnaliser les raccourcis ;
 - l'intégration Git couvre le statut local et le commit, pas les branches

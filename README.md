@@ -20,7 +20,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | ✅ design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition multi-onglets, navigation rapide, palette de commandes, panneaux Git/Problèmes/Sortie/Diff, terminal, LSP, Xdebug, recherche et remplacement projet |
+| M5 — IDE MVP | ✅ design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition multi-onglets, navigation rapide fichiers/symboles, palette de commandes, panneaux Git/Problèmes/Sortie/Diff, terminal, LSP, Xdebug, recherche et remplacement projet |
 | M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 56 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -303,7 +303,7 @@ La recherche projet parcourt les fichiers texte, exclut les dépendances et
 ouvre un résultat à la ligne exacte ; elle gère casse, mot entier, expressions
 régulières et remplacement global. `Ctrl+P` ouvre la navigation rapide par nom
 de fichier avec filtrage flou ; `Ctrl+Shift+P` ouvre la palette de commandes
-de l'IDE.
+de l'IDE ; `Ctrl+T` recherche classes, fonctions et méthodes du projet.
 Détail dans [`docs/design.md`](docs/design.md).
 
 ![Aperçu de l'IDE](docs/screenshot-ide.png)

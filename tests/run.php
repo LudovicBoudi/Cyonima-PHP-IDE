@@ -39,6 +39,7 @@ use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\ProjectSearch;
 use Cyonima\Runtime\QuickOpenMatcher;
 use Cyonima\Runtime\RecentProjects;
+use Cyonima\Runtime\SymbolIndex;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
@@ -51,6 +52,7 @@ use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\SearchPanel;
+use Cyonima\UI\SymbolSearch;
 
 final class T
 {
@@ -10415,6 +10417,113 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
 
     $removeTree($gitRoot);
 }
+
+// ---------------------------------------------------------------------------
+T::section('72. IDE — recherche de symboles');
+
+$symbolRoot = sys_get_temp_dir() . '/cyonima_symbols_' . getmypid();
+$removeTree($symbolRoot);
+mkdir($symbolRoot . '/src', 0775, true);
+mkdir($symbolRoot . '/vendor', 0775, true);
+file_put_contents($symbolRoot . '/src/Demo.php', <<<'PHP'
+<?php
+namespace App;
+
+class Demo
+{
+    public function run(): void
+    {
+    }
+
+    private function helper(): void
+    {
+    }
+}
+
+interface Contract
+{
+}
+
+trait Reusable
+{
+}
+
+enum Status
+{
+    case Active;
+}
+
+function globalHelper(): void
+{
+}
+PHP);
+file_put_contents($symbolRoot . '/vendor/Ignored.php', "<?php\nclass VendorIgnored {}\n");
+
+$symbols = SymbolIndex::scan($symbolRoot);
+T::same(7, count($symbols), 'symboles : nombre de définitions');
+$symbolNames = array_column($symbols, 'name');
+T::ok(in_array('App\\Demo', $symbolNames, true), 'symboles : classe avec espace de noms');
+T::ok(in_array('App\\Demo::run', $symbolNames, true), 'symboles : méthode');
+T::ok(in_array('App\\Contract', $symbolNames, true), 'symboles : interface');
+T::ok(in_array('App\\Reusable', $symbolNames, true), 'symboles : trait');
+T::ok(in_array('App\\Status', $symbolNames, true), 'symboles : énumération');
+T::ok(in_array('App\\globalHelper', $symbolNames, true), 'symboles : fonction');
+T::ok(!in_array('VendorIgnored', $symbolNames, true), 'symboles : vendor exclu');
+
+$classSymbol = null;
+foreach ($symbols as $symbol) {
+    if ($symbol['name'] === 'App\\Demo') {
+        $classSymbol = $symbol;
+        break;
+    }
+}
+T::same('class', $classSymbol['kind'] ?? null, 'symboles : type classe');
+T::same('src/Demo.php', $classSymbol['path'] ?? null, 'symboles : chemin relatif');
+T::same(4, $classSymbol['line'] ?? null, 'symboles : numéro de ligne');
+T::same('méthode', SymbolIndex::kindLabel('method'), 'symboles : libellé de type');
+
+$fallbackMethod = new \ReflectionMethod(SymbolIndex::class, 'scanCodeFallback');
+$fallbackSymbols = $fallbackMethod->invoke(null, <<<'PHP'
+<?php
+namespace Fallback;
+
+class Sample
+{
+    public function method(): void
+    {
+    }
+}
+
+function helper(): void
+{
+}
+PHP);
+$fallbackNames = array_column($fallbackSymbols, 'name');
+T::ok(in_array('Fallback\\Sample', $fallbackNames, true), 'symboles : repli sans tokenizer (classe)');
+T::ok(in_array('Fallback\\Sample::method', $fallbackNames, true), 'symboles : repli sans tokenizer (méthode)');
+T::ok(in_array('Fallback\\helper', $fallbackNames, true), 'symboles : repli sans tokenizer (fonction)');
+
+$symbolWindow = new UI\Window('Recherche de symboles');
+$symbolWindow->present();
+
+$symbolOpened = null;
+$symbolSearch = new SymbolSearch(
+    $symbolWindow,
+    $symbolRoot,
+    function (string $path, int $line) use (&$symbolOpened): void {
+        $symbolOpened = [$path, $line];
+    },
+);
+
+T::same(7, $symbolSearch->filter(), 'symboles UI : liste');
+T::same(1, $symbolSearch->setQuery('global')->count(), 'symboles UI : filtre');
+T::same(1, $symbolSearch->choose(0), 'symboles UI : sélection');
+T::same('src/Demo.php', $symbolOpened[0] ?? null, 'symboles UI : fichier');
+T::same(28, $symbolOpened[1] ?? null, 'symboles UI : ligne');
+T::ok(!$symbolSearch->visible(), 'symboles UI : popover fermé');
+
+$symbolWindow->raw()->close();
+$removeTree($symbolRoot);
 
 $removeTree($templateRoot);
 
