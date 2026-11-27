@@ -28,6 +28,7 @@ use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
 use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
+use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\QuickOpen;
@@ -425,6 +426,10 @@ $problemsPanel = new ProblemsPanel(function (string $path, int $line) use ($open
 });
 $refreshProblemsTab = null;
 
+$outputPanel = new OutputPanel();
+$outputPanel->append('Cyonima IDE prêt', 'IDE');
+$showOutput = null;
+
 $complete = null;
 $intellisenseTimer = null;
 $suppressIntellisenseUntil = 0.0;
@@ -523,20 +528,30 @@ $save = function () use ($editor, $window, $updateTab, &$documents, &$currentFil
     return true;
 };
 
-$run = function () use ($editor, $terminal, $window, $save, &$currentFile): void {
+$run = function () use ($editor, $terminal, $window, $save, $outputPanel, &$currentFile): void {
     if ($currentFile !== null && str_ends_with($currentFile, '.php')) {
         $save();
         $terminal->write('php ' . escapeshellarg($currentFile) . "\n");
+        $outputPanel->append('php ' . $currentFile . ' (terminal)', 'Exécuter');
         return;
     }
 
     $temp = tempnam(sys_get_temp_dir(), 'cyonima_');
     file_put_contents($temp, $editor->text());
     $terminal->write('php ' . escapeshellarg($temp) . "\n");
+    $outputPanel->append('php ' . $temp . ' (terminal)', 'Exécuter');
     $window->toast('Script temporaire exécuté');
 };
 
-$compileNativeFile = function () use ($window, $save, &$currentFile, $root, $hasProject): void {
+$compileNativeFile = function () use (
+    $window,
+    $save,
+    $outputPanel,
+    &$showOutput,
+    &$currentFile,
+    $root,
+    $hasProject,
+): void {
     if (!$hasProject) {
         $window->toast('Ouvrez un projet pour compiler en natif.');
         return;
@@ -551,23 +566,34 @@ $compileNativeFile = function () use ($window, $save, &$currentFile, $root, $has
         return;
     }
 
+    if ($showOutput !== null) {
+        ($showOutput)();
+    }
+
+    $outputPanel->append('Compilation native : ' . $currentFile, 'Compiler');
     $compiler = new PhpCompiler($root);
 
     try {
         $result = $compiler->compile($currentFile, null, 'elf');
-        $window->toast('Binaire natif : ' . basename((string) $result['binaryPath']), 8000);
+        $binary = (string) $result['binaryPath'];
+        $outputPanel->append('ELF : ' . $binary, 'Compiler');
+        $window->toast('Binaire natif : ' . basename($binary), 8000);
         return;
     } catch (CompilerException $exception) {
         $reason = $exception->getMessage();
+        $outputPanel->append('ELF impossible : ' . $reason, 'Compiler');
     }
 
     try {
         $fallback = $compiler->compile($currentFile, null, 'c');
+        $cPath = (string) $fallback['cPath'];
+        $outputPanel->append('C généré : ' . $cPath, 'Compiler');
         $window->toast(
-            'ELF impossible (' . substr($reason, 0, 140) . ') — C généré : ' . basename($fallback['cPath']),
+            'ELF impossible (' . substr($reason, 0, 140) . ') — C généré : ' . basename($cPath),
             10000,
         );
     } catch (CompilerException $exception) {
+        $outputPanel->append('Échec : ' . $exception->getMessage(), 'Compiler');
         $window->toast('Compilation native : ' . substr($exception->getMessage(), 0, 220), 10000);
     }
 };
@@ -798,32 +824,60 @@ $openDesigner = function () use ($app, $root, $hasProject, $window, $openFile, &
 };
 
 // --- Export d'application autonome ----------------------------------------
-$exportApplication = function (string $format = ProjectBuilder::FORMAT_APPIMAGE) use ($hasProject, $root, $cyonimaHome, $window): void {
+$exportApplication = function (string $format = ProjectBuilder::FORMAT_APPIMAGE) use (
+    $hasProject,
+    $root,
+    $cyonimaHome,
+    $window,
+    $outputPanel,
+    &$showOutput,
+): void {
     if (!$hasProject) {
         $window->toast('Ouvrez un projet pour exporter une application.');
         return;
     }
 
     $result = ProjectBuilder::start($cyonimaHome, $root, null, $format);
+    $formatLabel = strtoupper($format);
 
     if (!$result['ok'] || $result['process'] === null) {
+        $outputPanel->append($result['message'], 'Export');
         $window->toast($result['message'], 8000);
         return;
     }
 
+    if ($showOutput !== null) {
+        ($showOutput)();
+    }
+
+    $outputPanel->append(sprintf('Export %s : %s', $formatLabel, $root), 'Export');
     $window->toast($result['message'], 5000);
 
-    $result['process']->onComplete(function ($process) use ($window): void {
+    $result['process']->onComplete(function ($process) use ($window, $outputPanel, $formatLabel): void {
         $build = $process->result();
 
+        if (trim($build->stdout) !== '') {
+            $outputPanel->append($build->stdout, 'Export');
+        }
+
+        if (trim($build->stderr) !== '') {
+            $outputPanel->append($build->stderr, 'Export');
+        }
+
+        $outputPanel->append(sprintf(
+            'Terminé avec le code %d en %d ms',
+            $build->exitCode,
+            (int) $build->durationMs,
+        ), 'Export');
+
         if ($build->succeeded()) {
-            $lines = preg_split('/\R/', trim($build->stdout())) ?: [];
+            $lines = preg_split('/\R/', trim($build->stdout)) ?: [];
             $last = $lines === [] ? '' : (string) end($lines);
             $window->toast('Application autonome : ' . basename($last), 10000);
             return;
         }
 
-        $error = trim($build->stderr) !== '' ? trim($build->stderr) : trim($build->stdout());
+        $error = trim($build->stderr) !== '' ? trim($build->stderr) : trim($build->stdout);
         $window->toast('Échec de l’export : ' . substr($error, 0, 220), 10000);
     });
 };
@@ -1110,9 +1164,7 @@ $panelTabs = (new Box(Orientation::HORIZONTAL, 0))
     ->append($panelProblemsTab, $panelOutputTab, $panelTerminalTab);
 
 $problemsPage = (new ScrolledWindow($problemsPanel))->expand()->visible(false);
-$outputPage = (new ScrolledWindow((new Label('Aucune sortie'))->cssClass('problem-hint')))
-    ->expand()
-    ->visible(false);
+$outputPage = $outputPanel->expand()->visible(false);
 $terminalPage = $terminal->expand();
 
 $bottomPages = (new Box(Orientation::VERTICAL, 0))
@@ -1164,6 +1216,10 @@ $showBottomTab = function (string $tab) use (
 $panelProblemsTab->onClicked(fn () => $showBottomTab('problems'));
 $panelOutputTab->onClicked(fn () => $showBottomTab('output'));
 $panelTerminalTab->onClicked(fn () => $showBottomTab('terminal'));
+
+$showOutput = function () use ($showBottomTab): void {
+    ($showBottomTab)('output');
+};
 
 $refreshProblemsTab = function () use ($diagnostics, $panelProblemsTab): void {
     $count = $diagnostics->count();
@@ -1312,6 +1368,8 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
+    ['label' => 'Affichage : Sortie', 'action' => fn () => ($showBottomTab)('output')],
+    ['label' => 'Sortie : vider', 'action' => fn () => $outputPanel->clear()],
     ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
     ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
     ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1355,6 +1413,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Explorateur', 'action' => $showExplorer],
         ['label' => 'Recherche', 'action' => $showSearchPanel],
         ['label' => 'Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
+        ['label' => 'Sortie', 'action' => fn () => ($showBottomTab)('output')],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
@@ -1437,6 +1496,11 @@ if ($auto) {
         $refreshProblemsTab();
     });
     Loop::after(230, fn () => ($showBottomTab)('problems'));
+    Loop::after(250, function () use ($outputPanel): void {
+        $outputPanel->append('Sortie de démonstration', 'Auto');
+        $outputPanel->append("Ligne 2\nLigne 3", 'Auto');
+    });
+    Loop::after(270, fn () => ($showBottomTab)('output'));
     Loop::after(290, fn () => ($showBottomTab)('terminal'));
 
     Loop::after(200, function () use ($quickOpen): void {

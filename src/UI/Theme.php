@@ -327,6 +327,32 @@ list row:selected {
     color: #969696;
 }
 
+.output-toolbar {
+    padding: 2px 6px;
+}
+
+.output-clear {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 2px 6px;
+    min-height: 0;
+}
+
+.output-clear:hover {
+    background-color: #2a2d2e;
+    color: #ffffff;
+}
+
+.output-text {
+    color: #cccccc;
+    font-family: monospace;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
 .quick-open {
     background-color: #252526;
     border: 1px solid #3f3f46;

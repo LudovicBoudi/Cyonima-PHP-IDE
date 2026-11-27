@@ -982,6 +982,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   ligne. Limitations : pas de filtre par sévérité ni par fichier, pas de
   regroupement arborescent, `SORTIE` non alimenté.
 
+95. **Panneau Sortie** : `OutputLog` conserve des lignes horodatées avec canal
+  optionnel (borne 2 000 entrées). `OutputPanel` les affiche dans un
+  `GtkScrolledWindow` défilant automatiquement via `GtkScroll` (helper FFI sur
+  `GtkAdjustment`, absent des bindings générés). L'exécution est journalisée au
+  moment du lancement dans le terminal ; la compilation native journalise le
+  résultat ELF ou le C généré ; l'export asynchrone journalise stdout, stderr,
+  code de sortie et durée. Le panneau s'ouvre automatiquement au début d'une
+  compilation ou d'un export ; `Vider` et la palette remettent le journal à
+  zéro. Limitations : la sortie du terminal VTE n'est pas recopiée, pas de
+  canaux filtrables ni d'export du journal.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

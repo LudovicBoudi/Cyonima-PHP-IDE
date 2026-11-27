@@ -23,6 +23,7 @@ use Cyonima\Runtime\Errors;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
+use Cyonima\Runtime\OutputLog;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
 use Cyonima\Runtime\Diagnostics;
@@ -43,6 +44,7 @@ use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
+use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\SearchPanel;
@@ -10126,6 +10128,40 @@ T::same('/tmp/cyonima_diag.php', $problemOpened[0] ?? null, 'problèmes UI : fic
 T::same(5, $problemOpened[1] ?? null, 'problèmes UI : ligne base 1');
 $problemsPanel->clear();
 T::same(0, $problemsPanel->count(), 'problèmes UI : liste vidée');
+
+// ---------------------------------------------------------------------------
+T::section('70. IDE — panneau Sortie');
+
+$outputLog = new OutputLog();
+$outputLog->append("Ligne 1\nLigne 2", 'Test');
+$outputLog->append('');
+$outputLog->append('Ligne 3');
+T::same(3, $outputLog->count(), 'sortie : lignes ajoutées');
+T::ok(
+    str_contains($outputLog->text(), '[Test] Ligne 1'),
+    'sortie : canal et horodatage',
+);
+T::ok(
+    str_contains($outputLog->text(), 'Ligne 3'),
+    'sortie : canal optionnel',
+);
+T::ok(
+    !str_contains($outputLog->text(), 'Ligne 0'),
+    'sortie : lignes vides ignorées',
+);
+$outputLog->clear();
+T::same(0, $outputLog->count(), 'sortie : journal vidé');
+T::same('', $outputLog->text(), 'sortie : texte vide');
+
+$outputPanel = new OutputPanel();
+$outputPanel->append('Bonjour', 'Auto');
+T::same(1, $outputPanel->count(), 'sortie UI : ajout');
+T::ok(
+    str_contains($outputPanel->text(), 'Bonjour'),
+    'sortie UI : texte affiché',
+);
+$outputPanel->clear();
+T::same(0, $outputPanel->count(), 'sortie UI : vidage');
 
 $removeTree($templateRoot);
 
