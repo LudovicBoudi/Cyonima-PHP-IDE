@@ -1159,6 +1159,14 @@ Trois écarts assumés par rapport au miroir strict du C :
   temporaire pour ne pas toucher au profil utilisateur. Limitations : pas de
   liste déroulante, pas d’horodatage ni de synchronisation entre profils.
 
+112. **Liste déroulante d’historique** : `FindBar` reçoit la fenêtre et crée un
+  `QuickPick` dédié, rempli avec `SearchHistory::all()`. Le bouton historique
+  ouvre cette liste filtrable ; la sélection remplit le champ sans relancer la
+  recherche. Si aucune fenêtre n’est fournie (tests, usage isolé), le bouton
+  retombe sur la requête précédente. Le popup est parenté à la fenêtre, évitant
+  les warnings de mesure d’un popover ancré dans la barre. `Alt+↑/↓` reste
+  disponible. Limitations : liste non groupée par date, maximum 20 entrées.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

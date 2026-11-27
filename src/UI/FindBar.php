@@ -8,6 +8,7 @@ use Cyonima\Gtk\Raw\Box as RawBox;
 use Cyonima\Gtk\Raw\EventControllerKey as RawEventControllerKey;
 use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Runtime\GtkText;
+use Cyonima\Runtime\QuickOpenMatcher;
 use Cyonima\Runtime\SearchHistory;
 use Cyonima\Runtime\TextSearch;
 
@@ -30,6 +31,7 @@ final class FindBar extends Widget
 
     private SearchHistory $history;
     private int $historyIndex = -1;
+    private ?QuickPick $historyPick = null;
 
     /** @var list<array{start: int, end: int, text: string}> */
     private array $matches = [];
@@ -48,12 +50,26 @@ final class FindBar extends Widget
     public function __construct(
         private readonly CodeEditor $editor,
         ?SearchHistory $history = null,
+        AdwWindow|Window|null $window = null,
     ) {
         parent::__construct(RawBox::new(Orientation::VERTICAL, 4));
 
         $this->history = $history ?? SearchHistory::default();
         $this->cssClass('find-bar');
         GtkText::installSearchTags($this->editor->buffer()->handle());
+
+        if ($window !== null) {
+            $this->historyPick = new QuickPick(
+                $window,
+                'Historique de recherches…',
+                static fn (array $labels, string $query): array
+                    => QuickOpenMatcher::matchLabels($labels, $query),
+                function (array $item): void {
+                    $this->setQuery($item['label']);
+                    $this->findEntry->raw()->grabFocus();
+                },
+            );
+        }
 
         $this->findEntry = new Entry('Rechercher');
         $this->findEntry->onChanged(fn (): int => $this->refreshMatches());
@@ -76,7 +92,7 @@ final class FindBar extends Widget
         $this->statusLabel = (new Label(''))->cssClass('find-status');
 
         $this->historyButton = (new IconButton('document-open-recent-symbolic', 'Historique (Alt+↑/↓)'))
-            ->onClicked(fn (): static => $this->historyPrevious());
+            ->onClicked(fn (): static => $this->showHistory());
 
         $findRow = (new Box(Orientation::HORIZONTAL, 4))
             ->append(
@@ -279,7 +295,29 @@ final class FindBar extends Widget
 
     public function showHistory(): static
     {
-        return $this->historyPrevious();
+        if ($this->historyPick === null) {
+            return $this->historyPrevious();
+        }
+
+        $items = [];
+
+        foreach ($this->history->all() as $query) {
+            $items[] = ['label' => $query];
+        }
+
+        if ($items === []) {
+            return $this;
+        }
+
+        $this->historyPick->present($items);
+
+        return $this;
+    }
+
+    public function dismissHistory(): static
+    {
+        $this->historyPick?->dismiss();
+        return $this;
     }
 
     public function currentMatch(): ?array

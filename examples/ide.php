@@ -89,7 +89,7 @@ $diagnosticCount = 0;
 $completionItems = 0;
 
 $popup = new CompletionPopup($editor);
-$findBar = new FindBar($editor);
+$findBar = new FindBar($editor, null, $window);
 
 // --- Aperçu Markdown -------------------------------------------------------
 $markdownPreview = new MarkdownPreview();
@@ -1750,6 +1750,8 @@ if ($auto) {
         $findBar->setQuery('terminal');
         $findBar->findNext();
     });
+    Loop::after(640, fn () => $findBar->showHistory());
+    Loop::after(650, fn () => $findBar->dismissHistory());
     Loop::after(660, fn () => $findBar->hide());
     Loop::after(700, function () use ($editor): void {
         $editor->setText($editor->text() . "\nstr");

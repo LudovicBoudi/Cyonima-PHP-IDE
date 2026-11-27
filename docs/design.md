@@ -204,8 +204,9 @@ fermeture. `Échap` ferme la barre et rend le focus à l'éditeur. Les
 remplacements passent par `CodeEditor::replaceRange` et déclenchent les signaux
 normaux de modification. Les requêtes exécutées sont mémorisées dans
 `~/.config/cyonima/search-history.json` (20 entrées, dédupliquées) :
-`Alt+↑`/`Alt+↓` parcourent l'historique et le bouton dédié revient à la
-recherche précédente. La palette permet de vider l'historique.
+`Alt+↑`/`Alt+↓` parcourent l'historique, le bouton dédié ouvre une liste
+déroulante filtrable des requêtes récentes (même popover que Ctrl+P), et la
+palette permet de vider l'historique.
 
 ## Aperçu Markdown
 
