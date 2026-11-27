@@ -962,6 +962,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   éviter un avertissement GTK. Limitations : 50 résultats, pas de symboles ni
   de commandes, pas de score affiché.
 
+93. **Palette de commandes** : le popover de sélection est extrait dans
+  `QuickPick` (champ, liste, filtrage, clavier, détachement à la fermeture),
+  réutilisé par `QuickOpen` et `CommandPalette`. `QuickOpenMatcher::matchLabels`
+  applique le même score flou aux libellés de commandes. `CommandPalette`
+  enregistre des actions nommées avec raccourci optionnel ; le choix ferme la
+  palette puis exécute l'action. L'IDE expose les commandes Fichier, Affichage,
+  Exécuter, Exporter et Aide. Limitations : pas d'historique des commandes
+  récentes, pas de personnalisation des raccourcis, liste statique construite au
+  démarrage.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

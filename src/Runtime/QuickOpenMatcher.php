@@ -57,6 +57,47 @@ final class QuickOpenMatcher
         );
     }
 
+    /**
+     * Filtrage de libellés de commandes (palette Ctrl+Shift+P).
+     *
+     * @param list<string> $labels
+     *
+     * @return list<string>
+     */
+    public static function matchLabels(array $labels, string $query, int $limit = 50): array
+    {
+        $query = trim($query);
+
+        if ($limit <= 0) {
+            return [];
+        }
+
+        if ($query === '') {
+            return array_slice($labels, 0, $limit);
+        }
+
+        $needle = strtolower($query);
+        $scored = [];
+
+        foreach ($labels as $label) {
+            $score = self::score($label, $needle);
+
+            if ($score !== null) {
+                $scored[] = [$score, $label];
+            }
+        }
+
+        usort($scored, static function (array $left, array $right): int {
+            return $right[0] <=> $left[0]
+                ?: strcmp($left[1], $right[1]);
+        });
+
+        return array_map(
+            static fn (array $entry): string => $entry[1],
+            array_slice($scored, 0, $limit),
+        );
+    }
+
     private static function score(string $path, string $needle): ?int
     {
         $lower = strtolower($path);

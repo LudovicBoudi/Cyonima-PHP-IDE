@@ -86,6 +86,17 @@ favorisées. Les flèches parcourent les résultats, Entrée ou un clic ouvre le
 fichier dans un onglet, Échap ou un clic extérieur ferme le popover. Les 50
 premiers résultats sont affichés.
 
+## Palette de commandes
+
+`Ctrl+Shift+P` ouvre la palette de commandes, construite sur le même popover
+que la navigation rapide (`QuickPick`). Le filtre flou s'applique aux libellés
+préfixés par leur domaine (`Fichier :`, `Affichage :`, `Exécuter :`,
+`Exporter :`, `Aide :`). Chaque commande affiche son raccourci quand il existe ;
+Entrée ou un clic exécute l'action après fermeture de la palette. Les commandes
+couvrent l'enregistrement, les onglets, la navigation, les panneaux, le
+concepteur, le terminal, l'exécution, la compilation native, le débogage, les
+exports et l'aide.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
@@ -152,12 +163,13 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Explorateur, Recherche, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
-Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`,
-`Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`, `Ctrl+Espace` et `F5`.
+Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+Shift+P`, `Ctrl+W`,
+`Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`,
+`Ctrl+Espace` et `F5`.
 
 ## Concepteur d'interface
 
@@ -251,5 +263,7 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - la recherche projet est un parcours de fichiers sans index ni aperçu diff ;
 - les onglets ne se réorganisent pas par glisser-déposer et ne défilent pas ;
 - la navigation rapide liste les fichiers mais pas les symboles ni les commandes ;
+- la palette ne mémorise pas les commandes récentes et ne permet pas de
+  personnaliser les raccourcis ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

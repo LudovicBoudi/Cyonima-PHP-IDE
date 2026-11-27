@@ -17,6 +17,7 @@ use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\AssetPanel;
 use Cyonima\UI\Box;
 use Cyonima\UI\CodeEditor;
+use Cyonima\UI\CommandPalette;
 use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\DebugPanel;
 use Cyonima\App\DesignerWindow;
@@ -413,6 +414,8 @@ $quickOpen = new QuickOpen($window, $root, function (string $path) use ($openFil
     $openFile($path);
 });
 
+$commandPalette = null;
+
 $complete = null;
 $intellisenseTimer = null;
 $suppressIntellisenseUntil = 0.0;
@@ -664,6 +667,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $closeTab,
     $nextTab,
     $quickOpen,
+    &$commandPalette,
 ): bool {
     Loop::after(0, $updateCursor);
 
@@ -687,8 +691,12 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
             $editor->selectAll();
             return true;
         }
-        if ($keyval === 0x70) { // Ctrl+P
-            $quickOpen->present();
+        if ($keyval === 0x70) { // Ctrl+P / Ctrl+Shift+P
+            if ($shift) {
+                $commandPalette?->present();
+            } else {
+                $quickOpen->present();
+            }
             return true;
         }
         if ($keyval === 0x77) { // Ctrl+W
@@ -1208,6 +1216,34 @@ $debugButton = (new IconButton('applications-engineering-symbolic', 'Déboguer')
     $window->toast('Xdebug en attente sur 127.0.0.1:' . $debugPort);
 });
 
+$commandPalette = new CommandPalette($window, [
+    ['label' => 'Fichier : Enregistrer', 'detail' => 'Ctrl+S', 'action' => $save],
+    ['label' => 'Fichier : Fermer l\'onglet', 'detail' => 'Ctrl+W', 'action' => $closeTab],
+    ['label' => 'Fichier : Onglet suivant', 'detail' => 'Ctrl+Tab', 'action' => fn () => $nextTab(1)],
+    ['label' => 'Fichier : Onglet précédent', 'detail' => 'Ctrl+Shift+Tab', 'action' => fn () => $nextTab(-1)],
+    ['label' => 'Navigation : Aller au fichier', 'detail' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
+    ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
+    ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
+    ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
+    ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
+    ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
+    ['label' => 'Affichage : Concepteur d\'interface', 'action' => $openDesigner],
+    ['label' => 'Affichage : Terminal', 'action' => $toggleTerminal],
+    ['label' => 'Exécuter : fichier courant', 'detail' => 'F5', 'action' => fn () => $run()],
+    ['label' => 'Exécuter : compiler en natif', 'action' => $compileNativeFile],
+    ['label' => 'Exécuter : déboguer', 'action' => fn () => $debugButton->click()],
+    ['label' => 'Exporter : application AppImage', 'action' => fn () => $exportApplication()],
+    ['label' => 'Exporter : application Flatpak', 'action' => fn () => $exportApplication(ProjectBuilder::FORMAT_FLATPAK)],
+    ['label' => 'Aide : raccourcis clavier', 'action' => fn () => $window->toast(
+        'Ctrl+S Enregistrer · Ctrl+P Aller au fichier · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant',
+        8000,
+    )],
+    ['label' => 'Aide : à propos de Cyonima IDE', 'action' => fn () => $window->toast(
+        'Cyonima IDE 0.1.0 · MIT · PHP 8.3 + GTK4',
+        6000,
+    )],
+]);
+
 $menuBar = (new MenuBar())
     ->addMenu('Fichier', [
         ['label' => 'Enregistrer', 'shortcut' => 'Ctrl+S', 'action' => $save],
@@ -1227,6 +1263,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Tout sélectionner', 'shortcut' => 'Ctrl+A', 'action' => fn () => $editor->selectAll()],
     ])
     ->addMenu('Affichage', [
+        ['label' => 'Palette de commandes…', 'shortcut' => 'Ctrl+Shift+P', 'action' => fn () => $commandPalette->present()],
         ['label' => 'Explorateur', 'action' => $showExplorer],
         ['label' => 'Recherche', 'action' => $showSearchPanel],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
@@ -1256,7 +1293,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+P Aller au fichier · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+P Aller au fichier · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1297,6 +1334,8 @@ if ($auto) {
         $quickOpen->setQuery('hello');
         $quickOpen->chooseCurrent();
     });
+    Loop::after(240, fn () => $commandPalette->present());
+    Loop::after(280, fn () => $commandPalette->dismiss());
     Loop::after(260, fn () => $closeDocument(realpath($root . '/hello.php') ?: $root . '/hello.php'));
     Loop::after(300, fn () => $openFile($sample));
     Loop::after(380, fn () => $openFile($sampleSecond));

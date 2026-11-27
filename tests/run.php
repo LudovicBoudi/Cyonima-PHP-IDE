@@ -41,6 +41,7 @@ use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
+use Cyonima\UI\CommandPalette;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\SearchPanel;
 
@@ -9973,6 +9974,63 @@ T::ok(!$quickOpen->visible(), 'navigation UI : popover fermé après sélection'
 
 $quickWindow->raw()->close();
 $removeTree($quickRoot);
+
+// ---------------------------------------------------------------------------
+T::section('68. IDE — palette de commandes');
+
+$commandLabels = [
+    'Fichier : Enregistrer',
+    'Affichage : Recherche',
+    'Exécuter : compiler en natif',
+    'Exécuter : fichier courant',
+];
+
+T::same(
+    'Affichage : Recherche',
+    QuickOpenMatcher::matchLabels($commandLabels, 'recherche')[0] ?? null,
+    'commandes : correspondance exacte',
+);
+T::same(
+    'Fichier : Enregistrer',
+    QuickOpenMatcher::matchLabels($commandLabels, 'enreg')[0] ?? null,
+    'commandes : filtrage flou',
+);
+T::same(
+    'Exécuter : compiler en natif',
+    QuickOpenMatcher::matchLabels($commandLabels, 'compile')[0] ?? null,
+    'commandes : mot du libellé',
+);
+T::same(
+    2,
+    count(QuickOpenMatcher::matchLabels($commandLabels, '', 2)),
+    'commandes : limite de résultats',
+);
+
+$paletteWindow = new UI\Window('Palette de commandes');
+$paletteWindow->present();
+
+$executed = [];
+$palette = new CommandPalette($paletteWindow, [
+    ['label' => 'Fichier : Enregistrer', 'detail' => 'Ctrl+S', 'action' => function () use (&$executed): void {
+        $executed[] = 'save';
+    }],
+    ['label' => 'Affichage : Recherche', 'action' => function () use (&$executed): void {
+        $executed[] = 'search';
+    }],
+    ['label' => 'Exécuter : fichier courant', 'action' => function () use (&$executed): void {
+        $executed[] = 'run';
+    }],
+]);
+
+T::same(3, $palette->filter(), 'commandes UI : liste complète');
+$palette->setQuery('recherche');
+T::same(1, $palette->count(), 'commandes UI : filtre');
+T::same(['Affichage : Recherche'], $palette->labels(), 'commandes UI : libellé retenu');
+T::same(1, $palette->choose(0), 'commandes UI : exécution');
+T::same(['search'], $executed, 'commandes UI : action appelée');
+T::ok(!$palette->visible(), 'commandes UI : palette fermée après exécution');
+
+$paletteWindow->raw()->close();
 
 $removeTree($templateRoot);
 
