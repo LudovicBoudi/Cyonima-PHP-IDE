@@ -21,11 +21,12 @@ final class TemplateCompiler
     private int $modelCounter = 0;
     private bool $windowSeen = false;
     private string $lastWidget = '';
+    private ?int $contextLine = null;
 
     /** @var list<string> */
     private array $styleBlocks = [];
 
-    /** @var list<array{key: string, handler: string}> */
+    /** @var list<array{key: string, handler: string, line: int}> */
     private array $shortcuts = [];
 
     /** @var list<array{name: string, phpType: string, docType: string, documented: bool}> */
@@ -73,6 +74,7 @@ final class TemplateCompiler
         $this->modelCounter = 0;
         $this->windowSeen = false;
         $this->lastWidget = '';
+        $this->contextLine = null;
         $this->styleBlocks = [];
         $this->shortcuts = [];
         $this->parameters = [];
@@ -81,7 +83,7 @@ final class TemplateCompiler
         $this->skipWhitespace();
 
         if ($this->position < $this->length) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : contenu inattendu à la position ' . $this->position,
             );
         }
@@ -153,7 +155,7 @@ final class TemplateCompiler
 
         if ($isFragment) {
             if ($this->shortcuts !== []) {
-                throw new CompilerException(
+                throw $this->error(
                     'template : <shortcut> exige une fenêtre',
                 );
             }
@@ -166,6 +168,7 @@ final class TemplateCompiler
             $lines[] = '        return $root;';
         } else {
             foreach ($this->shortcuts as $shortcut) {
+                $body[] = '        // template-line ' . $shortcut['line'];
                 $body[] = '        $window->shortcut('
                     . $shortcut['key'] . ', ' . $shortcut['handler'] . ');';
             }
@@ -175,7 +178,7 @@ final class TemplateCompiler
             }
 
             if (!$this->windowSeen) {
-                throw new CompilerException(
+                throw $this->error(
                     'template : balise racine <window> manquante',
                 );
             }
@@ -238,14 +241,14 @@ final class TemplateCompiler
             $dollar = strrpos($part, '$');
 
             if ($dollar === false) {
-                throw new CompilerException('template : paramètre sans nom : ' . $part);
+                throw $this->error('template : paramètre sans nom : ' . $part);
             }
 
             $name = trim(substr($part, $dollar + 1));
             $type = trim(substr($part, 0, $dollar));
 
             if ($name === '' || $type === '') {
-                throw new CompilerException('template : paramètre invalide : ' . $part);
+                throw $this->error('template : paramètre invalide : ' . $part);
             }
 
             $normalized = $this->normalizeParameterType($type);
@@ -283,7 +286,7 @@ final class TemplateCompiler
         }
 
         if ($type === 'array') {
-            throw new CompilerException(
+            throw $this->error(
                 'template : type de tableau incomplet ; utilisez array<T> ou array<string,T>',
             );
         }
@@ -373,7 +376,7 @@ final class TemplateCompiler
                 $name = $this->readClosingTag();
 
                 if ($name !== $closing) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : balise fermante </' . $name . '> inattendue',
                     );
                 }
@@ -385,7 +388,7 @@ final class TemplateCompiler
                 $end = strpos($this->source, '--}}', $this->position + 4);
 
                 if ($end === false) {
-                    throw new CompilerException('template : commentaire non terminé');
+                    throw $this->error('template : commentaire non terminé');
                 }
 
                 $this->position = $end + 4;
@@ -404,15 +407,20 @@ final class TemplateCompiler
                 continue;
             }
 
+            $textLine = $this->lineAt($this->position);
             $text = $this->readText();
 
             if (trim($text) !== '') {
-                $nodes[] = ['type' => 'text', 'value' => $text];
+                $nodes[] = [
+                    'type' => 'text',
+                    'value' => $text,
+                    'line' => $textLine,
+                ];
             }
         }
 
         if ($closing !== null) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : balise <' . $closing . '> non fermée',
             );
         }
@@ -423,12 +431,13 @@ final class TemplateCompiler
     /** @return array<string, mixed> */
     private function parseElement(): array
     {
+        $line = $this->lineAt($this->position);
         $this->consume('<');
         $this->skipWhitespace();
         $name = $this->readIdentifier();
 
         if ($name === '') {
-            throw new CompilerException('template : nom de balise attendu');
+            throw $this->error('template : nom de balise attendu');
         }
 
         $name = strtolower($name);
@@ -453,7 +462,7 @@ final class TemplateCompiler
                 $closing = $this->readClosingTag();
 
                 if ($closing !== $name) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : </' . $closing . '> inattendu pour <entry>',
                     );
                 }
@@ -468,6 +477,7 @@ final class TemplateCompiler
             'attributes' => $attributes,
             'children' => $children,
             'text' => $text,
+            'line' => $line,
         ];
     }
 
@@ -486,7 +496,7 @@ final class TemplateCompiler
             $name = $this->readAttributeName();
 
             if ($name === '') {
-                throw new CompilerException('template : attribut invalide');
+                throw $this->error('template : attribut invalide');
             }
 
             $this->skipWhitespace();
@@ -502,13 +512,13 @@ final class TemplateCompiler
             $attributes[$key] = $value;
         }
 
-        throw new CompilerException('template : balise non terminée');
+        throw $this->error('template : balise non terminée');
     }
 
     private function readAttributeValue(): string
     {
         if ($this->position >= $this->length) {
-            throw new CompilerException('template : valeur d’attribut attendue');
+            throw $this->error('template : valeur d’attribut attendue');
         }
 
         $quote = $this->source[$this->position];
@@ -528,7 +538,7 @@ final class TemplateCompiler
                 $this->position++;
             }
 
-            throw new CompilerException('template : attribut non terminé');
+            throw $this->error('template : attribut non terminé');
         }
 
         $start = $this->position;
@@ -561,7 +571,7 @@ final class TemplateCompiler
             }
 
             if ($this->source[$this->position] === '<') {
-                throw new CompilerException(
+                throw $this->error(
                     'template : balise imbriquée interdite dans <' . $tag . '>',
                 );
             }
@@ -569,36 +579,47 @@ final class TemplateCompiler
             $this->position++;
         }
 
-        throw new CompilerException('template : balise <' . $tag . '> non fermée');
+        throw $this->error('template : balise <' . $tag . '> non fermée');
     }
 
     /** @return array<string, mixed> */
     private function parseDirective(): array
     {
+        $line = $this->lineAt($this->position);
         $this->consume('@');
         $name = strtolower($this->readIdentifier());
 
         if ($name === '') {
-            throw new CompilerException('template : directive attendue après @');
+            throw $this->error('template : directive attendue après @');
         }
 
         if (in_array($name, ['if', 'elseif', 'foreach'], true)) {
             $this->skipWhitespace();
 
             if (!$this->startsWith('(')) {
-                throw new CompilerException('template : ( attendu après @' . $name);
+                throw $this->error('template : ( attendu après @' . $name);
             }
 
             $argument = $this->readBalancedParentheses();
 
-            return ['type' => 'directive', 'name' => $name, 'argument' => $argument];
+            return [
+                'type' => 'directive',
+                'name' => $name,
+                'argument' => $argument,
+                'line' => $line,
+            ];
         }
 
         if ($name === 'else' || $name === 'endif' || $name === 'endforeach') {
-            return ['type' => 'directive', 'name' => $name, 'argument' => ''];
+            return [
+                'type' => 'directive',
+                'name' => $name,
+                'argument' => '',
+                'line' => $line,
+            ];
         }
 
-        throw new CompilerException('template : directive inconnue @' . $name);
+        throw $this->error('template : directive inconnue @' . $name);
     }
 
     private function readBalancedParentheses(): string
@@ -642,7 +663,7 @@ final class TemplateCompiler
             $this->position++;
         }
 
-        throw new CompilerException('template : parenthèse non fermée');
+        throw $this->error('template : parenthèse non fermée');
     }
 
     /**
@@ -659,6 +680,12 @@ final class TemplateCompiler
         $prefix = str_repeat('    ', $indent);
 
         foreach ($nodes as $node) {
+            $this->contextLine = isset($node['line']) ? (int) $node['line'] : null;
+
+            if ($this->contextLine !== null) {
+                $lines[] = '// template-line ' . $this->contextLine;
+            }
+
             if ($node['type'] === 'text') {
                 $text = trim((string) $node['value']);
 
@@ -688,13 +715,13 @@ final class TemplateCompiler
 
             if ($name === 'shortcut') {
                 if (!isset($attributes['key'])) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : attribut "key" requis pour <shortcut>',
                     );
                 }
 
                 if (!isset($attributes['onactivate'])) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : attribut "on-activate" requis pour <shortcut>',
                     );
                 }
@@ -706,13 +733,14 @@ final class TemplateCompiler
                         $attributes['onactivate'],
                         'on-activate',
                     ),
+                    'line' => $this->contextLine ?? 1,
                 ];
                 continue;
             }
 
             if ($name === 'window') {
                 if (!$root || $this->windowSeen) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : une seule balise <window> racine est supportée',
                     );
                 }
@@ -922,7 +950,7 @@ final class TemplateCompiler
                 }
 
                 if ($sources !== 1) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : <drop-down> exige soit "options", soit "model", soit "items"',
                     );
                 }
@@ -975,7 +1003,7 @@ final class TemplateCompiler
                     : 'single';
 
                 if (!in_array($selection, ['single', 'none', 'multiple'], true)) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : "selection" doit valoir single, none ou multiple',
                     );
                 }
@@ -1018,7 +1046,7 @@ final class TemplateCompiler
                 }
 
                 if ($sources !== 1) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : <list-view> exige soit "options", soit "model", soit "items"',
                     );
                 }
@@ -1074,12 +1102,25 @@ final class TemplateCompiler
                 continue;
             }
 
+            if ($name === 'widget') {
+                if (!isset($attributes['value'])) {
+                    throw $this->error(
+                        'template : attribut "value" requis pour <widget>',
+                    );
+                }
+
+                $this->rejectUnknown($attributes, ['value']);
+                $widget = $this->requiredExpression($attributes['value'], 'value');
+                $lines[] = $prefix . $parent . '->append(' . $widget . ');';
+                continue;
+            }
+
             if ($name === 'include') {
                 $this->renderInclude($attributes, $parent, $prefix, $lines);
                 continue;
             }
 
-            throw new CompilerException('template : balise inconnue <' . $name . '>');
+            throw $this->error('template : balise inconnue <' . $name . '>');
         }
     }
 
@@ -1094,7 +1135,7 @@ final class TemplateCompiler
             return $this->textExpression((string) $node['text']);
         }
 
-        throw new CompilerException(
+        throw $this->error(
             'template : texte manquant pour <' . $node['name'] . '>',
         );
     }
@@ -1109,7 +1150,7 @@ final class TemplateCompiler
 
         foreach (array_keys($attributes) as $name) {
             if (!in_array($name, $allowed, true)) {
-                throw new CompilerException('template : attribut inconnu "' . $name . '"');
+                throw $this->error('template : attribut inconnu "' . $name . '"');
             }
         }
     }
@@ -1144,9 +1185,15 @@ final class TemplateCompiler
         array &$lines,
     ): void {
         foreach ($nodes as $node) {
+            $this->contextLine = isset($node['line']) ? (int) $node['line'] : null;
+
+            if ($this->contextLine !== null) {
+                $lines[] = '// template-line ' . $this->contextLine;
+            }
+
             if ($node['type'] === 'text') {
                 if (trim((string) $node['value']) !== '') {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : texte inattendu dans <menu-bar>',
                     );
                 }
@@ -1154,13 +1201,13 @@ final class TemplateCompiler
             }
 
             if ($node['type'] === 'directive') {
-                throw new CompilerException(
+                throw $this->error(
                     'template : directive non supportée dans <menu-bar>',
                 );
             }
 
             if ($node['name'] !== 'menu') {
-                throw new CompilerException(
+                throw $this->error(
                     'template : balise <' . $node['name']
                     . '> inattendue dans <menu-bar>',
                 );
@@ -1185,7 +1232,7 @@ final class TemplateCompiler
 
         if (!isset($attributes['label'])
             || trim((string) $attributes['label']) === '') {
-            throw new CompilerException('template : label requis pour <menu>');
+            throw $this->error('template : label requis pour <menu>');
         }
 
         $this->rejectUnknown($attributes, ['label']);
@@ -1196,9 +1243,15 @@ final class TemplateCompiler
         $itemIndex = 0;
 
         foreach ($node['children'] as $child) {
+            $this->contextLine = isset($child['line']) ? (int) $child['line'] : null;
+
+            if ($this->contextLine !== null) {
+                $lines[] = '// template-line ' . $this->contextLine;
+            }
+
             if ($child['type'] === 'text') {
                 if (trim((string) $child['value']) !== '') {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : texte inattendu dans <menu>',
                     );
                 }
@@ -1206,7 +1259,7 @@ final class TemplateCompiler
             }
 
             if ($child['type'] === 'directive') {
-                throw new CompilerException(
+                throw $this->error(
                     'template : directive non supportée dans <menu>',
                 );
             }
@@ -1217,7 +1270,7 @@ final class TemplateCompiler
             if ($name === 'item') {
                 if (!isset($childAttributes['label'])
                     || trim((string) $childAttributes['label']) === '') {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : label requis pour <item>',
                     );
                 }
@@ -1236,20 +1289,20 @@ final class TemplateCompiler
                 if (isset($childAttributes['radio'])) {
                     if (!isset($childAttributes['value'])
                         || trim((string) $childAttributes['value']) === '') {
-                        throw new CompilerException(
+                        throw $this->error(
                             'template : value requis pour un <item radio>',
                         );
                     }
 
                     if (!isset($childAttributes['onselect'])) {
-                        throw new CompilerException(
+                        throw $this->error(
                             'template : on-select requis pour un <item radio>',
                         );
                     }
 
                     if (isset($childAttributes['onclick'])
                         || isset($childAttributes['ontoggle'])) {
-                        throw new CompilerException(
+                        throw $this->error(
                             'template : on-click et on-toggle sont interdits pour un <item radio>',
                         );
                     }
@@ -1279,13 +1332,13 @@ final class TemplateCompiler
 
                 if ($checkable === 'true') {
                     if (!isset($childAttributes['ontoggle'])) {
-                        throw new CompilerException(
+                        throw $this->error(
                             'template : on-toggle requis pour un <item checkable>',
                         );
                     }
 
                     if (isset($childAttributes['onclick'])) {
-                        throw new CompilerException(
+                        throw $this->error(
                             'template : on-click est interdit pour un <item checkable>',
                         );
                     }
@@ -1309,7 +1362,7 @@ final class TemplateCompiler
                 }
 
                 if (!isset($childAttributes['onclick'])) {
-                    throw new CompilerException(
+                    throw $this->error(
                         'template : on-click requis pour <item>',
                     );
                 }
@@ -1342,7 +1395,7 @@ final class TemplateCompiler
                 continue;
             }
 
-            throw new CompilerException(
+            throw $this->error(
                 'template : balise <' . $name . '> inattendue dans <menu>',
             );
         }
@@ -1368,13 +1421,13 @@ final class TemplateCompiler
         $file = isset($attributes['file']) ? trim($attributes['file']) : '';
 
         if ($file === '') {
-            throw new CompilerException(
+            throw $this->error(
                 'template : attribut "file" requis pour <include>',
             );
         }
 
         if ($this->path === null || $this->includeResolver === null) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : include indisponible sans chemin de fichier',
             );
         }
@@ -1385,14 +1438,19 @@ final class TemplateCompiler
         $resolved = realpath($candidate) ?: $candidate;
 
         if (!is_file($resolved)) {
-            throw new CompilerException('template : include introuvable : ' . $file);
+            throw $this->error('template : include introuvable : ' . $file);
         }
 
         $resolver = $this->includeResolver;
-        $included = $resolver($resolved);
+
+        try {
+            $included = $resolver($resolved);
+        } catch (CompilerException $exception) {
+            throw $this->error($exception->getMessage());
+        }
 
         if (($included['class'] ?? '') === $this->className) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : include récursif de ' . $file,
             );
         }
@@ -1404,7 +1462,7 @@ final class TemplateCompiler
             $name = (string) $parameter['name'];
 
             if (!isset($attributes[$name])) {
-                throw new CompilerException(
+                throw $this->error(
                     'template : paramètre "' . $name . '" manquant pour l’include '
                     . $file,
                 );
@@ -1420,7 +1478,7 @@ final class TemplateCompiler
 
         foreach (array_keys($attributes) as $name) {
             if (!isset($used[$name])) {
-                throw new CompilerException(
+                throw $this->error(
                     'template : paramètre inconnu "' . $name . '" pour l’include '
                     . $file,
                 );
@@ -1440,7 +1498,7 @@ final class TemplateCompiler
         $trimmed = trim($value);
 
         if ($trimmed === '') {
-            throw new CompilerException(
+            throw $this->error(
                 'template : "options" ne peut pas être vide',
             );
         }
@@ -1455,7 +1513,7 @@ final class TemplateCompiler
             $option = trim($option);
 
             if ($option === '') {
-                throw new CompilerException(
+                throw $this->error(
                     'template : option vide dans <drop-down>',
                 );
             }
@@ -1496,7 +1554,7 @@ final class TemplateCompiler
             return $trimmed;
         }
 
-        throw new CompilerException(
+        throw $this->error(
             'template : paramètre "' . $name . '" (' . $type
             . ') doit être {{ expression }}',
         );
@@ -1571,7 +1629,7 @@ final class TemplateCompiler
             return $value;
         }
 
-        throw new CompilerException('template : nombre attendu pour "' . $name . '"');
+        throw $this->error('template : nombre attendu pour "' . $name . '"');
     }
 
     /** @param array<string, string> $attributes */
@@ -1599,7 +1657,7 @@ final class TemplateCompiler
             return $value;
         }
 
-        throw new CompilerException('template : entier attendu pour "' . $name . '"');
+        throw $this->error('template : entier attendu pour "' . $name . '"');
     }
 
     /** @param array<string, string> $attributes */
@@ -1623,13 +1681,13 @@ final class TemplateCompiler
             return 'false';
         }
 
-        throw new CompilerException('template : booléen attendu pour "' . $name . '"');
+        throw $this->error('template : booléen attendu pour "' . $name . '"');
     }
 
     private function requiredExpression(string $value, string $attribute): string
     {
         if (preg_match('/^{{(.+)}}$/s', trim($value), $matches) !== 1) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : "' . $attribute . '" doit être {{ expression }}',
             );
         }
@@ -1640,7 +1698,7 @@ final class TemplateCompiler
     private function requiredDynamic(string $value, string $attribute): string
     {
         if (preg_match('/^{{(.+)}}$/s', trim($value), $matches) !== 1) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : "' . $attribute . '" doit être {{ $callable }}',
             );
         }
@@ -1700,10 +1758,37 @@ final class TemplateCompiler
             'endif' => '}',
             'foreach' => 'foreach (' . $node['argument'] . ') {',
             'endforeach' => '}',
-            default => throw new CompilerException(
+            default => throw $this->error(
                 'template : directive non supportée @' . $node['name'],
             ),
         };
+    }
+
+    private function error(string $message): CompilerException
+    {
+        if (str_starts_with($message, 'template : ')) {
+            $message = substr($message, strlen('template : '));
+        }
+
+        return new CompilerException(
+            'template ligne ' . $this->diagnosticLine() . ' : ' . $message,
+        );
+    }
+
+    private function diagnosticLine(): int
+    {
+        if ($this->contextLine !== null) {
+            return $this->contextLine;
+        }
+
+        return $this->lineAt($this->position);
+    }
+
+    private function lineAt(int $position): int
+    {
+        $position = max(0, min($position, $this->length));
+
+        return substr_count($this->source, "\n", 0, $position) + 1;
     }
 
     private function readText(): string
@@ -1785,7 +1870,7 @@ final class TemplateCompiler
     private function consume(string $value): void
     {
         if (!$this->startsWith($value)) {
-            throw new CompilerException(
+            throw $this->error(
                 'template : « ' . $value . ' » attendu à la position ' . $this->position,
             );
         }

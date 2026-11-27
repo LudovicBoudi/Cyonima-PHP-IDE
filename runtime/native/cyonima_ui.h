@@ -1029,6 +1029,32 @@ static inline void cy_ui_list_view_activate(cy_int view, cy_int index)
     );
 }
 
+static inline void cy_ui_string_list_changed(
+    GListModel *model,
+    guint position,
+    guint removed,
+    guint added,
+    gpointer data
+) {
+    (void) model;
+    (void) removed;
+    (void) added;
+    cy_ui_call_closure_int((CyClosure *) data, (cy_int) position);
+}
+
+static inline void cy_ui_string_list_on_changed(
+    cy_int model,
+    CyClosure *closure
+) {
+    cy_add_root(closure);
+    g_signal_connect(
+        cy_ui_model(model),
+        "items-changed",
+        G_CALLBACK(cy_ui_string_list_changed),
+        closure
+    );
+}
+
 static inline void cy_ui_menu_activated(
     GSimpleAction *action,
     GVariant *parameter,

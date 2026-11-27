@@ -1,0 +1,82 @@
+name: Native Flatpak
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-flatpak
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    name: Tests avec packaging Flatpak natif
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    env:
+      GDK_BACKEND: x11
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      CYONIMA_TEST_FLATPAK: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: ffi
+          coverage: none
+          tools: composer
+
+      - name: Installer GTK4 / Adw / GtkSourceView / VTE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-1 \
+            libadwaita-1-0 \
+            libgtksourceview-5-0 \
+            libvte-2.91-gtk4-0 \
+            gir1.2-adw-1 \
+            gir1.2-gtk-4.0 \
+            gir1.2-gtksource-5 \
+            gir1.2-vte-3.91 \
+            libgtk-4-dev \
+            libsqlite3-dev \
+            libcurl4-openssl-dev \
+            libssh2-1-dev \
+            build-essential \
+            pkg-config \
+            xvfb \
+            xauth \
+            dbus-x11
+
+      - name: Installer Flatpak
+        run: |
+          sudo apt-get install -y \
+            flatpak \
+            flatpak-builder \
+            elfutils \
+            ostree
+
+      - name: Restaurer les runtimes Flatpak
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: flatpak-gnome-49-native
+          restore-keys: flatpak-gnome-49-
+
+      - name: Installer le runtime et le SDK GNOME
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Platform//49 org.gnome.Sdk//49
+
+      - name: Tests avec packaging Flatpak natif
+        run: |
+          dbus-run-session -- xvfb-run -a \
+            php -d ffi.enable=true tests/run.php

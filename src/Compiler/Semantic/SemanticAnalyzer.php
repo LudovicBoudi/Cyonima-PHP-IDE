@@ -1081,6 +1081,10 @@ final class SemanticAnalyzer
         }
 
         if ($this->isCallableType($type)) {
+            if ($type !== 'callable') {
+                $this->callableSignature($type);
+            }
+
             return;
         }
 
@@ -1408,11 +1412,7 @@ final class SemanticAnalyzer
                     );
                 }
 
-                if (!in_array($param->type, ['int', 'float', 'bool', 'string'], true)) {
-                    throw new CompilerException(
-                        "ligne {$param->line} : paramètre de closure non scalaire : {$param->type}",
-                    );
-                }
+                $this->validateCallableParameter($param->type);
 
                 if (isset($params[$param->name])) {
                     throw new CompilerException(
@@ -1543,10 +1543,8 @@ final class SemanticAnalyzer
                     );
                 }
 
-                if ($expression->returnType !== 'void' && !$this->isScalar($expression->returnType)) {
-                    throw new CompilerException(
-                        "ligne {$expression->line} : retour de closure non scalaire : {$expression->returnType}",
-                    );
+                if ($expression->returnType !== 'void') {
+                    $this->validateCallableReturn($expression->returnType);
                 }
 
                 if ($expression->body === null) {
@@ -2610,6 +2608,7 @@ final class SemanticAnalyzer
                     'ui_on_drop_down_change_closure',
                     'ui_on_row_activated_closure',
                     'ui_on_list_view_activated_closure',
+                    'ui_string_list_on_changed',
                     'ui_menu_add_item',
                     'ui_menu_add_item_ex',
                     'ui_menu_add_check_item',
@@ -2635,6 +2634,7 @@ final class SemanticAnalyzer
                     'ui_on_drop_down_change_closure' => 'callable():void, callable(int):void ou callable(string):void',
                     'ui_on_row_activated_closure' => 'callable():void ou callable(int):void',
                     'ui_on_list_view_activated_closure' => 'callable():void ou callable(int):void',
+                    'ui_string_list_on_changed' => 'callable():void ou callable(int):void',
                     'ui_menu_add_check_item' => 'callable():void ou callable(bool):void',
                     'ui_menu_add_radio_item' => 'callable():void ou callable(string):void',
                     default => 'callable():void',
@@ -2649,6 +2649,7 @@ final class SemanticAnalyzer
                         'ui_on_drop_down_change_closure',
                         'ui_on_row_activated_closure',
                         'ui_on_list_view_activated_closure',
+                        'ui_string_list_on_changed',
                         'ui_menu_add_item',
                         'ui_menu_add_item_ex',
                         'ui_menu_add_check_item',
@@ -2683,6 +2684,7 @@ final class SemanticAnalyzer
                     'ui_on_drop_down_change_closure' => [[], ['int'], ['string']],
                     'ui_on_row_activated_closure' => [[], ['int']],
                     'ui_on_list_view_activated_closure' => [[], ['int']],
+                    'ui_string_list_on_changed' => [[], ['int']],
                     'ui_menu_add_check_item' => [[], ['bool']],
                     'ui_menu_add_radio_item' => [[], ['string']],
                     default => [[]],
@@ -3608,7 +3610,7 @@ final class SemanticAnalyzer
     private function isCallableType(string $type): bool
     {
         return $type === 'callable' || preg_match(
-            '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
+            '/^callable\(([^)]*)\):([^\s(),]+)$/',
             $type,
         ) === 1;
     }
@@ -3623,7 +3625,7 @@ final class SemanticAnalyzer
     private function callableSignature(string $type): array
     {
         if (preg_match(
-            '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
+            '/^callable\(([^)]*)\):([^\s(),]+)$/',
             $type,
             $matches,
         ) !== 1) {
@@ -3633,14 +3635,61 @@ final class SemanticAnalyzer
         $params = $matches[1] === '' ? [] : explode(',', $matches[1]);
 
         foreach ($params as $param) {
-            if (!in_array($param, ['int', 'float', 'bool', 'string'], true)) {
-                throw new CompilerException(
-                    'paramètre callable non supporté : ' . $param,
-                );
-            }
+            $this->validateCallableParameter($param);
         }
 
+        $this->validateCallableReturn($matches[2]);
+
         return ['params' => $params, 'return' => $matches[2]];
+    }
+
+    private function validateCallableParameter(string $param): void
+    {
+        $nullable = $this->isNullableType($param);
+        $inner = $nullable ? $this->nullableInnerType($param) : $param;
+
+        if (in_array($inner, ['int', 'float', 'bool', 'string'], true)) {
+            if ($nullable && $inner !== 'string') {
+                throw new CompilerException(
+                    'scalaire nullable non supporté dans callable : ' . $param,
+                );
+            }
+
+            return;
+        }
+
+        if ($inner === 'void'
+            || $this->isArrayType($inner)
+            || $this->isCallableType($inner)
+            || !isset($this->classes[$inner])) {
+            throw new CompilerException(
+                'paramètre callable non supporté : ' . $param,
+            );
+        }
+    }
+
+    private function validateCallableReturn(string $return): void
+    {
+        if (in_array($return, ['void', 'int', 'float', 'bool', 'string'], true)) {
+            return;
+        }
+
+        $nullable = $this->isNullableType($return);
+        $inner = $nullable ? $this->nullableInnerType($return) : $return;
+
+        if ($inner === 'string') {
+            return;
+        }
+
+        if ($inner === 'void'
+            || $this->isArrayType($inner)
+            || $this->isCallableType($inner)
+            || (in_array($inner, ['int', 'float', 'bool'], true) && $nullable)
+            || !isset($this->classes[$inner])) {
+            throw new CompilerException(
+                'retour callable non supporté : ' . $return,
+            );
+        }
     }
 
     /**
@@ -3884,6 +3933,7 @@ final class SemanticAnalyzer
             'ui_string_list_append' => ['params' => ['int', 'string'], 'return' => 'void'],
             'ui_string_list_count' => ['params' => ['int'], 'return' => 'int'],
             'ui_string_list_item' => ['params' => ['int', 'int'], 'return' => 'string'],
+            'ui_string_list_on_changed' => ['params' => ['int', 'callable'], 'return' => 'void'],
             'ui_drop_down' => ['params' => ['int'], 'return' => 'int'],
             'ui_drop_down_selected' => ['params' => ['int'], 'return' => 'int'],
             'ui_set_drop_down_selected' => ['params' => ['int', 'int'], 'return' => 'void'],

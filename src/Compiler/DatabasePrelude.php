@@ -187,6 +187,19 @@ final class DatabasePrelude
             {
                 return new Table($this->connection, $this->table);
             }
+
+            public function belongsTo(string $table, int $id): BelongsTo
+            {
+                return $this->store()->belongsTo($table, $id);
+            }
+
+            public function hasMany(
+                string $table,
+                string $foreignKey,
+                int $id
+            ): HasMany {
+                return $this->store()->hasMany($table, $foreignKey, $id);
+            }
         }
 
         final class Table
@@ -319,6 +332,31 @@ final class DatabasePrelude
                 );
             }
 
+            public function column(string $name): string
+            {
+                $this->assertIdentifier($name);
+
+                return $name;
+            }
+
+            public function belongsTo(string $table, int $id): BelongsTo
+            {
+                return new BelongsTo($this->connection, $table, $id);
+            }
+
+            public function hasMany(
+                string $table,
+                string $foreignKey,
+                int $id
+            ): HasMany {
+                return new HasMany(
+                    $this->connection,
+                    $table,
+                    $foreignKey,
+                    $id
+                );
+            }
+
             private function assertIdentifier(string $name): void
             {
                 if (strlen($name) === 0) {
@@ -337,6 +375,87 @@ final class DatabasePrelude
                     || str_contains($name, '=')) {
                     throw new RuntimeException('identifiant SQL invalide : ' . $name);
                 }
+            }
+        }
+
+        final class BelongsTo
+        {
+            public Connection $connection;
+            public string $table;
+            public int $id;
+
+            public function __construct(Connection $connection, string $table, int $id)
+            {
+                $store = new Table($connection, $table);
+                $this->connection = $connection;
+                $this->table = $store->table;
+                $this->id = $id;
+            }
+
+            /** @return array<string,string> */
+            public function row(): array
+            {
+                return (new Table($this->connection, $this->table))->find($this->id);
+            }
+
+            public function exists(): bool
+            {
+                return (new Table($this->connection, $this->table))->exists($this->id);
+            }
+
+            public function id(): int
+            {
+                return $this->id;
+            }
+        }
+
+        final class HasMany
+        {
+            public Connection $connection;
+            public string $table;
+            public string $foreignKey;
+            public int $foreignId;
+
+            public function __construct(
+                Connection $connection,
+                string $table,
+                string $foreignKey,
+                int $foreignId
+            ) {
+                $store = new Table($connection, $table);
+                $this->connection = $connection;
+                $this->table = $store->table;
+                $this->foreignKey = $store->column($foreignKey);
+                $this->foreignId = $foreignId;
+            }
+
+            /** @return array<int> */
+            public function ids(): array
+            {
+                return $this->connection->columnInt(
+                    'SELECT id FROM ' . $this->table
+                    . ' WHERE ' . $this->foreignKey
+                    . ' = ' . strval($this->foreignId)
+                    . ' ORDER BY id'
+                );
+            }
+
+            public function count(): int
+            {
+                return $this->connection->queryInt(
+                    'SELECT COUNT(*) FROM ' . $this->table
+                    . ' WHERE ' . $this->foreignKey
+                    . ' = ' . strval($this->foreignId)
+                );
+            }
+
+            public function exists(): bool
+            {
+                return $this->connection->queryBool(
+                    'SELECT COUNT(*) > 0 FROM ' . $this->table
+                    . ' WHERE ' . $this->foreignKey
+                    . ' = ' . strval($this->foreignId)
+                );
             }
         }
 

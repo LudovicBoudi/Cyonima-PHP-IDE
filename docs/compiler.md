@@ -143,7 +143,7 @@ Le binaire produit est autonome : il ne dépend ni de PHP, ni de GTK.
 | Fonctions natives | `strlen`, `intval`, `floatval`, `strval`, `abs`, `count`, JSON typé, CLI/chaînes |
 | Console | `Cyonima\Console\Application`, `Command`, `Input`, `Output` |
 | Base de données | `Cyonima\Database\Connection`, `Repository`, `Migration`, `Migrator` |
-| ORM léger | `Cyonima\Database\Entity`, `Table`, `Repository::store()`, transactions |
+| ORM léger | `Cyonima\Database\Entity`, `Table`, `BelongsTo`, `HasMany`, `Repository::store()`, transactions |
 | Validation | `Cyonima\Validation\Validator`, règles typées |
 | UI native | `Application`, `Window`, `Box`, `Label`, `Button`, `Entry`, `CheckButton`, `ProgressBar`, `Separator`, `Popover`, `MenuButton`, `Menu`, `MenuBar`, `Image`, `ScrolledWindow`, `StringList`, `ObjectList`, `Listable`, `DropDown`, `ListBox`, `ListView`, `Binding`, CSS |
 | Templates | `.ui` compilés en `Cyonima\Templates\<Nom>::build()` |
@@ -484,7 +484,10 @@ echo $multiply(4), ' ', $add(4);
 - `function (...) use (&$x)` capture par **référence** : la closure et le
   scope extérieur partagent la même variable ;
 - `fn (...) => ...` capture automatiquement les variables libres par valeur ;
-- type interne `callable(int):int`, `callable():void`, etc. ;
+- type interne `callable(int):int`, `callable():void`,
+  `callable(Todo):string`, `callable(string):Todo`, etc. ;
+- les callables acceptent des objets, des classes/ interfaces et des
+  nullables d’objet (`?Todo`) ou `?string` ;
 - appels via `$fn(...)` ;
 - captures scalaires, chaînes, tableaux, tables associatives, objets et
   closures ; les captures par valeur de tableaux et tables sont copiées à la
@@ -645,8 +648,8 @@ ligne :
   sont acceptés mais ignorés) ;
 - `static::`, `parent::` statique, méthodes statiques abstraites ou
   d’interface, valeurs par défaut de propriétés statiques ;
-- `?int`, `?float`, `?bool`, `?array`, `array<?T>` et les signatures de
-  closures/callables nullables ;
+- `?int`, `?float`, `?bool`, `?array`, `array<?T>` et les callables avec
+  tableaux ou scalaires nullables ;
 - plusieurs namespaces par fichier, namespaces avec accolades, `use function`,
   `use const`, `use` groupé, autoload Composer et `require`/`include` ;
 - `json_encode` d’objets/structures imbriquées et `json_decode` non typé ;
@@ -797,8 +800,8 @@ Limites actuelles :
 - `?int`, `?float`, `?bool` ne sont pas supportés (représentation optionnelle
   non encore définie) ;
 - `?array` et les éléments de tableau nullables (`array<?User>`) sont refusés ;
-- les paramètres/retours de closures et les callables ne peuvent pas encore
-  être nullables ;
+- les paramètres/retours de closures et callables nullables sont limités aux
+  objets et à `?string` ; `?int`, `?float`, `?bool` restent refusés ;
 - une variable locale doit provenir d’une expression nullable typée : on ne
   peut pas encore écrire `$x = null` puis l’affecter plus tard sans type
   préalable.
@@ -1202,7 +1205,30 @@ insert(array<string,string>) → id
 update(id, array<string,string>) → bool
 find(id) / findWhere(column, value) → array<string,string>
 delete(id), exists(id), count(), ids() → array<int>
+belongsTo(table, id) → BelongsTo
+hasMany(table, foreignKey, id) → HasMany
 ```
+
+Relations explicites :
+
+```php
+$owner = $todos->belongsTo('users', $todo->userId);
+$row = $owner->row();
+
+if ($owner->exists()) {
+    $user = new User('');
+    $user->hydrate($row);
+}
+
+$relation = $users->hasMany('todos', 'user_id', $user->id);
+echo $relation->count();
+$ids = $relation->ids();
+```
+
+- `BelongsTo` expose `row()`, `exists()`, `id()` ;
+- `HasMany` expose `ids()`, `count()`, `exists()` ;
+- les identifiants de table et de clé étrangère sont validés ;
+- l’hydratation des objets reste explicite.
 
 Transactions :
 
@@ -1222,14 +1248,15 @@ Limites de l’ORM :
 
 - mapping et hydratation écrits à la main, sans réflexion ;
 - clé primaire entière `id` et `lastInsertId()` (rowid SQLite) ;
-- pas de relations, de lazy loading, d’identity map, de cascade ni de détection
-  automatique des changements ;
-- `all()` fait une requête par identifiant ;
+- relations explicites `BelongsTo` / `HasMany`, sans lazy loading, identity
+  map, cascade ni eager loading ;
+- `all()` et `HasMany::ids()` imposent une requête par identifiant ;
 - pas de requêtes préparées ni de query builder ;
 - pas de timestamps automatiques, de soft delete ni de transactions imbriquées.
 
 Un exemple complet est fourni dans
-[`examples/native-orm.php`](../examples/native-orm.php).
+[`examples/native-orm.php`](../examples/native-orm.php) et
+[`examples/native-relations.php`](../examples/native-relations.php).
 
 ### Validation typée
 
@@ -1456,7 +1483,8 @@ $app->run();
   `onActivate(callable)` et `onChanged(callable)` ;
 - `Label::text()` retourne le texte courant ;
 - `StringList(array<string>)` expose `append(string)`, `count()`,
-  `item(int)` ;
+  `item(int)`, `onChanged(callable():void)` et
+  `onIndexChanged(callable(int):void)` ;
 - `Listable` impose `listLabel(): string` ; `ObjectList(array<Listable>)`
   expose `add`, `count`, `item`, `labels()` ;
 - `DropDown(StringList $model, int $selected)` expose `selectedIndex()`,
@@ -1473,7 +1501,8 @@ $app->run();
   `selectedObject()`, `setSingleClick(bool)`, `activate(int)` et
   `onActivated(callable)` ; `ListView::fromObjects` accepte un `ObjectList` ;
 - `Binding` expose `refresh()` et les fabriques `entry`, `label`, `check`,
-  `dropIndex`, `dropText`, `listIndex`, `viewIndex`, `viewText` ;
+  `dropIndex`, `dropText`, `listIndex`, `viewIndex`, `viewText` ; les
+  bindings `drop*` et `view*` s’abonnent aux changements du `StringList` ;
 - `Separator(bool $vertical)`, `Image(string $path)`,
   `ScrolledWindow::setChild(Widget)` ;
 - `Popover` expose `setChild(Widget)` ; `MenuButton(string $label)` expose
@@ -1596,6 +1625,7 @@ Deux fichiers produisant la même classe sont refusés.
 | `<menu label>` | menu ou sous-menu |
 | `<item label on-click>` | entrée de menu |
 | `<shortcut key on-activate>` | raccourci clavier de fenêtre |
+| `<widget value="{{ $widget }}" />` | insère un widget préconstruit |
 | `<drop-down options model items selected on-change>` | sélecteur lié à un modèle |
 | `<list-box selection items on-row-activated>` | liste de lignes sélectionnables |
 | `<list-view options model items selected single-click on-activate>` | vue de liste GTK |
@@ -1629,6 +1659,16 @@ Attributs :
 Un exemple complet est fourni dans
 [`examples/native-templates.php`](../examples/native-templates.php) et
 [`examples/native-todo-list.ui`](../examples/native-todo-list.ui).
+
+Les erreurs de syntaxe et de sémantique sont localisées dans le fichier `.ui` :
+
+```text
+templates/page.ui : template ligne 12 : balise inconnue <frame>
+templates/page.ui : template ligne 8 : fonction inconnue : App\inconnue
+```
+
+Les lignes générées portent un marqueur interne, ce qui permet de remapper les
+erreurs du parseur et de l’analyse sémantique vers le template d’origine.
 
 #### Fragments et includes
 
@@ -1818,6 +1858,27 @@ Bindings : `Binding::viewIndex` et `Binding::viewText`.
 
 Limites : lignes limitées à des libellés, pas de factory personnalisée, pas de
 sélection multiple.
+
+#### Widgets préconstruits
+
+Un template peut insérer un widget créé dans le code PHP :
+
+```html
+<widget value="{{ $entry }}" />
+```
+
+```php
+@params(Widget $entry, Widget $list, callable():void $onQuit)
+```
+
+- le paramètre doit être un `Widget` ou une sous-classe ;
+- le widget est ajouté au conteneur courant ;
+- pratique pour combiner code impératif et template ;
+- les callbacks, bindings et modèles restent gérés dans le code PHP.
+
+L’application [`examples/native-demo`](../examples/native-demo/) combine ce
+mécanisme avec SQLite, ORM, relations, validation, menus, raccourcis et
+`ListView`.
 
 #### Menus popover
 
@@ -2036,11 +2097,26 @@ Binding::check(CheckButton, getter():bool, setter(bool))
 Binding::dropIndex(DropDown, getter():int, setter(int))
 Binding::dropText(DropDown, getter():string, setter(string))
 Binding::listIndex(ListBox, getter():int, setter(int))
+Binding::viewIndex(ListView, getter():int, setter(int))
+Binding::viewText(ListView, getter():string, setter(string))
 ```
 
-Le sens état → widget n’est pas automatique : il n’existe pas de notifications
-de propriétés dans le sous-ensemble. Appeler `refresh()` après une mutation du
-modèle.
+Notifs de modèle :
+
+```php
+$model->onChanged(function (): void {
+    echo "modèle modifié\n";
+});
+
+$model->onIndexChanged(function (int $position): void {
+    echo 'position ', $position, "\n";
+});
+```
+
+Les bindings `drop*` et `view*` se réabonnent au `StringList` et rejouent
+`refresh()` quand le modèle change. Pour l’état applicatif ordinaire, il
+n’existe pas encore de notifications de propriétés : appeler `refresh()`
+après une mutation.
 
 Un exemple complet est fourni dans
 [`examples/native-binding.php`](../examples/native-binding.php).
@@ -2074,8 +2150,8 @@ Limites :
 - menus natifs `GMenu`/`GAction` et popovers de widgets ; éléments cochables,
   radio, icônes, accélérateurs affichés et activation dynamique ; pas de
   sous-groupes radio imbriqués ni de valeurs non scalaires ;
-- bindings explicites disponibles ; pas de notifications automatiques de
-  propriétés, `refresh()` requis pour le sens modèle → widget ;
+- bindings explicites ; notifications `StringList` automatiques pour
+  `DropDown`/`ListView`, mais pas de notifications de propriétés arbitraires ;
 - pas de cache de templates : ils sont recompilés à chaque compilation ;
 - cycles d’includes indirects non détectés ;
 - les expressions restent du PHP du sous-ensemble, analysé statiquement.
@@ -2094,7 +2170,8 @@ Un fragment d’exemple est fourni dans
 - une seule boucle GTK par programme ; registres dynamiques pour les widgets
   et les modèles de chaînes ;
 - CSS global : menus natifs, popovers, raccourcis clavier et bindings
-  explicites disponibles ; pas de notifications automatiques ;
+  explicites disponibles ; notifications automatiques limitées aux modèles
+  `StringList` ;
 - la compilation ELF d’une application UI exige `libgtk-4-dev`.
 
 La façade objet `Cyonima\UI` (`new Button(...)`, `onClicked(...)`) sera
@@ -2276,6 +2353,10 @@ GTK4 ; la CI installe `libgtk-4-dev` pour les exécuter sous Xvfb.
 | 17 | items radio et états dynamiques des menus | livré |
 | 18 | binding bidirectionnel widget ↔ état | livré |
 | 19 | GtkListView et sélection typée | livré |
+| 20 | callables typés avec objets | livré |
+| 21 | notifications de modèle et bindings réactifs | livré |
+| 22 | relations ORM `BelongsTo` / `HasMany` | livré |
+| 23 | composition de widgets et application de démonstration | livré |
 
 La façade objet
 `Cyonima\UI` repose sur l’héritage, les interfaces, les membres statiques et la

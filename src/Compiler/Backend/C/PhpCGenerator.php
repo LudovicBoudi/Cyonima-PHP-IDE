@@ -109,6 +109,7 @@ final class PhpCGenerator
         'ui_string_list_append',
         'ui_string_list_count',
         'ui_string_list_item',
+        'ui_string_list_on_changed',
         'ui_drop_down',
         'ui_drop_down_selected',
         'ui_set_drop_down_selected',
@@ -674,7 +675,7 @@ final class PhpCGenerator
     private function isCallableType(string $type): bool
     {
         return $type === 'callable' || preg_match(
-            '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
+            '/^callable\(([^)]*)\):([^\s(),]+)$/',
             $type,
         ) === 1;
     }
@@ -1736,6 +1737,8 @@ final class PhpCGenerator
             'ui_string_list_count' => 'cy_ui_string_list_count('
                 . ($arguments[0] ?? '0') . ')',
             'ui_string_list_item' => 'cy_ui_string_list_item('
+                . implode(', ', $arguments) . ')',
+            'ui_string_list_on_changed' => 'cy_ui_string_list_on_changed('
                 . implode(', ', $arguments) . ')',
             'ui_drop_down' => 'cy_ui_drop_down(' . ($arguments[0] ?? '0') . ')',
             'ui_drop_down_selected' => 'cy_ui_drop_down_selected('

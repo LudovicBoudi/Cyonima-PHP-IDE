@@ -12,6 +12,12 @@ SRC="$BUILD/src"
 OUT="$BUILD/php"
 DEPS="$BUILD/deps"
 
+# PHP déjà construit : réutiliser sauf demande explicite (FORCE_PHP_BUILD=1).
+if [ -x "$OUT/usr/bin/php" ] && [ "${FORCE_PHP_BUILD:-0}" != "1" ]; then
+    echo "PHP embarqué déjà présent : $OUT/usr/bin/php"
+    exit 0
+fi
+
 mkdir -p "$SRC" "$DEPS"
 
 if [ ! -f "$SRC/php-$PHP_VERSION.tar.xz" ]; then

@@ -139,6 +139,9 @@ final class PhpCompiler
         $compiledTemplates = [];
         /** @var array<string, list<array{name: string, type: string}>> $templateParams */
         $templateParams = [];
+        /** @var array<string, array{offset: int, lines: int, generated: string}> $templateSources */
+        $templateSources = [];
+        $templatePadding = 100000;
 
         $registerTemplate = function (string $path) use (
             &$templateClasses,
@@ -229,12 +232,33 @@ final class PhpCompiler
                     $templatePath,
                     $resolver,
                 ))->compile($templateSource);
+
+                $generatedLines = substr_count($generated, "\n") + 1;
+                $offset = $templatePadding;
+                $templatePadding += $generatedLines + 10;
+                $templateSources[$templatePath] = [
+                    'offset' => $offset,
+                    'lines' => $generatedLines,
+                    'generated' => $generated,
+                ];
+
                 $templateProgram = (new Parser(
-                    (new Lexer($generated))->tokenize(),
+                    (new Lexer(str_repeat("\n", $offset) . $generated))->tokenize(),
                 ))->parse();
             } catch (CompilerException $exception) {
+                $message = $exception->getMessage();
+
+                if (!str_starts_with($message, 'template ligne ')
+                    && isset($offset, $generated)) {
+                    $message = $this->remapGeneratedMessage(
+                        $message,
+                        $generated,
+                        $offset,
+                    );
+                }
+
                 throw new CompilerException(
-                    $this->relativePath($templatePath) . ' : ' . $exception->getMessage(),
+                    $this->relativePath($templatePath) . ' : ' . $message,
                 );
             }
 
@@ -320,7 +344,21 @@ final class PhpCompiler
             );
         }
 
-        $analysis = (new SemanticAnalyzer($nativeFunctions))->analyze($program);
+        try {
+            $analysis = (new SemanticAnalyzer($nativeFunctions))->analyze($program);
+        } catch (CompilerException $exception) {
+            $mapped = $this->remapTemplateSemanticMessage(
+                $exception->getMessage(),
+                $templateSources,
+            );
+
+            if ($mapped !== null) {
+                throw new CompilerException($mapped);
+            }
+
+            throw $exception;
+        }
+
         $ir = (new IrBuilder($analysis))->build($program);
         $generator = new PhpCGenerator();
         $ui = $generator->usesUi($ir);
@@ -673,6 +711,93 @@ final class PhpCompiler
         $root = rtrim($this->projectRoot, '/') . '/';
 
         return str_starts_with($path, $root) ? substr($path, strlen($root)) : $path;
+    }
+
+    private function remapGeneratedMessage(
+        string $message,
+        string $generated,
+        int $offset,
+    ): string {
+        if (preg_match('/ligne (\d+)/', $message, $matches) !== 1) {
+            return $message;
+        }
+
+        $generatedLine = (int) $matches[1] - $offset;
+        $templateLine = $this->templateLineAtGenerated($generated, $generatedLine);
+
+        if ($templateLine === null) {
+            if ($generatedLine >= 1) {
+                return preg_replace(
+                    '/ligne \d+/',
+                    'ligne ' . $generatedLine,
+                    $message,
+                    1,
+                ) ?? $message;
+            }
+
+            return $message;
+        }
+
+        return preg_replace(
+            '/ligne \d+/',
+            'template ligne ' . $templateLine,
+            $message,
+            1,
+        ) ?? $message;
+    }
+
+    /**
+     * @param array<string, array{offset: int, lines: int, generated: string}> $sources
+     */
+    private function remapTemplateSemanticMessage(string $message, array $sources): ?string
+    {
+        if (preg_match('/^ligne (\d+) : (.*)$/s', $message, $matches) !== 1) {
+            return null;
+        }
+
+        $line = (int) $matches[1];
+
+        foreach ($sources as $path => $source) {
+            $local = $line - $source['offset'];
+
+            if ($local < 1 || $local > $source['lines'] + 2) {
+                continue;
+            }
+
+            $templateLine = $this->templateLineAtGenerated(
+                $source['generated'],
+                $local,
+            );
+
+            if ($templateLine !== null) {
+                return $this->relativePath($path)
+                    . ' : template ligne ' . $templateLine
+                    . ' : ' . $matches[2];
+            }
+
+            return $this->relativePath($path)
+                . ' : ligne ' . $local . ' : ' . $matches[2];
+        }
+
+        return null;
+    }
+
+    private function templateLineAtGenerated(string $generated, int $line): ?int
+    {
+        if ($line < 1) {
+            return null;
+        }
+
+        $lines = explode("\n", $generated);
+        $index = min($line, count($lines)) - 1;
+
+        for (; $index >= 0; $index--) {
+            if (preg_match('/^\s*\/\/ template-line (\d+)/', $lines[$index], $matches) === 1) {
+                return (int) $matches[1];
+            }
+        }
+
+        return null;
     }
 
     private function write(string $path, string $content): void

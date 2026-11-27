@@ -1620,9 +1620,18 @@ final class Parser
                     do {
                         $param = $this->parseType();
 
-                        if (!in_array($param, ['int', 'float', 'bool', 'string'], true)) {
+                        if ($param === 'void'
+                            || str_starts_with($param, 'array')
+                            || str_starts_with($param, 'callable')) {
                             throw new CompilerException(
-                                "ligne {$token->line} : paramètre callable non scalaire : {$param}",
+                                "ligne {$token->line} : paramètre callable non supporté : {$param}",
+                            );
+                        }
+
+                        if (str_starts_with($param, '?')
+                            && in_array(substr($param, 1), ['int', 'float', 'bool'], true)) {
+                            throw new CompilerException(
+                                "ligne {$token->line} : scalaire nullable non supporté dans callable : {$param}",
                             );
                         }
 
@@ -1634,9 +1643,18 @@ final class Parser
                 $this->consume(TokenType::Colon, 'attendu : : dans la signature callable');
                 $return = $this->parseType();
 
-                if (!in_array($return, ['int', 'float', 'bool', 'string', 'void'], true)) {
+                if ($return === 'array'
+                    || str_starts_with($return, 'array')
+                    || str_starts_with($return, 'callable')) {
                     throw new CompilerException(
-                        "ligne {$token->line} : retour callable non scalaire : {$return}",
+                        "ligne {$token->line} : retour callable non supporté : {$return}",
+                    );
+                }
+
+                if (str_starts_with($return, '?')
+                    && in_array(substr($return, 1), ['int', 'float', 'bool'], true)) {
+                    throw new CompilerException(
+                        "ligne {$token->line} : scalaire nullable non supporté dans callable : {$return}",
                     );
                 }
 

@@ -1322,7 +1322,7 @@ final class IrBuilder
     private function isCallableType(string $type): bool
     {
         return $type === 'callable' || preg_match(
-            '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
+            '/^callable\(([^)]*)\):([^\s(),]+)$/',
             $type,
         ) === 1;
     }
@@ -1370,7 +1370,7 @@ final class IrBuilder
     private function callableSignature(string $type): array
     {
         if (preg_match(
-            '/^callable\(([^)]*)\):(int|float|bool|string|void)$/',
+            '/^callable\(([^)]*)\):([^\s(),]+)$/',
             $type,
             $matches,
         ) !== 1) {

@@ -550,6 +550,16 @@ class StringList
     {
         return ui_string_list_item($this->handle, $index);
     }
+
+    public function onChanged(callable():void $callback): void
+    {
+        ui_string_list_on_changed($this->handle, $callback);
+    }
+
+    public function onIndexChanged(callable(int):void $callback): void
+    {
+        ui_string_list_on_changed($this->handle, $callback);
+    }
 }
 
 class DropDown extends Widget
@@ -831,9 +841,14 @@ final class Binding
             $setter($index);
         });
 
-        $binding = new Binding(function () use ($drop, $getter): void {
+        $refresh = function () use ($drop, $getter): void {
             $drop->setSelected($getter());
+        };
+        $drop->model->onChanged(function () use ($refresh): void {
+            $refresh();
         });
+
+        $binding = new Binding($refresh);
         $binding->refresh();
 
         return $binding;
@@ -848,9 +863,14 @@ final class Binding
             $setter($value);
         });
 
-        $binding = new Binding(function () use ($drop, $getter): void {
+        $refresh = function () use ($drop, $getter): void {
             $drop->selectText($getter());
+        };
+        $drop->model->onChanged(function () use ($refresh): void {
+            $refresh();
         });
+
+        $binding = new Binding($refresh);
         $binding->refresh();
 
         return $binding;
@@ -882,9 +902,14 @@ final class Binding
             $setter($index);
         });
 
-        $binding = new Binding(function () use ($view, $getter): void {
+        $refresh = function () use ($view, $getter): void {
             $view->selectIndex($getter());
+        };
+        $view->model->onChanged(function () use ($refresh): void {
+            $refresh();
         });
+
+        $binding = new Binding($refresh);
         $binding->refresh();
 
         return $binding;
@@ -900,9 +925,14 @@ final class Binding
             $setter($view->selectedText());
         });
 
-        $binding = new Binding(function () use ($view, $getter): void {
+        $refresh = function () use ($view, $getter): void {
             $view->selectText($getter());
+        };
+        $view->model->onChanged(function () use ($refresh): void {
+            $refresh();
         });
+
+        $binding = new Binding($refresh);
         $binding->refresh();
 
         return $binding;

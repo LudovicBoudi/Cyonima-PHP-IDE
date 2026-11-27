@@ -841,6 +841,46 @@ Trois écarts assumés par rapport au miroir strict du C :
   `GtkStringList` peut évoluer après création. Limitations : lignes limitées
   à des libellés, pas de factory personnalisée ni de sélection multiple.
 
+79. **Diagnostics de templates** : `TemplateCompiler` suit la ligne source et
+  préfixe les erreurs par `template ligne N`. Les nœuds AST portent leur ligne
+  et les lignes générées sont annotées par `// template-line N`. `PhpCompiler`
+  décale chaque template dans un espace de lignes distinct (100000+) et
+  remappe les erreurs du parseur et de l’analyse sémantique vers le fichier
+  `.ui` et sa ligne. Les erreurs incluent le chemin relatif au projet.
+
+80. **Callables typés avec objets** : les signatures `callable(Todo):string`,
+  `callable(string):Todo`, `callable(?Todo):void` sont acceptées pour les
+  closures, propriétés, paramètres et retours. Le parseur autorise les classes,
+  interfaces et nullables d’objet/`?string` ; les tableaux et scalaires
+  nullables restent refusés. La validation sémantique vérifie l’existence des
+  classes et la compatibilité des arguments. Le backend C utilise les pointeurs
+  d’objets existants (`CyObj_*`) pour les paramètres et retours de closures.
+  La compatibilité des signatures reste exacte (pas de contravariance).
+
+81. **Notifications de modèle** : `StringList::onChanged(callable():void)` et
+  `onIndexChanged(callable(int):void)` relient le signal `items-changed` de
+  `GtkStringList`. Les bindings `dropIndex`, `dropText`, `viewIndex` et
+  `viewText` s’abonnent au modèle et rejouent `refresh()` quand il change.
+  Les bindings d’état applicatif restent explicites : pas de notifications de
+  propriétés arbitraires.
+
+82. **Relations ORM explicites** : `BelongsTo` (`row`, `exists`, `id`) et
+  `HasMany` (`ids`, `count`, `exists`) sont accessibles via
+  `Table::belongsTo` / `hasMany` et `Repository::belongsTo` / `hasMany`.
+  Les noms de table et de clé étrangère passent par la validation
+  d’identifiants existante. Les relations retournent des row maps ou des
+  identifiants, l’hydratation typée reste écrite dans le repository.
+  Limitations : pas de lazy loading, identity map, cascade, eager loading ni
+  de requête jointe typée ; `HasMany` induit du N+1.
+
+83. **Composition de widgets et démo complète** : balise `<widget
+  value="{{ $widget }}" />` pour insérer un widget préconstruit dans un
+  template. Le paramètre est typé `Widget` (ou sous-classe) et les bindings,
+  callbacks et modèles restent gérés dans le code PHP. L’exemple
+  `examples/native-demo` assemble template, SQLite, migrations, entités,
+  `belongsTo`, validation, menu natif, raccourci, `ListView` et widgets
+  préconstruits. Un mode `--auto` ferme l’application pour les tests.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

@@ -1,0 +1,40 @@
+@params(string $title, Widget $draft, Widget $add, Widget $status, Widget $list, callable():void $onQuit, callable():void $onAbout)
+
+<window title="{{ $title }}" width="640" height="620" class="demo-window">
+    <shortcut key="<Control>q" on-activate="{{ $onQuit }}" />
+
+    <style>
+        .demo-window { background: #101418; color: #e6edf3; }
+        .demo-panel { padding: 18px; }
+        .demo-title { font-size: 24px; font-weight: bold; }
+        .demo-subtitle { font-weight: bold; color: #8b949e; }
+        entry { min-width: 280px; }
+        .demo-status { color: #3ddc97; }
+        listview row { padding: 6px; }
+    </style>
+
+    <box vertical="true" spacing="12" class="demo-panel">
+        <menu-bar>
+            <menu label="Fichier">
+                <item label="Quitter" accel="<Control>q" on-click="{{ $onQuit }}" />
+            </menu>
+            <menu label="Aide">
+                <item label="À propos" on-click="{{ $onAbout }}" />
+            </menu>
+        </menu-bar>
+
+        <label text="{{ $title }}" class="demo-title" />
+        <label>Saisissez une tâche puis validez avec Entrée.</label>
+
+        <box vertical="false" spacing="8">
+            <widget value="{{ $draft }}" />
+            <widget value="{{ $add }}" />
+        </box>
+
+        <widget value="{{ $status }}" />
+        <separator />
+
+        <label text="Tâches" class="demo-subtitle" />
+        <widget value="{{ $list }}" />
+    </box>
+</window>

@@ -6822,6 +6822,17 @@ unlink($fragRoot . '/templates/unknown.ui');
 unlink($fragRoot . '/templates/static.ui');
 unlink($fragRoot . '/templates/self.ui');
 
+$fragCleanC = (new PhpCompiler($fragRoot))->compile(
+    $fragRoot . '/src/app.php',
+    null,
+    'c',
+);
+$fragCleanSource = (string) file_get_contents($fragCleanC['cPath']);
+T::ok(
+    str_contains($fragCleanSource, 'CyObj_Cyonima__Templates__Board'),
+    'fragment : compilation propre après les erreurs',
+);
+
 $nestedPage = <<<'UI'
 @params(string $title)
 
@@ -8776,6 +8787,540 @@ T::ok(
 );
 
 $removeTree($viewRoot);
+
+// ---------------------------------------------------------------------------
+T::section('55. Templates — diagnostics fichier et ligne');
+
+try {
+    (new TemplateCompiler('Diag'))->compile(
+        "<window>\n    <frame />\n</window>",
+    );
+    T::ok(false, 'diagnostic : erreur de syntaxe localisée');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'template ligne 2'),
+        'diagnostic : erreur de syntaxe localisée',
+        $exception->getMessage(),
+    );
+}
+
+$diagRoot = sys_get_temp_dir() . '/cyonima_diag_' . getmypid();
+$removeTree($diagRoot);
+mkdir($diagRoot . '/templates', 0775, true);
+
+file_put_contents(
+    $diagRoot . '/templates/broken.ui',
+    "@params(string \$title)\n\n<window title=\"{{ \$title }}\">\n    <frame />\n</window>\n",
+);
+file_put_contents(
+    $diagRoot . '/templates/semantic.ui',
+    "@params(string \$title)\n\n<window title=\"{{ \$title }}\">\n    <label>{{ missing_function() }}</label>\n</window>\n",
+);
+file_put_contents(
+    $diagRoot . '/app-broken.php',
+    "<?php\nuse Cyonima\\Templates\\Broken;\n\$w = Broken::build('x');\n",
+);
+file_put_contents(
+    $diagRoot . '/app-semantic.php',
+    "<?php\nuse Cyonima\\Templates\\Semantic;\n\$w = Semantic::build('x');\n",
+);
+
+try {
+    (new PhpCompiler($diagRoot))->compile($diagRoot . '/app-broken.php', null, 'c');
+    T::ok(false, 'diagnostic : fichier et ligne de syntaxe');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    $message = $exception->getMessage();
+    T::ok(
+        str_contains($message, 'templates/broken.ui')
+            && str_contains($message, 'template ligne 4'),
+        'diagnostic : fichier et ligne de syntaxe',
+        $message,
+    );
+}
+
+unlink($diagRoot . '/templates/broken.ui');
+
+try {
+    (new PhpCompiler($diagRoot))->compile($diagRoot . '/app-semantic.php', null, 'c');
+    T::ok(false, 'diagnostic : fichier et ligne sémantique');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    $message = $exception->getMessage();
+    T::ok(
+        str_contains($message, 'templates/semantic.ui')
+            && str_contains($message, 'template ligne 4')
+            && str_contains($message, 'fonction inconnue'),
+        'diagnostic : fichier et ligne sémantique',
+        $message,
+    );
+}
+
+$removeTree($diagRoot);
+
+// ---------------------------------------------------------------------------
+T::section('56. Callables typés avec objets');
+
+$objectCallableSource = <<<'PHP'
+<?php
+class Todo
+{
+    public string $title;
+
+    public function __construct(string $title)
+    {
+        $this->title = $title;
+    }
+}
+
+class Formatter
+{
+    public callable(Todo):string $format;
+
+    public function __construct(callable(Todo):string $format)
+    {
+        $this->format = $format;
+    }
+
+    public function render(Todo $todo): string
+    {
+        $callback = $this->format;
+
+        return $callback($todo);
+    }
+}
+
+$format = function (Todo $todo): string {
+    return '[' . $todo->title . ']';
+};
+
+$make = function (string $title): Todo {
+    return new Todo($title);
+};
+
+$nullable = function (?Todo $todo): string {
+    if ($todo === null) {
+        return 'aucun';
+    }
+
+    return $todo->title;
+};
+
+$first = new Todo('Compilateur');
+echo $format($first), "\n";
+$second = $make('Callables');
+echo $format($second), "\n";
+echo $nullable(null), ' ', $nullable($second), "\n";
+
+$formatter = new Formatter(function (Todo $todo): string {
+    return '<' . $todo->title . '>';
+});
+echo $formatter->render($second), "\n";
+PHP;
+
+file_put_contents($phpRoot . '/src/object-callables.php', $objectCallableSource);
+
+$objectCallableC = (new PhpCompiler($phpRoot))->compile(
+    $phpRoot . '/src/object-callables.php',
+    null,
+    'c',
+);
+$objectCallableCSource = (string) file_get_contents($objectCallableC['cPath']);
+T::ok(str_contains($objectCallableCSource, 'CyObj_Todo'), 'callables objets : classe C');
+T::ok(str_contains($objectCallableCSource, 'cy_closure_'), 'callables objets : closures C');
+T::ok(
+    str_contains($objectCallableCSource, 'fn_Formatter__render'),
+    'callables objets : propriété callable',
+);
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution des callables objets non testée');
+} else {
+    $objectCallableElf = (new PhpCompiler($phpRoot))->compile(
+        $phpRoot . '/src/object-callables.php',
+        null,
+        'elf',
+    );
+    $objectCallableExpected = <<<'TXT'
+[Compilateur]
+[Callables]
+aucun Callables
+<Callables>
+
+TXT;
+    T::same(
+        $objectCallableExpected,
+        shell_exec(escapeshellarg((string) $objectCallableElf['binaryPath']) . ' 2>&1'),
+        'callables objets : paramètre, retour et nullabilité',
+    );
+}
+
+$objectCallableErrors = [
+    [
+        'paramètre tableau',
+        '<?php $f = function (array $items): void {};',
+        'paramètre callable non supporté',
+    ],
+    [
+        'retour tableau',
+        '<?php $f = function (): array { return []; };',
+        'retour callable non supporté',
+    ],
+    [
+        'classe inconnue',
+        '<?php $f = function (Missing $item): void {};',
+        'paramètre callable non supporté',
+    ],
+];
+
+foreach ($objectCallableErrors as $index => [$label, $source, $needle]) {
+    try {
+        $compilePhp('object-callable-error-' . $index, $source, 'c');
+        T::ok(false, 'callables objets : erreur ' . $label);
+    } catch (Cyonima\Compiler\CompilerException $exception) {
+        T::ok(
+            str_contains($exception->getMessage(), $needle),
+            'callables objets : erreur ' . $label,
+            $exception->getMessage(),
+        );
+    }
+}
+
+$objectCallableTypeError = <<<'PHP'
+<?php
+class Todo
+{
+    public string $title;
+
+    public function __construct(string $title)
+    {
+        $this->title = $title;
+    }
+}
+
+$format = function (Todo $todo): string {
+    return $todo->title;
+};
+
+echo $format('texte');
+PHP;
+
+try {
+    $compilePhp('object-callable-type-error', $objectCallableTypeError, 'c');
+    T::ok(false, 'callables objets : argument incompatible');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'appel de closure'),
+        'callables objets : argument incompatible',
+        $exception->getMessage(),
+    );
+}
+
+$exampleObjectCallableC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-object-callables.php',
+    null,
+    'c',
+);
+$exampleObjectCallableSource = (string) file_get_contents($exampleObjectCallableC['cPath']);
+T::ok(
+    str_contains($exampleObjectCallableSource, 'CyObj_Todo'),
+    'callables objets : exemple du dépôt',
+);
+
+// ---------------------------------------------------------------------------
+T::section('57. Modèles — notifications et bindings réactifs');
+
+$reactiveSource = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.reactive.test');
+$model = new StringList(['a', 'b']);
+$position = -1;
+$model->onIndexChanged(function (int $changed) use (&$position): void {
+    $position = $changed;
+});
+$model->append('c');
+
+if ($position === 2) {
+    echo "model-changed=ok\n";
+}
+
+$drop = new DropDown($model, 0);
+$text = 'a';
+$dropBinding = Binding::dropText($drop, function () use (&$text): string {
+    return $text;
+}, function (string $value) use (&$text): void {
+    $text = $value;
+});
+$text = 'c';
+$model->append('d');
+
+if ($drop->selectedText() === 'c') {
+    echo "reactive-drop=ok\n";
+}
+
+$view = new ListView($model, 0);
+$viewText = 'a';
+$viewBinding = Binding::viewText($view, function () use (&$viewText): string {
+    return $viewText;
+}, function (string $value) use (&$viewText): void {
+    $viewText = $value;
+});
+$viewText = 'd';
+$model->append('e');
+
+if ($view->selectedText() === 'd') {
+    echo "reactive-view=ok\n";
+}
+PHP;
+
+$reactiveC = $compilePhp('reactive-model', $reactiveSource, 'c');
+$reactiveCSource = (string) file_get_contents($reactiveC['cPath']);
+T::ok(
+    str_contains($reactiveCSource, 'cy_ui_string_list_on_changed'),
+    'réactif : signal items-changed',
+);
+T::ok(
+    str_contains($reactiveCSource, 'cy_ui_list_view'),
+    'réactif : vue liée au modèle',
+);
+
+$reactiveError = <<<'PHP'
+<?php
+$app = new Application('com.cyonima.reactive.error');
+$model = new StringList(['a']);
+$model->onIndexChanged(function (string $value): void {
+    echo $value;
+});
+PHP;
+
+file_put_contents($phpRoot . '/src/reactive-error.php', $reactiveError);
+
+try {
+    (new PhpCompiler($phpRoot))->compile(
+        $phpRoot . '/src/reactive-error.php',
+        null,
+        'c',
+    );
+    T::ok(false, 'réactif : callback de modèle incompatible');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'callable(int):void'),
+        'réactif : callback de modèle incompatible',
+        $exception->getMessage(),
+    );
+}
+
+if (!$hasGcc) {
+    T::skip('gcc absent : exécution réactive non testée');
+} else {
+    $reactiveGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+    $reactiveDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+    if (!$reactiveGtk) {
+        T::skip('GTK4 dev absent : exécution réactive non testée');
+    } elseif (!$reactiveDisplay) {
+        T::skip('DISPLAY absent : exécution réactive non testée');
+    } else {
+        $reactiveElf = $compilePhp('reactive-model', $reactiveSource, 'elf');
+        $reactiveRunner = 'timeout 8 ' . escapeshellarg((string) $reactiveElf['binaryPath']);
+
+        if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+            && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+            $reactiveRunner = 'dbus-run-session -- ' . $reactiveRunner;
+        }
+
+        $reactiveOut = [];
+        $reactiveStatus = 0;
+        exec($reactiveRunner . ' 2>&1', $reactiveOut, $reactiveStatus);
+        $reactiveText = implode("\n", $reactiveOut);
+        T::ok(
+            str_contains($reactiveText, 'model-changed=ok'),
+            'réactif : notification items-changed',
+            $reactiveText,
+        );
+        T::ok(
+            str_contains($reactiveText, 'reactive-drop=ok'),
+            'réactif : DropDown après ajout au modèle',
+            $reactiveText,
+        );
+        T::ok(
+            str_contains($reactiveText, 'reactive-view=ok'),
+            'réactif : ListView après ajout au modèle',
+            $reactiveText,
+        );
+        T::ok($reactiveStatus === 0, 'réactif : exécution terminée', $reactiveText);
+    }
+}
+
+// ---------------------------------------------------------------------------
+T::section('58. ORM — relations belongsTo et hasMany');
+
+$relationsC = (new PhpCompiler($phpRoot))->compile(
+    dirname(__DIR__) . '/examples/native-relations.php',
+    null,
+    'c',
+);
+$relationsCSource = (string) file_get_contents($relationsC['cPath']);
+T::ok(
+    str_contains($relationsCSource, 'CyObj_Cyonima__Database__BelongsTo'),
+    'relations : classe BelongsTo',
+);
+T::ok(
+    str_contains($relationsCSource, 'CyObj_Cyonima__Database__HasMany'),
+    'relations : classe HasMany',
+);
+T::ok(
+    str_contains($relationsCSource, 'cy_map_set_string_string'),
+    'relations : hydratation par row map',
+);
+
+$relationGuardSource = <<<'PHP'
+<?php
+use Cyonima\Database\Connection;
+use Cyonima\Database\Table;
+use RuntimeException;
+
+$db = new Connection(':memory:');
+$db->exec('CREATE TABLE todos (id INTEGER PRIMARY KEY, user_id INTEGER)');
+$table = new Table($db, 'todos');
+
+$missing = $table->belongsTo('todos', 999);
+echo 'missing=', count($missing->row()), "\n";
+
+try {
+    $table->hasMany('todos', 'user_id; DROP', 1);
+    echo "unexpected\n";
+} catch (RuntimeException $error) {
+    echo 'guard=', $error->getMessage(), "\n";
+}
+PHP;
+
+$relationGuardC = $compilePhp('relations-guard', $relationGuardSource, 'c');
+$relationGuardCSource = (string) file_get_contents($relationGuardC['cPath']);
+T::ok(
+    str_contains($relationGuardCSource, 'fn_Cyonima__Database__BelongsTo'),
+    'relations : fabrique belongsTo',
+);
+T::ok(
+    str_contains($relationGuardCSource, 'fn_Cyonima__Database__HasMany'),
+    'relations : fabrique hasMany',
+);
+
+if (!$hasGcc || !$hasSqlite) {
+    T::skip('gcc ou SQLite absent : exécution des relations non testée');
+} else {
+    $relationsElf = (new PhpCompiler($phpRoot))->compile(
+        dirname(__DIR__) . '/examples/native-relations.php',
+        null,
+        'elf',
+    );
+    $relationsExpected = <<<'TXT'
+propriétaire : Alice
+tâches : 2
+- Première tâche
+- Deuxième tâche
+
+TXT;
+    T::same(
+        $relationsExpected,
+        shell_exec(escapeshellarg((string) $relationsElf['binaryPath']) . ' 2>&1'),
+        'relations : belongsTo, hasMany et hydratation typée',
+    );
+
+    $guardElf = $compilePhp('relations-guard', $relationGuardSource, 'elf');
+    $guardExpected = <<<'TXT'
+missing=0
+guard=identifiant SQL invalide : user_id; DROP
+
+TXT;
+    T::same(
+        $guardExpected,
+        shell_exec(escapeshellarg((string) $guardElf['binaryPath']) . ' 2>&1'),
+        'relations : absence et garde d’identifiant',
+    );
+}
+
+// ---------------------------------------------------------------------------
+T::section('59. Application de démonstration complète');
+
+$demoTemplates = dirname(__DIR__) . '/examples/native-demo/templates';
+$demoSource = dirname(__DIR__) . '/examples/native-demo/app.php';
+$demoCompiler = new PhpCompiler($phpRoot, [], [], [$demoTemplates]);
+$demoC = $demoCompiler->compile($demoSource, null, 'c');
+$demoCSource = (string) file_get_contents($demoC['cPath']);
+T::ok(
+    str_contains($demoCSource, 'CyObj_Cyonima__Templates__DemoPage'),
+    'démo : template principal compilé',
+);
+T::ok(
+    str_contains($demoCSource, 'CyObj_Cyonima__Database__Connection'),
+    'démo : base SQLite intégrée',
+);
+T::ok(
+    str_contains($demoCSource, 'CyObj_ListView'),
+    'démo : ListView intégrée',
+);
+T::ok(
+    str_contains($demoCSource, 'CyObj_App__Task'),
+    'démo : entité métier',
+);
+T::ok(
+    str_contains($demoCSource, 'cy_ui_shortcut'),
+    'démo : raccourci clavier',
+);
+
+$widgetTemplate = <<<'UI'
+@params(Widget $widget)
+
+<window title="Widget" width="200" height="100">
+    <box vertical="true">
+        <widget value="{{ $widget }}" />
+    </box>
+</window>
+UI;
+
+$widgetGenerated = (new TemplateCompiler('WidgetPage'))->compile($widgetTemplate);
+T::ok(
+    str_contains($widgetGenerated, '->append(($widget));'),
+    'démo : widget préconstruit composé',
+);
+
+try {
+    (new TemplateCompiler('WidgetBroken'))->compile(
+        '<window><widget /></window>',
+    );
+    T::ok(false, 'démo : erreur widget sans value');
+} catch (Cyonima\Compiler\CompilerException $exception) {
+    T::ok(
+        str_contains($exception->getMessage(), 'attribut "value" requis pour <widget>'),
+        'démo : erreur widget sans value',
+        $exception->getMessage(),
+    );
+}
+
+$demoGtk = trim((string) shell_exec('pkg-config --exists gtk4 2>/dev/null && echo yes || true')) === 'yes';
+$demoDisplay = getenv('DISPLAY') !== false && getenv('DISPLAY') !== '';
+
+if (!$hasGcc || !$hasSqlite || !$demoGtk) {
+    T::skip('GTK4/SQLite dev absent : exécution de la démo non testée');
+} elseif (!$demoDisplay) {
+    T::skip('DISPLAY absent : exécution de la démo non testée');
+} else {
+    $demoElf = $demoCompiler->compile($demoSource, null, 'elf');
+    $demoRunner = 'timeout 8 ' . escapeshellarg((string) $demoElf['binaryPath']) . ' --auto';
+
+    if (getenv('DBUS_SESSION_BUS_ADDRESS') === false
+        && trim((string) shell_exec('command -v dbus-run-session 2>/dev/null')) !== '') {
+        $demoRunner = 'dbus-run-session -- ' . $demoRunner;
+    }
+
+    $demoOut = [];
+    $demoStatus = 0;
+    exec($demoRunner . ' 2>&1', $demoOut, $demoStatus);
+    T::ok(
+        $demoStatus === 0,
+        'démo : application complète exécutée',
+        implode("\n", $demoOut),
+    );
+}
 
 $removeTree($templateRoot);
 

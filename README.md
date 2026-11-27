@@ -479,9 +479,19 @@ $todo->delete($db);
 ```
 
 `Repository::store()` fournit `find`, `findWhere`, `ids`, `count`, `insert`,
-`update` et `delete`. `Connection::transaction(function (): void { ... })`
-encapsule `BEGIN`/`COMMIT`/`ROLLBACK`. Le mapping reste explicite, sans
-réflexion. Voir `examples/native-orm.php`.
+`update`, `delete`, `belongsTo` et `hasMany`. `Connection::transaction(function
+(): void { ... })` encapsule `BEGIN`/`COMMIT`/`ROLLBACK`. Le mapping reste
+explicite, sans réflexion. Voir `examples/native-orm.php`.
+
+Les relations restent explicites et typées dans le repository :
+
+```php
+$owner = $todos->belongsTo('users', $todo->userId)->row();
+$ids = $todos->hasMany('todos', 'user_id', $user->id)->ids();
+```
+
+`BelongsTo` expose `row()`, `exists()`, `id()` ; `HasMany` expose `ids()`,
+`count()` et `exists()`. Voir `examples/native-relations.php`.
 
 La validation typée fournit des règles réutilisables :
 
@@ -506,21 +516,22 @@ dynamique, la covariance des retours, les interfaces avec héritage multiple,
 les classes abstraites, `parent::`, les membres
 `static` (`Classe::méthode()`, `Classe::$propriété`, `self::`), les objets en
 paramètres/retours/propriétés, les closures et arrow functions avec capture
-par référence `use (&$x)`, les tableaux
+par référence `use (&$x)`, les callables typés avec objets
+(`callable(Todo):string`), les tableaux
 indexés homogènes, les tables associatives `string => valeur`, les collections
 d’objets `array<Classe>` / `array<string,Classe>`, les types nullables
 `?string`, `?Classe`, `?Interface`, `?callable`, les namespaces, les imports et
 la compilation multi-fichiers, l’encodage JSON et le décodage JSON typé, la
 console native `Cyonima\Console` (commandes, arguments, options, aide), la
 couche `Cyonima\Database` (connexion SQLite, repositories, migrations), l’ORM
-léger (`Entity`, `Table`, transactions), la
+léger (`Entity`, `Table`, relations `BelongsTo`/`HasMany`, transactions), la
 validation typée `Cyonima\Validation`, les templates `.ui` compilés vers GTK,
 les fragments et includes, les listes GTK (`StringList`, `ObjectList`,
 `DropDown`, `ListBox`, `ListView`), les menus popover (`MenuButton`,
 `Popover`) et la
 barre de menus native (`Menu`, `MenuBar`) avec items cochables, radio,
 icônes, accélérateurs et états dynamiques, les raccourcis clavier, le binding
-bidirectionnel widget ↔ état,
+bidirectionnel widget ↔ état et les notifications de `StringList`,
 les signatures annotées via PHPDoc avec
 copie à l’appel, l’interpolation
 de chaînes, `echo`, les opérateurs usuels, les natives `strlen`, `intval`,
@@ -622,11 +633,19 @@ $binding = Binding::entry(
 
 $name = 'Autre';
 $binding->refresh();
+
+$model->onChanged(function (): void {
+    echo "modèle modifié\n";
+});
+$model->onIndexChanged(function (int $position): void {
+    echo 'position ', $position, "\n";
+});
 ```
 
-`Binding` relie `Entry`, `Label`, `CheckButton`, `DropDown` et `ListBox` à un
-état applicatif. Le widget met à jour l’état immédiatement ; `refresh()`
-propage l’état vers le widget.
+`Binding` relie `Entry`, `Label`, `CheckButton`, `DropDown`, `ListBox` et
+`ListView` à un état applicatif. Le widget met à jour l’état immédiatement ;
+`refresh()` propage l’état vers le widget. Les bindings de listes s’abonnent
+aussi aux changements du `StringList`.
 
 `Listable` impose `listLabel(): string`. `DropDown::fromObjects()` et
 `ListBox::appendObjects()` branchent directement un modèle métier.
@@ -788,6 +807,23 @@ Les paramètres typés objets, tableaux et callables exigent
 
 Aucun moteur de template n’est embarqué : les balises et directives sont
 traduites en code PHP puis en C. Voir `examples/native-templates.php`.
+
+Les erreurs indiquent le fichier et la ligne du template :
+
+```text
+templates/page.ui : template ligne 12 : balise inconnue <frame>
+```
+
+Un template peut aussi insérer un widget préconstruit :
+
+```html
+<widget value="{{ $entry }}" />
+```
+
+L’application complète
+[`examples/native-demo`](examples/native-demo/) combine template, widgets
+préconstruits, SQLite, ORM, relations, validation, menus, raccourcis et
+`ListView`. Voir son `README.md`.
 
 Les modules natifs **SQLite**, **libcurl** et **libssh2** sont disponibles dans
 le code compilé :
@@ -966,12 +1002,16 @@ En résumé :
 
 ## CI/CD GitHub
 
-Deux workflows sont fournis dans `.github/workflows/` :
+Trois workflows sont fournis dans `.github/workflows/` :
 
 | Workflow | Déclencheur | Contenu |
 |---|---|---|
-| `ci.yml` | push `main`/`master`, pull request | lint PHP, vérification packaging, tests sous Xvfb |
-| `build.yml` | tags `v*`, `workflow_dispatch` | Portable, AppImage et Flatpak autonomes |
+| `ci.yml` | push `main`/`master`, pull request, manuel | lint PHP, packaging, `composer validate`, tests GTK sous Xvfb, bundle portable |
+| `build.yml` | tags `v*`, manuel | Portable, AppImage et Flatpak autonomes, sommes SHA-256 |
+| `native-flatpak.yml` | manuel, hebdomadaire | tests complets avec packaging Flatpak natif |
+
+Le workflow `ci.yml` construit et teste aussi le bundle portable, puis publie
+l’artefact sur les pushes.
 
 Le workflow de build publie trois artefacts :
 
@@ -981,14 +1021,21 @@ Cyonima-0.1.0-x86_64.AppImage
 Cyonima-0.1.0-x86_64.flatpak
 ```
 
-Lors d’un tag `v*`, ces fichiers sont aussi attachés automatiquement à la
-release GitHub. Les jobs AppImage et Flatpak installent leurs dépendances,
-construisent les runtimes PHP/GTK et testent le lancement en mode `--auto`.
+Lors d’un tag `v*`, ces fichiers et `SHA256SUMS` sont attachés automatiquement
+à la release GitHub. Le tag doit correspondre à `VERSION` dans
+`.github/workflows/build.yml`. Les jobs AppImage et Flatpak utilisent des
+caches pour le PHP embarqué, `appimagetool` et les runtimes GNOME.
 
 Pour lancer un build sans tag :
 
 ```text
 GitHub → Actions → Build → Run workflow
+```
+
+Pour valider le packaging Flatpak d’une application générée :
+
+```text
+GitHub → Actions → Native Flatpak → Run workflow
 ```
 
 ## Documents
