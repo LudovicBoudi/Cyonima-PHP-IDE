@@ -9,32 +9,37 @@ namespace Cyonima\Runtime;
  *
  * Pas de HTML brut : le texte est échappé avant l'application des styles.
  * Titres, gras, italique, code inline, blocs de code, listes, citations,
- * liens et règles horizontales sont pris en charge.
+ * liens et règles horizontales sont pris en charge. Le rendu expose une
+ * correspondance ligne source → ligne affichée pour le défilement synchronisé.
  */
 final class Markdown
 {
     public static function toPango(string $markdown): string
     {
+        return self::toPangoMapped($markdown)['pango'];
+    }
+
+    /**
+     * @return array{pango: string, map: list<int>} map[ligne source] = ligne affichée
+     */
+    public static function toPangoMapped(string $markdown): array
+    {
         $lines = preg_split('/\R/', str_replace("\r\n", "\n", $markdown)) ?: [];
         $output = [];
+        $map = [];
         $inCode = false;
-        $code = [];
 
-        foreach ($lines as $line) {
+        foreach ($lines as $index => $line) {
+            $map[$index] = count($output);
+
             if (str_starts_with(trim($line), '```')) {
-                if ($inCode) {
-                    $output[] = self::codeBlock($code);
-                    $code = [];
-                    $inCode = false;
-                } else {
-                    $inCode = true;
-                }
-
+                $inCode = !$inCode;
                 continue;
             }
 
             if ($inCode) {
-                $code[] = $line;
+                $escaped = htmlspecialchars($line, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                $output[] = '<tt>' . ($escaped === '' ? ' ' : $escaped) . '</tt>';
                 continue;
             }
 
@@ -83,11 +88,10 @@ final class Markdown
             $output[] = self::inline($line);
         }
 
-        if ($inCode) {
-            $output[] = self::codeBlock($code);
-        }
-
-        return implode("\n", $output);
+        return [
+            'pango' => implode("\n", $output),
+            'map' => $map,
+        ];
     }
 
     private static function inline(string $text): string
@@ -118,16 +122,5 @@ final class Markdown
         }
 
         return $escaped;
-    }
-
-    /** @param list<string> $lines */
-    private static function codeBlock(array $lines): string
-    {
-        $escaped = array_map(
-            static fn (string $line): string => htmlspecialchars($line, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
-            $lines,
-        );
-
-        return '<tt>' . implode("\n", $escaped) . '</tt>';
     }
 }

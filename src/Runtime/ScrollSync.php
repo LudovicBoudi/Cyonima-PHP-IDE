@@ -22,8 +22,18 @@ final class ScrollSync
     private ?int $targetHandler = null;
     private bool $syncing = false;
 
-    public function __construct(CData $sourceScroller, CData $targetScroller)
-    {
+    /** @var (\Closure(bool, float): float)|null */
+    private ?\Closure $mapper = null;
+
+    public function __construct(
+        CData $sourceScroller,
+        CData $targetScroller,
+        ?callable $mapper = null,
+    ) {
+        if ($mapper !== null) {
+            $this->mapper = $mapper(...);
+        }
+
         $this->sourceAdjustment = GtkScroll::vadjustment($sourceScroller);
         $this->targetAdjustment = GtkScroll::vadjustment($targetScroller);
 
@@ -41,7 +51,7 @@ final class ScrollSync
                 $sync = $self->get();
 
                 if ($sync instanceof self) {
-                    $sync->sync($source, $target);
+                    $sync->sync($source, $target, true);
                 }
             },
         );
@@ -51,10 +61,17 @@ final class ScrollSync
                 $sync = $self->get();
 
                 if ($sync instanceof self) {
-                    $sync->sync($target, $source);
+                    $sync->sync($target, $source, false);
                 }
             },
         );
+    }
+
+    /** @param null|callable(bool, float): float $mapper */
+    public function setMapper(?callable $mapper): static
+    {
+        $this->mapper = $mapper === null ? null : $mapper(...);
+        return $this;
     }
 
     public function active(): bool
@@ -65,14 +82,14 @@ final class ScrollSync
     public function syncFromSource(): void
     {
         if ($this->sourceAdjustment !== null && $this->targetAdjustment !== null) {
-            $this->sync($this->sourceAdjustment, $this->targetAdjustment);
+            $this->sync($this->sourceAdjustment, $this->targetAdjustment, true);
         }
     }
 
     public function syncFromTarget(): void
     {
         if ($this->sourceAdjustment !== null && $this->targetAdjustment !== null) {
-            $this->sync($this->targetAdjustment, $this->sourceAdjustment);
+            $this->sync($this->targetAdjustment, $this->sourceAdjustment, false);
         }
     }
 
@@ -97,14 +114,20 @@ final class ScrollSync
         $this->detach();
     }
 
-    private function sync(CData $from, CData $to): void
+    private function sync(CData $from, CData $to, bool $fromSource): void
     {
         if ($this->syncing) {
             return;
         }
 
         $this->syncing = true;
-        GtkScroll::syncFraction($from, $to);
+        $fraction = GtkScroll::fraction($from);
+
+        if ($this->mapper !== null) {
+            $fraction = ($this->mapper)($fromSource, $fraction);
+        }
+
+        GtkScroll::setFraction($to, $fraction);
         $this->syncing = false;
     }
 }

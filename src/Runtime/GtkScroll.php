@@ -90,18 +90,32 @@ final class GtkScroll
         unset(self::$signalHandlers[$handlerId]);
     }
 
-    public static function syncFraction(CData $source, CData $target): void
+    public static function fraction(CData $adjustment): float
     {
-        $sourceSpan = self::upper($source) - self::pageSize($source) - self::lower($source);
-        $targetSpan = self::upper($target) - self::pageSize($target) - self::lower($target);
+        $span = self::upper($adjustment) - self::pageSize($adjustment) - self::lower($adjustment);
 
-        if ($sourceSpan <= 0.0 || $targetSpan <= 0.0) {
+        if ($span <= 0.0) {
+            return 0.0;
+        }
+
+        return max(0.0, min(1.0, (self::value($adjustment) - self::lower($adjustment)) / $span));
+    }
+
+    public static function setFraction(CData $adjustment, float $fraction): void
+    {
+        $span = self::upper($adjustment) - self::pageSize($adjustment) - self::lower($adjustment);
+
+        if ($span <= 0.0) {
             return;
         }
 
-        $fraction = (self::value($source) - self::lower($source)) / $sourceSpan;
         $fraction = max(0.0, min(1.0, $fraction));
-        self::setValue($target, self::lower($target) + $fraction * $targetSpan);
+        self::setValue($adjustment, self::lower($adjustment) + $fraction * $span);
+    }
+
+    public static function syncFraction(CData $source, CData $target): void
+    {
+        self::setFraction($target, self::fraction($source));
     }
 
     public static function toBottom(CData $scrolledWindow): void

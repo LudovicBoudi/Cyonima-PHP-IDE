@@ -1139,6 +1139,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   proportionnelle, pas alignement ligne à ligne, pas de synchronisation
   horizontale.
 
+110. **Alignement ligne à ligne de l’aperçu** : `Markdown::toPangoMapped()`
+  retourne le balisage et `map[ligne source] = ligne affichée`, en émettant les
+  lignes de code une par une pour conserver la correspondance. `MarkdownPreview`
+  expose `previewLineForSourceLine()` et `sourceLineForPreviewLine()`.
+  `ScrollSync` accepte un mapper `(bool $fromSource, float $fraction): float`
+  et applique la fraction calculée ; l’IDE convertit la fraction de défilement
+  en ligne source, la mappe vers la ligne d’aperçu (ou l’inverse), puis
+  reconstruit la fraction cible. Limitations : les lignes longues sont
+  enveloppées par Pango, donc l’alignement reste approximatif à l’intérieur
+  d’un paragraphe ; pas de synchronisation horizontale.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

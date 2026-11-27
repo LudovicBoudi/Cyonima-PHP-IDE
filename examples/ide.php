@@ -105,6 +105,25 @@ $scrollSync = new ScrollSync(
     $editorScrolled->raw()->handle(),
     $previewPage->raw()->handle(),
 );
+$scrollSync->setMapper(function (bool $fromSource, float $fraction) use (
+    $editor,
+    $markdownPreview,
+): float {
+    $editorLines = max(1, $editor->lineCount());
+    $previewLines = max(1, $markdownPreview->renderedLineCount());
+
+    if ($fromSource) {
+        $sourceLine = (int) round($fraction * ($editorLines - 1));
+        $previewLine = $markdownPreview->previewLineForSourceLine($sourceLine);
+
+        return $previewLines <= 1 ? 0.0 : $previewLine / ($previewLines - 1);
+    }
+
+    $previewLine = (int) round($fraction * ($previewLines - 1));
+    $sourceLine = $markdownPreview->sourceLineForPreviewLine($previewLine);
+
+    return $editorLines <= 1 ? 0.0 : $sourceLine / ($editorLines - 1);
+});
 
 $togglePreview = function () use (
     $window,

@@ -10741,6 +10741,16 @@ T::ok(str_contains($preview->markup(), '<b>fort</b>'), 'markdown UI : styles');
 $preview->render('');
 T::ok($preview->markup() === '', 'markdown UI : document vide');
 
+$mapped = Markdown::toPangoMapped("ligne 1\n```php\ncode\n```\nligne 5");
+T::same(5, count($mapped['map']), 'markdown : cartographie des lignes');
+T::same(1, $mapped['map'][2] ?? null, 'markdown : ligne de code mappée');
+T::same(2, $mapped['map'][4] ?? null, 'markdown : ligne après bloc');
+
+$preview->render("ligne 1\n```php\ncode\n```\nligne 5");
+T::same(3, $preview->renderedLineCount(), 'markdown UI : lignes rendues');
+T::same(2, $preview->previewLineForSourceLine(4), 'markdown UI : source vers aperçu');
+T::same(4, $preview->sourceLineForPreviewLine(2), 'markdown UI : aperçu vers source');
+
 // ---------------------------------------------------------------------------
 T::section('76. IDE — défilement synchronisé');
 
