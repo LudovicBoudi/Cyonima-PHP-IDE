@@ -15,6 +15,7 @@ use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\ProjectBuilder;
 use Cyonima\Runtime\ProjectFactory;
+use Cyonima\Runtime\WorkspaceWatcher;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\AssetPanel;
 use Cyonima\UI\Box;
@@ -1166,6 +1167,27 @@ $debugActivity->onClicked(fn () => $showDebugPanel());
 $assetsButton->onClicked(fn () => $showAssetsPanel());
 $designerActivity->onClicked(fn () => $openDesigner());
 $settingsButton->onClicked(fn () => $showPropertiesPanel());
+
+// --- Surveillance du projet ------------------------------------------------
+$workspaceWatcher = null;
+
+if (is_dir($root)) {
+    $workspaceWatcher = new WorkspaceWatcher($root, function (array $paths) use (
+        $browser,
+        $symbolSearch,
+        $gitPanel,
+    ): void {
+        $browser->refresh();
+
+        foreach ($paths as $path) {
+            $symbolSearch->invalidate($path);
+        }
+
+        $gitPanel->refresh();
+    });
+
+    $window->raw()->onCloseRequest(fn () => $workspaceWatcher->cancel());
+}
 
 // --- Onglet, éditeur, terminal --------------------------------------------
 $editorArea = (new ScrolledWindow($editor))->expand();

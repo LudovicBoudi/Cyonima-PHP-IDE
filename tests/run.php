@@ -28,6 +28,7 @@ use Cyonima\Runtime\OutputLog;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
 use Cyonima\Runtime\Diagnostics;
+use Cyonima\Runtime\FileWatcher;
 use Cyonima\Compiler\FormCompiler;
 use Cyonima\Compiler\Lexer\Lexer;
 use Cyonima\Compiler\Lexer\TokenType;
@@ -43,6 +44,7 @@ use Cyonima\Runtime\SymbolIndex;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
+use Cyonima\Runtime\WorkspaceWatcher;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
@@ -10551,6 +10553,55 @@ T::ok(!$symbolSearch->visible(), 'symboles UI : popover fermé');
 
 $symbolWindow->raw()->close();
 $removeTree($symbolRoot);
+
+// ---------------------------------------------------------------------------
+T::section('73. IDE — surveillance des fichiers');
+
+if (!FileWatcher::available()) {
+    T::skip('surveillance : Gio disponible');
+    T::skip('surveillance : événement de fichier');
+    T::skip('surveillance : moniteurs récursifs');
+} else {
+    T::ok(true, 'surveillance : Gio disponible');
+
+    $watchRoot = sys_get_temp_dir() . '/cyonima_watch_' . getmypid();
+    $removeTree($watchRoot);
+    mkdir($watchRoot . '/src', 0775, true);
+    mkdir($watchRoot . '/vendor', 0775, true);
+    $watchedFile = $watchRoot . '/src/watched.php';
+    file_put_contents($watchedFile, "<?php\n");
+
+    $watchEvents = [];
+    $fileWatcher = FileWatcher::file(
+        $watchedFile,
+        function (string $path, int $event) use (&$watchEvents): void {
+            $watchEvents[] = [$path, $event];
+            Loop::quit();
+        },
+    );
+
+    if ($fileWatcher === null) {
+        T::skip('surveillance : moniteur de fichier');
+    } else {
+        Loop::after(100, fn () => file_put_contents($watchedFile, "<?php\n// changé\n"));
+        Loop::after(3000, fn () => Loop::quit());
+        Loop::run();
+
+        T::ok($watchEvents !== [], 'surveillance : événement de fichier');
+        T::same(realpath($watchedFile), $watchEvents[0][0] ?? null, 'surveillance : chemin');
+        $fileWatcher->cancel();
+    }
+
+    $workspaceWatcher = new WorkspaceWatcher(
+        $watchRoot,
+        static function (array $paths): void {
+        },
+    );
+    T::same(2, $workspaceWatcher->watchCount(), 'surveillance : moniteurs récursifs');
+    $workspaceWatcher->cancel();
+
+    $removeTree($watchRoot);
+}
 
 $removeTree($templateRoot);
 

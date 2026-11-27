@@ -10,7 +10,7 @@ namespace Cyonima\Runtime;
  */
 final class ProjectSearch
 {
-    private const SKIPPED_DIRECTORIES = [
+    public const SKIPPED_DIRECTORIES = [
         '.git',
         'vendor',
         'node_modules',

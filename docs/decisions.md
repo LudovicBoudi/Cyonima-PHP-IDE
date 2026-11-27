@@ -1078,6 +1078,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   après sauvegarde et après remplacement projet. Le cache est propre au
   processus, sans persistance disque.
 
+104. **Surveillance des fichiers** : `FileWatcher` encapsule un `GFileMonitor`
+  Gio via FFI (`libgio-2.0.so.0`), avec callback PHP conservé dans l'instance,
+  annulation et libération explicites. `WorkspaceWatcher` crée un moniteur par
+  dossier (hors répertoires exclus, plafond 200), regroupe les événements
+  pendant 200 ms et fournit la liste des chemins touchés. L'IDE rafraîchit
+  l'explorateur, invalide les fichiers dans `SymbolIndex` et rafraîchit Git ;
+  les événements de structure reconstruisent les moniteurs. Tout est annulé à
+  la fermeture de la fenêtre. Si Gio est indisponible, la surveillance est
+  ignorée. Limitations : pas de surveillance des fichiers hors projet, plafond
+  de dossiers, pas de persistance.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

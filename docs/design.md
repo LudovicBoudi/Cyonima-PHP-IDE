@@ -173,6 +173,20 @@ Les fichiers disparus sont retirés du cache. Une sauvegarde ou un remplacement
 projet invalide les fichiers concernés pour forcer leur réanalyse à la
 prochaine ouverture de Ctrl+T.
 
+## Surveillance du projet
+
+`WorkspaceWatcher` crée un `GFileMonitor` Gio par dossier du projet, en
+excluant les mêmes répertoires que la recherche (`vendor`, `node_modules`,
+`dist`, `build`, `.git`), avec un plafond de 200 dossiers. Les événements sont
+regroupés pendant 200 ms, puis l'IDE rafraîchit l'explorateur, invalide les
+fichiers touchés dans l'index de symboles et relit le statut Git. La création
+ou la suppression de dossiers reconstruit les moniteurs. Les moniteurs sont
+annulés à la fermeture de la fenêtre.
+
+Les bindings Gio ne sont pas générés : `FileWatcher` déclare le strict
+nécessaire en FFI (`libgio-2.0.so.0`) et garde le callback PHP en vie. Si Gio
+est indisponible, la surveillance est désactivée sans bloquer l'IDE.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
