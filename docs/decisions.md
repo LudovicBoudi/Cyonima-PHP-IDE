@@ -1005,6 +1005,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   Sortie). Limitations : pas de branches/merge/push/pull, pas de staging
   fichier par fichier, pas de résolution de conflits.
 
+97. **Staging fichier par fichier** : chaque ligne du panneau Git porte deux
+  boutons icône, ouvrir et indexer/désindexer. Le bouton bascule selon l'état :
+  un fichier entièrement indexé (`index` actif, `worktree` vide) est désindexé
+  avec `git reset -- <path>` ; sinon il est indexé avec `git add -- <path>`.
+  `GitPanel::stageRow()` applique cette règle, `stage()`/`unstage()` exposent
+  les opérations unitaires et rafraîchissent la liste. Les lignes ne sont plus
+  activables au clic simple pour éviter qu'un clic sur un bouton n'ouvre le
+  fichier ; l'ouverture passe par le bouton dédié ou `activateRow()` côté API.
+  L'indexation globale `Indexer tout` reste disponible.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

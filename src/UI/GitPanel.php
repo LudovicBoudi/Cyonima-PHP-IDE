@@ -80,7 +80,7 @@ final class GitPanel extends Widget
         $this->list->setActivateOnSingleClick(true);
         $this->list->onRowActivated(function ($listBox, $row): void {
             $wrapped = RawListBoxRow::wrap($row, false);
-            $this->activateIndex($wrapped->getIndex());
+            $this->openIndex($wrapped->getIndex());
         });
 
         $this->raw()->append($this->summaryLabel);
@@ -174,17 +174,63 @@ final class GitPanel extends Widget
         }
 
         $ok = $this->repository->stageAll();
-
-        if ($this->onMessage !== null) {
-            ($this->onMessage)(
-                $ok ? 'Git : fichiers indexés' : 'Git : indexation impossible',
-                !$ok,
-            );
-        }
-
+        $this->notify(
+            $ok ? 'Git : fichiers indexés' : 'Git : indexation impossible',
+            !$ok,
+        );
         $this->refresh();
 
         return $ok;
+    }
+
+    public function stage(string $path): bool
+    {
+        if ($this->repository === null) {
+            return false;
+        }
+
+        $ok = $this->repository->stage([$path]);
+        $this->notify(
+            $ok ? 'Git : indexé → ' . $path : 'Git : indexation impossible → ' . $path,
+            !$ok,
+        );
+        $this->refresh();
+
+        return $ok;
+    }
+
+    public function unstage(string $path): bool
+    {
+        if ($this->repository === null) {
+            return false;
+        }
+
+        $ok = $this->repository->unstage([$path]);
+        $this->notify(
+            $ok ? 'Git : désindexé → ' . $path : 'Git : désindexation impossible → ' . $path,
+            !$ok,
+        );
+        $this->refresh();
+
+        return $ok;
+    }
+
+    /**
+     * Indexe le fichier, ou le désindexe s'il est déjà entièrement indexé.
+     */
+    public function stageRow(int $index): bool
+    {
+        $entry = $this->entries[$index] ?? null;
+
+        if ($entry === null) {
+            return false;
+        }
+
+        if ($entry['staged'] && $entry['worktree'] === ' ') {
+            return $this->unstage($entry['path']);
+        }
+
+        return $this->stage($entry['path']);
     }
 
     /** @return array{ok: bool, output: string} */
@@ -196,12 +242,10 @@ final class GitPanel extends Widget
 
         $result = $this->repository->commit($this->message());
 
-        if ($this->onMessage !== null) {
-            ($this->onMessage)(
-                $result['ok'] ? 'Git : commit créé' : 'Git : ' . $result['output'],
-                !$result['ok'],
-            );
-        }
+        $this->notify(
+            $result['ok'] ? 'Git : commit créé' : 'Git : ' . $result['output'],
+            !$result['ok'],
+        );
 
         if ($result['ok']) {
             $this->messageEntry->setText('');
@@ -229,9 +273,7 @@ final class GitPanel extends Widget
     /** Simule l'activation d'un fichier. */
     public function activateRow(int $index): void
     {
-        if (isset($this->rows[$index])) {
-            $this->list->emit('row-activated', $this->rows[$index]->handle());
-        }
+        $this->openIndex($index);
     }
 
     private function buildRows(): void
@@ -242,37 +284,63 @@ final class GitPanel extends Widget
 
         $this->rows = [];
 
-        foreach ($this->entries as $entry) {
-            $label = RawLabel::new(sprintf(
+        foreach ($this->entries as $position => $entry) {
+            $label = (new Label(sprintf(
                 '%s%s  %s',
                 $entry['index'],
                 $entry['worktree'],
                 $entry['path'],
-            ));
-            $label->setXalign(0.0);
-            $label->addCssClass('git-row');
-            $label->addCssClass(match (true) {
+            )))
+                ->cssClass('git-row')
+                ->expand(true, false);
+
+            $label->cssClass(match (true) {
                 $entry['index'] === '?' => 'git-untracked',
                 $entry['staged'] => 'git-staged',
                 default => 'git-modified',
             });
 
+            $open = (new IconButton('document-open-symbolic', 'Ouvrir'))
+                ->cssClass('git-row-action')
+                ->onClicked(fn (): int => $this->openIndex($position));
+
+            $fullyStaged = $entry['staged'] && $entry['worktree'] === ' ';
+            $toggle = $fullyStaged
+                ? (new IconButton('list-remove-symbolic', 'Désindexer'))
+                    ->cssClass('git-row-action')
+                    ->onClicked(fn (): bool => $this->unstage($entry['path']))
+                : (new IconButton('list-add-symbolic', 'Indexer'))
+                    ->cssClass('git-row-action')
+                    ->onClicked(fn (): bool => $this->stage($entry['path']));
+
+            $content = (new Box(Orientation::HORIZONTAL, 4))
+                ->append($label, $open, $toggle);
+
             $row = RawListBoxRow::new();
-            $row->setChild($label);
-            $row->setActivatable(true);
+            $row->setChild($content->raw());
+            $row->setActivatable(false);
             $this->list->append($row);
             $this->rows[] = $row;
         }
     }
 
-    private function activateIndex(int $index): void
+    private function openIndex(int $index): int
     {
         $entry = $this->entries[$index] ?? null;
 
         if ($entry === null) {
-            return;
+            return 0;
         }
 
         ($this->onOpen)($this->base . '/' . $entry['path']);
+
+        return 1;
+    }
+
+    private function notify(string $message, bool $error): void
+    {
+        if ($this->onMessage !== null) {
+            ($this->onMessage)($message, $error);
+        }
     }
 }

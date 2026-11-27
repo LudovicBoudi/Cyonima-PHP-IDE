@@ -392,6 +392,22 @@ list row:selected {
     color: #cca700;
 }
 
+.git-row-action {
+    -gtk-icon-size: 13px;
+    padding: 1px;
+    min-height: 0;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: #8a8a8a;
+}
+
+.git-row-action:hover {
+    background-color: #3e3e42;
+    color: #ffffff;
+}
+
 .quick-open {
     background-color: #252526;
     border: 1px solid #3f3f46;

@@ -64,15 +64,17 @@ Le bouton Git de la barre d'activité ouvre le panneau `GIT`. `GitRepository`
 découvre la racine du dépôt, lit la branche et le statut porcelain, et expose
 indexation, désindexation, commit et diff. Le panneau affiche la branche, le
 nombre de modifications et les fichiers avec leurs codes d'état
-(`??`, `M`, `A`, `D`…). Un clic ouvre le fichier. **Indexer tout** lance
-`git add -A` ; le champ de message et **Commit** créent le commit des fichiers
+(`??`, `M`, `A`, `D`…). Chaque ligne propose **Ouvrir** et
+**Indexer**/**Désindexer** ; **Indexer tout** reste disponible dans la barre
+d'outils. Le champ de message et **Commit** créent le commit des fichiers
 indexés. La branche courante remplace le libellé statique dans la barre de
 statut, et le statut est rafraîchi après chaque sauvegarde. Les commandes
 Git sont aussi disponibles dans la palette : actualiser, indexer tout,
 afficher le diff (envoyé dans le panneau Sortie).
 
-Limites : pas de gestion de branches, de merge, de push/pull ni de staging
-fichier par fichier depuis l'interface.
+Limites : pas de gestion de branches, de merge, de push/pull ni de résolution
+de conflits ; le diff par fichier n'est pas encore affiché dans une vue
+dédiée.
 
 ## Onglets multiples
 

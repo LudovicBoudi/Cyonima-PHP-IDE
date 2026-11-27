@@ -10242,7 +10242,13 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
         'git UI : ouverture du fichier',
     );
 
-    T::ok($gitPanel->stageAll(), 'git UI : indexation');
+    T::ok($gitPanel->stageRow(0), 'git UI : indexation fichier');
+    T::same('M', $gitPanel->entries()[0]['index'] ?? null, 'git UI : état indexé');
+    T::ok($gitPanel->stageRow(0), 'git UI : désindexation fichier');
+    T::same(' ', $gitPanel->entries()[0]['index'] ?? null, 'git UI : état désindexé');
+    T::ok(!$gitPanel->stageRow(99), 'git UI : index de ligne invalide');
+    T::ok($gitPanel->stageRow(0), 'git UI : réindexation fichier');
+
     $gitPanel->setMessage('commit depuis le panneau');
     $uiCommit = $gitPanel->commit();
     T::ok($uiCommit['ok'], 'git UI : commit');
