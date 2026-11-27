@@ -31,6 +31,7 @@ use Cyonima\UI\FindBar;
 use Cyonima\UI\GitPanel;
 use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
+use Cyonima\UI\MarkdownPreview;
 use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
 use Cyonima\UI\OutputPanel;
@@ -88,6 +89,77 @@ $completionItems = 0;
 
 $popup = new CompletionPopup($editor);
 $findBar = new FindBar($editor);
+
+// --- Aperçu Markdown -------------------------------------------------------
+$markdownPreview = new MarkdownPreview();
+$previewVisible = false;
+$previewPage = (new ScrolledWindow($markdownPreview))->expand()->visible(false);
+$editorSplit = (new Paned(Orientation::HORIZONTAL, 760))
+    ->start((new ScrolledWindow($editor))->expand())
+    ->end($previewPage)
+    ->expand()
+    ->resizeStart(false);
+
+$togglePreview = function () use (
+    $window,
+    $editor,
+    $markdownPreview,
+    $previewPage,
+    $editorSplit,
+    &$previewVisible,
+    &$currentFile,
+): void {
+    if ($currentFile === null
+        || strtolower(pathinfo($currentFile, PATHINFO_EXTENSION)) !== 'md'
+    ) {
+        $window->toast('Aperçu Markdown : ouvrez un fichier .md');
+        return;
+    }
+
+    $previewVisible = !$previewVisible;
+
+    if (!$previewVisible) {
+        $previewPage->visible(false);
+        return;
+    }
+
+    $markdownPreview->render($editor->text());
+    $previewPage->visible(true);
+    $width = $editorSplit->raw()->getWidth();
+
+    if ($width > 0) {
+        $editorSplit->position((int) ($width * 0.55));
+    }
+};
+
+$syncPreview = function () use (
+    $editor,
+    $markdownPreview,
+    $previewPage,
+    &$previewVisible,
+    &$currentFile,
+): void {
+    if (!$previewVisible) {
+        return;
+    }
+
+    if ($currentFile !== null
+        && strtolower(pathinfo($currentFile, PATHINFO_EXTENSION)) === 'md'
+    ) {
+        $markdownPreview->render($editor->text());
+        $previewPage->visible(true);
+        return;
+    }
+
+    $previewVisible = false;
+    $previewPage->visible(false);
+};
+
+$editor->onChanged(function () use ($editor, $markdownPreview, &$previewVisible): void {
+    if ($previewVisible) {
+        $markdownPreview->render($editor->text());
+    }
+});
 
 $statusPos = (new Label('Ln 1, Col 1'))->cssClass('status-item');
 
@@ -218,6 +290,7 @@ $activateDocument = function (string $path, int $line = 0) use (
     &$lspDocuments,
     &$storeCurrentDocument,
     &$renderTabs,
+    $syncPreview,
 ): void {
     if (!isset($documents[$path])) {
         return;
@@ -254,6 +327,7 @@ $activateDocument = function (string $path, int $line = 0) use (
     $window->subtitle(basename($path) . ($dirty ? ' •' : ''));
     ($renderTabs)();
     $updateCursor();
+    $syncPreview();
     $editor->grabFocus();
 };
 
@@ -272,6 +346,7 @@ $closeDocument = function (string $path) use (
     &$lspDocuments,
     &$renderTabs,
     &$activateDocument,
+    $syncPreview,
 ): void {
     if (!isset($documents[$path])) {
         return;
@@ -302,6 +377,7 @@ $closeDocument = function (string $path) use (
     $popup->hide();
     $currentFile = null;
     $dirty = false;
+    $syncPreview();
 
     $next = $documentOrder[$index] ?? null;
 
@@ -794,6 +870,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $quickOpen,
     $symbolSearch,
     $findBar,
+    $togglePreview,
     &$commandPalette,
 ): bool {
     Loop::after(0, $updateCursor);
@@ -836,6 +913,10 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
         }
         if ($keyval === 0x68) { // Ctrl+H
             $findBar->showReplace();
+            return true;
+        }
+        if ($keyval === 0x76 && $shift) { // Ctrl+Shift+V
+            $togglePreview();
             return true;
         }
         if ($keyval === 0x77) { // Ctrl+W
@@ -1202,7 +1283,7 @@ if (is_dir($root)) {
 
 // --- Onglet, éditeur, terminal --------------------------------------------
 $editorArea = (new Box(Orientation::VERTICAL, 0))
-    ->append($findBar, (new ScrolledWindow($editor))->expand())
+    ->append($findBar, $editorSplit)
     ->expand();
 
 $panelProblemsTab = (new Button('PROBLÈMES'))->cssClass('panel-tab');
@@ -1429,6 +1510,7 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Navigation : rechercher un symbole', 'detail' => 'Ctrl+T', 'action' => fn () => $symbolSearch->present()],
     ['label' => 'Édition : rechercher', 'detail' => 'Ctrl+F', 'action' => fn () => $findBar->show()],
     ['label' => 'Édition : remplacer', 'detail' => 'Ctrl+H', 'action' => fn () => $findBar->showReplace()],
+    ['label' => 'Affichage : aperçu Markdown', 'detail' => 'Ctrl+Shift+V', 'action' => fn () => $togglePreview()],
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
@@ -1499,6 +1581,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
         ['label' => 'Sortie', 'action' => fn () => ($showBottomTab)('output')],
         ['label' => 'Diff', 'action' => fn () => ($showBottomTab)('diff')],
+        ['label' => 'Aperçu Markdown', 'shortcut' => 'Ctrl+Shift+V', 'action' => fn () => $togglePreview()],
         ['label' => 'Git', 'action' => fn () => $showGitPanel()],
         ['label' => 'Changer de branche…', 'action' => function () use ($showGitPanel, $gitPanel): void {
             $showGitPanel();
@@ -1536,7 +1619,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+F Rechercher · Ctrl+H Remplacer · Ctrl+P Fichier · Ctrl+T Symbole · Ctrl+Shift+P Commandes · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+F Rechercher · Ctrl+H Remplacer · Ctrl+P Fichier · Ctrl+T Symbole · Ctrl+Shift+P Commandes · Ctrl+Shift+V Aperçu Markdown · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1557,11 +1640,13 @@ $window->present();
 
 $sample = null;
 $sampleSecond = null;
+$sampleMd = null;
 
 if ($auto) {
     // On travaille sur une copie : le scénario automatique sauvegarde.
     $sample = sys_get_temp_dir() . '/cyonima_ide_demo.php';
     $sampleSecond = sys_get_temp_dir() . '/cyonima_ide_demo2.php';
+    $sampleMd = sys_get_temp_dir() . '/cyonima_ide_demo.md';
     $source = $root . '/hello.php';
 
     if (is_file($source) && is_readable($source)) {
@@ -1571,6 +1656,7 @@ if ($auto) {
     }
 
     file_put_contents($sampleSecond, "<?php\n\necho \"Second onglet\\n\";\n");
+    file_put_contents($sampleMd, "# Aperçu\n\n**Markdown** et `code`.\n");
 
     Loop::after(210, function () use ($diagnostics, $problemsPanel, $refreshProblemsTab, $sample): void {
         $diagnostics->update('file://' . $sample, [
@@ -1635,6 +1721,10 @@ if ($auto) {
     Loop::after(1250, fn () => $popup->chooseCurrent());
     Loop::after(1600, fn () => $save());
     Loop::after(1750, fn () => $closeDocument(realpath($sampleSecond) ?: $sampleSecond));
+    Loop::after(1800, fn () => $openFile($sampleMd));
+    Loop::after(1820, fn () => $togglePreview());
+    Loop::after(1840, fn () => $togglePreview());
+    Loop::after(1860, fn () => $openFile($sample));
     Loop::after(1950, fn () => $window->raw()->close());
 }
 
@@ -1643,7 +1733,7 @@ $app->run();
 $lsp?->stop();
 $debug?->close();
 
-foreach ([$sample, $sampleSecond] as $temporary) {
+foreach ([$sample, $sampleSecond, $sampleMd] as $temporary) {
     if ($temporary !== null && is_file($temporary)) {
         @unlink($temporary);
     }

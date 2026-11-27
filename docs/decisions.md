@@ -1118,6 +1118,17 @@ Trois écarts assumés par rapport au miroir strict du C :
   « Remplacer » et pour chaque occurrence de « Tout remplacer ». Limitations :
   pas de syntaxe `${1}` étendue ni de transformations conditionnelles.
 
+108. **Aperçu Markdown** : `Markdown::toPango()` convertit un sous-ensemble
+  (titres, gras, italique, code inline et blocs, listes, citations, liens,
+  images en texte, règles) en balisage Pango. Le HTML brut est échappé avant
+  les styles ; les fragments de code sont protégés par placeholders. Le rendu
+  est natif via `MarkdownPreview` (GtkLabel markup, sélectionnable), sans
+  WebKit. L’IDE ajoute un volet `Paned` à droite de l’éditeur, togglé par
+  `Ctrl+Shift+V` ou le menu Affichage, rafraîchi à chaque modification et
+  synchronisé aux changements d’onglet ; il se ferme pour un fichier non `.md`.
+  Limitations : tableaux, cases à cocher et HTML non rendus, liens non
+  cliquables.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

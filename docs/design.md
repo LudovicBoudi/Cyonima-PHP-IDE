@@ -204,6 +204,20 @@ fermeture. `Échap` ferme la barre et rend le focus à l'éditeur. Les
 remplacements passent par `CodeEditor::replaceRange` et déclenchent les signaux
 normaux de modification.
 
+## Aperçu Markdown
+
+`Ctrl+Shift+V` (ou Affichage → Aperçu Markdown) ouvre un volet d'aperçu à
+droite de l'éditeur pour les fichiers `.md`. `Markdown::toPango` rend un
+sous-ensemble : titres, gras, italique, code inline, blocs de code, listes,
+citations, liens, images (affichées comme texte) et règles horizontales. Le
+texte est échappé avant l'application des styles, donc le HTML brut reste
+affiché littéralement. L'aperçu se rafraîchit à chaque modification et suit la
+bascule d'onglet ; il se ferme automatiquement quand le fichier actif n'est
+plus du Markdown. Le rendu est natif (Pango), sans WebKit.
+
+Limites : pas de tableaux, de cases à cocher ni de HTML rendu ; les liens sont
+affichés mais pas ouverts par clic.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
@@ -270,12 +284,12 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Rechercher, Remplacer, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aller au fichier, rechercher un symbole, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, changer de branche, fusionner une branche, Problèmes, Sortie, Diff, Aperçu Markdown, Aller au fichier, rechercher un symbole, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
 Raccourcis : `Ctrl+S`, `Ctrl+F`, `Ctrl+H`, `Ctrl+P`, `Ctrl+T`, `Ctrl+Shift+P`,
-`Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`,
+`Ctrl+Shift+V`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+Z`,
 `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`, `Ctrl+Espace` et `F5`.
 
 ## Concepteur d'interface

@@ -273,6 +273,17 @@ list row:selected {
     min-height: 0;
 }
 
+.markdown-preview {
+    background-color: #1e1e1e;
+    border-left: 1px solid #3f3f46;
+}
+
+.markdown-body {
+    color: #cccccc;
+    font-size: 14px;
+    padding: 12px 16px;
+}
+
 .search-options {
     padding: 0 4px;
 }

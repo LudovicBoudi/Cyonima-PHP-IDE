@@ -23,6 +23,7 @@ use Cyonima\Runtime\Errors;
 use Cyonima\Runtime\GitRepository;
 use Cyonima\Runtime\Kernel;
 use Cyonima\Runtime\Loop;
+use Cyonima\Runtime\Markdown;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\OutputLog;
 use Cyonima\Runtime\PhpIntellisense;
@@ -53,6 +54,7 @@ use Cyonima\UI\CommandPalette;
 use Cyonima\UI\DiffPanel;
 use Cyonima\UI\FindBar;
 use Cyonima\UI\GitPanel;
+use Cyonima\UI\MarkdownPreview;
 use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\QuickOpen;
@@ -10709,6 +10711,33 @@ T::ok(
     'surlignage : nettoyé à la fermeture',
 );
 $findWindow->raw()->close();
+
+// ---------------------------------------------------------------------------
+T::section('75. IDE — aperçu Markdown');
+
+$markdown = "# Titre\n\nUn texte **gras** et *italique* avec `code`.\n\n- pomme\n- poire\n\n> citation\n\n[Lien](https://example.com)\n\n```php\necho 1 < 2;\n```\n";
+$pango = Markdown::toPango($markdown);
+T::ok(str_contains($pango, 'size="xx-large"'), 'markdown : titre');
+T::ok(str_contains($pango, '<b>gras</b>'), 'markdown : gras');
+T::ok(str_contains($pango, '<i>italique</i>'), 'markdown : italique');
+T::ok(str_contains($pango, '<tt>code</tt>'), 'markdown : code inline');
+T::ok(str_contains($pango, '• pomme'), 'markdown : liste');
+T::ok(str_contains($pango, '<i>citation</i>'), 'markdown : citation');
+T::ok(str_contains($pango, '<a href="https://example.com">Lien</a>'), 'markdown : lien');
+T::ok(str_contains($pango, 'echo 1 &lt; 2;'), 'markdown : bloc de code échappé');
+
+$unsafe = Markdown::toPango("<script>alert(1)</script>");
+T::ok(
+    str_contains($unsafe, '&lt;script&gt;') && !str_contains($unsafe, '<script>'),
+    'markdown : HTML échappé',
+);
+
+$preview = new MarkdownPreview();
+$preview->render("# Aperçu\n\nTexte **fort**");
+T::ok(str_contains($preview->markup(), 'Aperçu'), 'markdown UI : contenu');
+T::ok(str_contains($preview->markup(), '<b>fort</b>'), 'markdown UI : styles');
+$preview->render('');
+T::ok($preview->markup() === '', 'markdown UI : document vide');
 
 $removeTree($templateRoot);
 
