@@ -6815,6 +6815,13 @@ try {
     );
 }
 
+// Ces templates sont volontairement invalides : ils ne doivent pas être
+// découverts par la compilation GTK de la page valide.
+unlink($fragRoot . '/templates/missing.ui');
+unlink($fragRoot . '/templates/unknown.ui');
+unlink($fragRoot . '/templates/static.ui');
+unlink($fragRoot . '/templates/self.ui');
+
 $nestedPage = <<<'UI'
 @params(string $title)
 
