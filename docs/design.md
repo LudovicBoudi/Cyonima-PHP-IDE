@@ -33,7 +33,7 @@ Composants :
 | Panneau latéral | `EXPLORER`, `RECHERCHE`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
 | Onglets | un onglet par fichier, point de modification, fermeture, bascule |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
-| Panneau bas | onglets PROBLÈMES / SORTIE / TERMINAL + VTE |
+| Panneau bas | onglets cliquables PROBLÈMES / SORTIE / TERMINAL, liste de diagnostics + VTE |
 | Barre de statut | bleue `#007acc`, position, encodage, version PHP |
 
 ## Palette
@@ -96,6 +96,16 @@ Entrée ou un clic exécute l'action après fermeture de la palette. Les command
 couvrent l'enregistrement, les onglets, la navigation, les panneaux, le
 concepteur, le terminal, l'exécution, la compilation native, le débogage, les
 exports et l'aide.
+
+## Problèmes LSP
+
+Les notifications `textDocument/publishDiagnostics` alimentent `Diagnostics`,
+qui agrège les entrées par fichier et les trie par chemin, ligne et colonne.
+Le panneau `ProblemsPanel` affiche `chemin:ligne:colonne`, la sévérité et le
+message ; un clic ouvre le fichier à la ligne. L'onglet `PROBLÈMES` affiche le
+nombre courant, `SORTIE` reste un espace réservé et `TERMINAL` garde le VTE.
+Les diagnostics vides retirent le fichier de la liste ; une sévérité inconnue
+est ramenée à « Information ». Le résumé distingue erreurs et avertissements.
 
 ## Recherche projet
 
@@ -163,7 +173,7 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Problèmes, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
@@ -265,5 +275,6 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - la navigation rapide liste les fichiers mais pas les symboles ni les commandes ;
 - la palette ne mémorise pas les commandes récentes et ne permet pas de
   personnaliser les raccourcis ;
+- l'onglet SORTIE n'est pas encore alimenté par les processus ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

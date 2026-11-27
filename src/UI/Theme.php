@@ -295,6 +295,38 @@ list row:selected {
     background-color: #2a2d2e;
 }
 
+.problems-summary {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 4px 6px;
+}
+
+.problem-row {
+    color: #cccccc;
+    font-size: 12px;
+    padding: 3px 6px;
+}
+
+.problem-row:hover {
+    background-color: #2a2d2e;
+}
+
+.problem-error {
+    color: #f48771;
+}
+
+.problem-warning {
+    color: #cca700;
+}
+
+.problem-info {
+    color: #75beff;
+}
+
+.problem-hint {
+    color: #969696;
+}
+
 .quick-open {
     background-color: #252526;
     border: 1px solid #3f3f46;
@@ -366,6 +398,19 @@ list row:selected {
     font-size: 11px;
     font-weight: 600;
     padding: 6px 10px;
+}
+
+button.panel-tab {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+    min-height: 0;
+}
+
+button.panel-tab:hover {
+    background-color: #2a2d2e;
+    color: #cccccc;
 }
 
 .panel-tab.active {

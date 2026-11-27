@@ -8,6 +8,7 @@ use Cyonima\Gtk\Raw\Orientation;
 use Cyonima\Compiler\CompilerException;
 use Cyonima\Compiler\PhpCompiler;
 use Cyonima\Runtime\AdwApplication;
+use Cyonima\Runtime\Diagnostics;
 use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
@@ -16,6 +17,7 @@ use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\AssetPanel;
 use Cyonima\UI\Box;
+use Cyonima\UI\Button;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
 use Cyonima\UI\CompletionPopup;
@@ -26,6 +28,7 @@ use Cyonima\UI\IconButton;
 use Cyonima\UI\Label;
 use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
+use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\ProjectPropertiesPanel;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\ScrolledWindow;
@@ -416,6 +419,12 @@ $quickOpen = new QuickOpen($window, $root, function (string $path) use ($openFil
 
 $commandPalette = null;
 
+$diagnostics = new Diagnostics();
+$problemsPanel = new ProblemsPanel(function (string $path, int $line) use ($openFile): void {
+    $openFile($path, $line);
+});
+$refreshProblemsTab = null;
+
 $complete = null;
 $intellisenseTimer = null;
 $suppressIntellisenseUntil = 0.0;
@@ -568,10 +577,26 @@ $lspCommand = getenv('CYONIMA_LSP');
 if ($lspCommand !== false && trim($lspCommand) !== '') {
     $lsp = LspClient::start(preg_split('/\s+/', trim($lspCommand)) ?: []);
     $lsp->attach();
-    $lsp->on('textDocument/publishDiagnostics', function (array $params) use ($window, &$diagnosticCount): void {
-        $count = count($params['diagnostics'] ?? []);
-        $diagnosticCount += $count;
-        $window->toast("LSP : {$count} diagnostic(s)");
+    $lsp->on('textDocument/publishDiagnostics', function (array $params) use (
+        $window,
+        $diagnostics,
+        $problemsPanel,
+        &$refreshProblemsTab,
+        &$diagnosticCount,
+    ): void {
+        $incoming = is_array($params['diagnostics'] ?? null) ? $params['diagnostics'] : [];
+        $diagnosticCount += count($incoming);
+
+        $diagnostics->update((string) ($params['uri'] ?? ''), $incoming);
+        $problemsPanel->set($diagnostics->all());
+
+        if ($refreshProblemsTab !== null) {
+            ($refreshProblemsTab)();
+        }
+
+        if ($diagnostics->count() > 0) {
+            $window->toast('LSP : ' . $diagnostics->summary(), 4000);
+        }
     });
     $lsp->initialize('file://' . $root, function () use ($window, &$lspReady): void {
         $lspReady = true;
@@ -1076,22 +1101,84 @@ $settingsButton->onClicked(fn () => $showPropertiesPanel());
 // --- Onglet, éditeur, terminal --------------------------------------------
 $editorArea = (new ScrolledWindow($editor))->expand();
 
+$panelProblemsTab = (new Button('PROBLÈMES'))->cssClass('panel-tab');
+$panelOutputTab = (new Button('SORTIE'))->cssClass('panel-tab');
+$panelTerminalTab = (new Button('TERMINAL'))->cssClass('panel-tab')->cssClass('active');
+
 $panelTabs = (new Box(Orientation::HORIZONTAL, 0))
     ->cssClass('panel-tabs')
-    ->append(
-        (new Label('PROBLÈMES'))->cssClass('panel-tab'),
-        (new Label('SORTIE'))->cssClass('panel-tab'),
-        (new Label('TERMINAL'))->cssClass('panel-tab')->cssClass('active'),
-    );
+    ->append($panelProblemsTab, $panelOutputTab, $panelTerminalTab);
+
+$problemsPage = (new ScrolledWindow($problemsPanel))->expand()->visible(false);
+$outputPage = (new ScrolledWindow((new Label('Aucune sortie'))->cssClass('problem-hint')))
+    ->expand()
+    ->visible(false);
+$terminalPage = $terminal->expand();
+
+$bottomPages = (new Box(Orientation::VERTICAL, 0))
+    ->append($problemsPage, $outputPage, $terminalPage)
+    ->expand();
 
 $terminalVisible = true;
 $terminalPanel = (new Box(Orientation::VERTICAL, 0))
-    ->append($panelTabs, $terminal->expand())
+    ->append($panelTabs, $bottomPages)
     ->expand();
 
-$toggleTerminal = function () use ($terminalPanel, &$terminalVisible): void {
+$showBottomTab = function (string $tab) use (
+    $problemsPage,
+    $outputPage,
+    $terminalPage,
+    $panelProblemsTab,
+    $panelOutputTab,
+    $panelTerminalTab,
+    $terminalPanel,
+    &$terminalVisible,
+): void {
+    $pages = [
+        'problems' => $problemsPage,
+        'output' => $outputPage,
+        'terminal' => $terminalPage,
+    ];
+    $tabs = [
+        'problems' => $panelProblemsTab,
+        'output' => $panelOutputTab,
+        'terminal' => $panelTerminalTab,
+    ];
+
+    foreach ($pages as $name => $page) {
+        $page->visible($name === $tab);
+    }
+
+    foreach ($tabs as $name => $button) {
+        if ($name === $tab) {
+            $button->cssClass('active');
+        } else {
+            $button->removeCssClass('active');
+        }
+    }
+
+    $terminalPanel->visible(true);
+    $terminalVisible = true;
+};
+
+$panelProblemsTab->onClicked(fn () => $showBottomTab('problems'));
+$panelOutputTab->onClicked(fn () => $showBottomTab('output'));
+$panelTerminalTab->onClicked(fn () => $showBottomTab('terminal'));
+
+$refreshProblemsTab = function () use ($diagnostics, $panelProblemsTab): void {
+    $count = $diagnostics->count();
+    $panelProblemsTab->label('PROBLÈMES' . ($count > 0 ? ' (' . $count . ')' : ''));
+};
+
+$refreshProblemsTab();
+
+$toggleTerminal = function () use ($terminalPanel, &$terminalVisible, $showBottomTab): void {
     $terminalVisible = !$terminalVisible;
     $terminalPanel->visible($terminalVisible);
+
+    if ($terminalVisible) {
+        ($showBottomTab)('terminal');
+    }
 };
 
 $mainSplit = (new Paned(Orientation::VERTICAL, 520))
@@ -1224,6 +1311,7 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Navigation : Aller au fichier', 'detail' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
     ['label' => 'Affichage : Explorateur', 'action' => $showExplorer],
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
+    ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
     ['label' => 'Affichage : Débogage', 'action' => $showDebugPanel],
     ['label' => 'Affichage : Assets', 'action' => $showAssetsPanel],
     ['label' => 'Affichage : Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1266,6 +1354,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Palette de commandes…', 'shortcut' => 'Ctrl+Shift+P', 'action' => fn () => $commandPalette->present()],
         ['label' => 'Explorateur', 'action' => $showExplorer],
         ['label' => 'Recherche', 'action' => $showSearchPanel],
+        ['label' => 'Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
@@ -1328,6 +1417,27 @@ if ($auto) {
     }
 
     file_put_contents($sampleSecond, "<?php\n\necho \"Second onglet\\n\";\n");
+
+    Loop::after(210, function () use ($diagnostics, $problemsPanel, $refreshProblemsTab, $sample): void {
+        $diagnostics->update('file://' . $sample, [
+            [
+                'range' => ['start' => ['line' => 1, 'character' => 0]],
+                'severity' => 2,
+                'message' => 'Variable inutilisée',
+                'source' => 'demo',
+            ],
+            [
+                'range' => ['start' => ['line' => 2, 'character' => 4]],
+                'severity' => 1,
+                'message' => 'Accolade manquante',
+                'source' => 'demo',
+            ],
+        ]);
+        $problemsPanel->set($diagnostics->all());
+        $refreshProblemsTab();
+    });
+    Loop::after(230, fn () => ($showBottomTab)('problems'));
+    Loop::after(290, fn () => ($showBottomTab)('terminal'));
 
     Loop::after(200, function () use ($quickOpen): void {
         $quickOpen->present();

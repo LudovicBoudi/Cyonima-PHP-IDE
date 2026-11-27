@@ -972,6 +972,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   récentes, pas de personnalisation des raccourcis, liste statique construite au
   démarrage.
 
+94. **Problèmes LSP** : `Diagnostics` agrège les notifications
+  `textDocument/publishDiagnostics` par fichier, normalise les URI `file://`,
+  ignore les messages vides, borne les sévérités à 1–4 et trie par chemin,
+  ligne, colonne. `ProblemsPanel` rend les entrées activables et affiche un
+  résumé erreurs/avertissements. Le panneau bas devient interactif :
+  `PROBLÈMES` (liste), `SORTIE` (espace réservé) et `TERMINAL` (VTE). L'onglet
+  Problèmes affiche le nombre de diagnostics ; un clic ouvre le fichier à la
+  ligne. Limitations : pas de filtre par sévérité ni par fichier, pas de
+  regroupement arborescent, `SORTIE` non alimenté.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

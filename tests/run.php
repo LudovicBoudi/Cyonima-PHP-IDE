@@ -25,6 +25,7 @@ use Cyonima\Runtime\Loop;
 use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
+use Cyonima\Runtime\Diagnostics;
 use Cyonima\Compiler\FormCompiler;
 use Cyonima\Compiler\Lexer\Lexer;
 use Cyonima\Compiler\Lexer\TokenType;
@@ -42,6 +43,7 @@ use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
+use Cyonima\UI\ProblemsPanel;
 use Cyonima\UI\QuickOpen;
 use Cyonima\UI\SearchPanel;
 
@@ -10031,6 +10033,99 @@ T::same(['search'], $executed, 'commandes UI : action appelée');
 T::ok(!$palette->visible(), 'commandes UI : palette fermée après exécution');
 
 $paletteWindow->raw()->close();
+
+// ---------------------------------------------------------------------------
+T::section('69. IDE — problèmes LSP');
+
+T::same(
+    '/home/ludo/projet/src/a.php',
+    Diagnostics::localPath('file:///home/ludo/projet/src/a.php'),
+    'problèmes : URI file',
+);
+T::same(
+    '/home/ludo/projet/fichier x.php',
+    Diagnostics::localPath('file:///home/ludo/projet/fichier%20x.php'),
+    'problèmes : URI décodée',
+);
+
+$diagnostics = new Diagnostics();
+$diagnostics->update('file:///tmp/cyonima_diag_a.php', [
+    [
+        'range' => ['start' => ['line' => 0, 'character' => 0]],
+        'severity' => 3,
+        'message' => 'Information',
+        'source' => 'test',
+    ],
+]);
+$diagnostics->update('file:///tmp/cyonima_diag_b.php', [
+    [
+        'range' => ['start' => ['line' => 4, 'character' => 2]],
+        'severity' => 2,
+        'message' => "Attention\nmulti-ligne",
+        'source' => 'test',
+    ],
+    [
+        'range' => ['start' => ['line' => 1, 'character' => 0]],
+        'severity' => 1,
+        'message' => 'Boom',
+        'source' => 'test',
+    ],
+    [
+        'range' => ['start' => ['line' => 2, 'character' => 0]],
+        'severity' => 9,
+        'message' => 'Indication',
+    ],
+]);
+
+T::same(4, $diagnostics->count(), 'problèmes : diagnostic sans message ignoré');
+$allDiagnostics = $diagnostics->all();
+T::same('/tmp/cyonima_diag_a.php', $allDiagnostics[0]['path'], 'problèmes : tri par fichier');
+T::same(1, $allDiagnostics[1]['line'], 'problèmes : tri par ligne');
+T::same('Indication', $allDiagnostics[2]['message'], 'problèmes : message conservé');
+T::same(3, $allDiagnostics[2]['severity'], 'problèmes : sévérité inconnue normalisée');
+T::same('Attention multi-ligne', $allDiagnostics[3]['message'], 'problèmes : message sur une ligne');
+T::same(1, $diagnostics->countSeverity(1), 'problèmes : comptage erreurs');
+T::same(1, $diagnostics->countSeverity(2), 'problèmes : comptage avertissements');
+T::same('1 erreur, 1 avertissement', $diagnostics->summary(), 'problèmes : résumé');
+T::same('Erreur', Diagnostics::severityLabel(1), 'problèmes : libellé erreur');
+
+$diagnostics->update('file:///tmp/cyonima_diag_b.php', []);
+T::same(1, $diagnostics->count(), 'problèmes : fichier vidé retiré');
+$diagnostics->clear();
+T::same(0, $diagnostics->count(), 'problèmes : remise à zéro');
+T::same('Aucun problème', $diagnostics->summary(), 'problèmes : résumé vide');
+
+$problemOpened = null;
+$problemsPanel = new ProblemsPanel(
+    function (string $path, int $line) use (&$problemOpened): void {
+        $problemOpened = [$path, $line];
+    },
+);
+$problemsPanel->set([
+    [
+        'path' => '/tmp/cyonima_diag.php',
+        'line' => 4,
+        'column' => 0,
+        'severity' => 1,
+        'message' => 'Boom',
+        'source' => 'test',
+    ],
+    [
+        'path' => '/tmp/cyonima_diag.php',
+        'line' => 1,
+        'column' => 3,
+        'severity' => 2,
+        'message' => 'Attention',
+        'source' => 'test',
+    ],
+]);
+
+T::same(2, $problemsPanel->count(), 'problèmes UI : liste');
+$problemsPanel->activateRow(0);
+T::same('/tmp/cyonima_diag.php', $problemOpened[0] ?? null, 'problèmes UI : fichier ouvert');
+T::same(5, $problemOpened[1] ?? null, 'problèmes UI : ligne base 1');
+$problemsPanel->clear();
+T::same(0, $problemsPanel->count(), 'problèmes UI : liste vidée');
 
 $removeTree($templateRoot);
 
