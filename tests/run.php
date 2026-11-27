@@ -34,12 +34,14 @@ use Cyonima\Compiler\Template\TemplateCompiler;
 use Cyonima\Runtime\FormDocument;
 use Cyonima\Runtime\ProjectFactory;
 use Cyonima\Runtime\ProjectSearch;
+use Cyonima\Runtime\QuickOpenMatcher;
 use Cyonima\Runtime\RecentProjects;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
+use Cyonima\UI\QuickOpen;
 use Cyonima\UI\SearchPanel;
 
 final class T
@@ -9903,6 +9905,74 @@ T::same(2, $tabEditor->cursor()['line'], 'curseur : ligne bornée');
 
 $tabEditor->moveCursorTo(0, 6);
 T::same(6, $tabEditor->cursor()['character'], 'curseur : colonne sur première ligne');
+
+// ---------------------------------------------------------------------------
+T::section('67. IDE — navigation rapide (Ctrl+P)');
+
+$quickPaths = [
+    'src/Controller/UserController.php',
+    'src/Service/UserService.php',
+    'docs/readme.md',
+    'README.md',
+];
+
+T::same(
+    'README.md',
+    QuickOpenMatcher::match($quickPaths, 'readme')[0] ?? null,
+    'navigation : nom de fichier prioritaire',
+);
+T::same(
+    'src/Controller/UserController.php',
+    QuickOpenMatcher::match($quickPaths, 'userctrl')[0] ?? null,
+    'navigation : filtrage flou',
+);
+T::same(
+    'src/Service/UserService.php',
+    QuickOpenMatcher::match($quickPaths, 'usersvc')[0] ?? null,
+    'navigation : seconde correspondance floue',
+);
+T::same(
+    [],
+    QuickOpenMatcher::match($quickPaths, 'zzz'),
+    'navigation : aucune correspondance',
+);
+T::same(
+    2,
+    count(QuickOpenMatcher::match($quickPaths, '', 2)),
+    'navigation : limite de résultats',
+);
+
+$quickRoot = sys_get_temp_dir() . '/cyonima_quick_' . getmypid();
+$removeTree($quickRoot);
+mkdir($quickRoot . '/src', 0775, true);
+file_put_contents($quickRoot . '/src/Controller.php', "<?php\n");
+file_put_contents($quickRoot . '/src/Service.php', "<?php\n");
+file_put_contents($quickRoot . '/readme.md', "# Notes\n");
+
+$quickWindow = new UI\Window('Navigation rapide');
+$quickWindow->present();
+
+$quickOpened = null;
+$quickOpen = new QuickOpen(
+    $quickWindow,
+    $quickRoot,
+    function (string $path) use (&$quickOpened): void {
+        $quickOpened = $path;
+    },
+);
+
+T::same(3, $quickOpen->filter(), 'navigation UI : fichiers du projet');
+T::same(1, $quickOpen->setQuery('ctrl')->count(), 'navigation UI : filtre');
+T::same(1, $quickOpen->choose(0), 'navigation UI : sélection');
+T::same(
+    $quickRoot . '/src/Controller.php',
+    $quickOpened,
+    'navigation UI : fichier ouvert',
+);
+T::ok(!$quickOpen->visible(), 'navigation UI : popover fermé après sélection');
+
+$quickWindow->raw()->close();
+$removeTree($quickRoot);
 
 $removeTree($templateRoot);
 

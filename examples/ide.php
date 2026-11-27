@@ -26,6 +26,7 @@ use Cyonima\UI\Label;
 use Cyonima\UI\MenuBar;
 use Cyonima\UI\Paned;
 use Cyonima\UI\ProjectPropertiesPanel;
+use Cyonima\UI\QuickOpen;
 use Cyonima\UI\ScrolledWindow;
 use Cyonima\UI\SearchPanel;
 use Cyonima\UI\Terminal;
@@ -408,6 +409,10 @@ $openFile = function (string $path, int $line = 0, bool $reload = false) use (
     ($activateDocument)($path, $line);
 };
 
+$quickOpen = new QuickOpen($window, $root, function (string $path) use ($openFile): void {
+    $openFile($path);
+});
+
 $complete = null;
 $intellisenseTimer = null;
 $suppressIntellisenseUntil = 0.0;
@@ -658,6 +663,7 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $run,
     $closeTab,
     $nextTab,
+    $quickOpen,
 ): bool {
     Loop::after(0, $updateCursor);
 
@@ -679,6 +685,10 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
         }
         if ($keyval === 0x61) { // Ctrl+A
             $editor->selectAll();
+            return true;
+        }
+        if ($keyval === 0x70) { // Ctrl+P
+            $quickOpen->present();
             return true;
         }
         if ($keyval === 0x77) { // Ctrl+W
@@ -1219,6 +1229,7 @@ $menuBar = (new MenuBar())
     ->addMenu('Affichage', [
         ['label' => 'Explorateur', 'action' => $showExplorer],
         ['label' => 'Recherche', 'action' => $showSearchPanel],
+        ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
         ['label' => 'Assets', 'action' => $showAssetsPanel],
         ['label' => 'Propriétés du projet', 'action' => $showPropertiesPanel],
@@ -1245,7 +1256,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+P Aller au fichier · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1281,6 +1292,12 @@ if ($auto) {
 
     file_put_contents($sampleSecond, "<?php\n\necho \"Second onglet\\n\";\n");
 
+    Loop::after(200, function () use ($quickOpen): void {
+        $quickOpen->present();
+        $quickOpen->setQuery('hello');
+        $quickOpen->chooseCurrent();
+    });
+    Loop::after(260, fn () => $closeDocument(realpath($root . '/hello.php') ?: $root . '/hello.php'));
     Loop::after(300, fn () => $openFile($sample));
     Loop::after(380, fn () => $openFile($sampleSecond));
     Loop::after(450, fn () => $openFile($sample));

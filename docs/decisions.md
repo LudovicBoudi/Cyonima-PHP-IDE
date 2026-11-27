@@ -952,6 +952,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   Limitations : pas de réorganisation, pas de défilement horizontal de la
   barre d’onglets, pas d’historique d’annulation par document.
 
+92. **Navigation rapide** : `QuickOpen` affiche un `GtkPopover` centré, avec un
+  champ de saisie et une liste défilante. `QuickOpenMatcher` classe les chemins
+  relatifs par pertinence : nom exact, préfixe de nom, sous-chaîne, puis
+  sous-séquence floue avec bonus en début de segment. Les fichiers sont
+  rechargés à chaque ouverture via `ProjectSearch::files`, sans index. Les
+  flèches, Entrée, Échap et le clic sont gérés ; la sélection ouvre le fichier
+  dans un onglet. Le popover est détaché de la fenêtre à sa fermeture pour
+  éviter un avertissement GTK. Limitations : 50 résultats, pas de symboles ni
+  de commandes, pas de score affiché.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

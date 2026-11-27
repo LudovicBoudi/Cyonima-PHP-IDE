@@ -75,6 +75,17 @@ défilante au-delà de la largeur de la fenêtre, pas d'historique d'annulation
 propre à chaque document (le buffer est partagé et son historique est remis à
 zéro à la bascule).
 
+## Navigation rapide
+
+`Ctrl+P` ouvre un popover centré avec un champ de recherche. La liste est
+rechargée à chaque ouverture à partir des fichiers du projet (mêmes exclusions
+et limite de taille que la recherche). Le filtrage est flou : le nom de fichier
+exact, puis son préfixe, puis une sous-chaîne, puis une sous-séquence de
+caractères ; les correspondances en début de segment (`/`, `-`, `_`, `.`) sont
+favorisées. Les flèches parcourent les résultats, Entrée ou un clic ouvre le
+fichier dans un onglet, Échap ou un clic extérieur ferme le popover. Les 50
+premiers résultats sont affichés.
+
 ## Recherche projet
 
 Le bouton loupe de la barre d'activité ouvre le panneau `RECHERCHE`. La requête
@@ -141,11 +152,11 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Explorateur, Recherche, Débogage, Assets, Propriétés, terminal |
+| Affichage | Explorateur, Recherche, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
-Raccourcis : `Ctrl+S`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`,
+Raccourcis : `Ctrl+S`, `Ctrl+P`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`,
 `Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`, `Ctrl+Espace` et `F5`.
 
 ## Concepteur d'interface
@@ -239,5 +250,6 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
 - la barre de titre garde les boutons de fenêtre GNOME, simplement aplatis ;
 - la recherche projet est un parcours de fichiers sans index ni aperçu diff ;
 - les onglets ne se réorganisent pas par glisser-déposer et ne défilent pas ;
+- la navigation rapide liste les fichiers mais pas les symboles ni les commandes ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

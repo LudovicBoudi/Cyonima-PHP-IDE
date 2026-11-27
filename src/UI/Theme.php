@@ -295,6 +295,25 @@ list row:selected {
     background-color: #2a2d2e;
 }
 
+.quick-open {
+    background-color: #252526;
+    border: 1px solid #3f3f46;
+}
+
+.quick-open contents {
+    padding: 8px;
+}
+
+.quick-open-result {
+    color: #cccccc;
+    font-size: 13px;
+    padding: 4px 6px;
+}
+
+.quick-open-result:hover {
+    background-color: #2a2d2e;
+}
+
 .tab-bar {
     background-color: #252526;
     border-bottom: 1px solid #3f3f46;
