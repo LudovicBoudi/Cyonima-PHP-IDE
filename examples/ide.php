@@ -15,6 +15,7 @@ use Cyonima\Runtime\LspClient;
 use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\ProjectBuilder;
 use Cyonima\Runtime\ProjectFactory;
+use Cyonima\Runtime\ScrollSync;
 use Cyonima\Runtime\WorkspaceWatcher;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\UI\AssetPanel;
@@ -93,12 +94,17 @@ $findBar = new FindBar($editor);
 // --- Aperçu Markdown -------------------------------------------------------
 $markdownPreview = new MarkdownPreview();
 $previewVisible = false;
+$editorScrolled = (new ScrolledWindow($editor))->expand();
 $previewPage = (new ScrolledWindow($markdownPreview))->expand()->visible(false);
 $editorSplit = (new Paned(Orientation::HORIZONTAL, 760))
-    ->start((new ScrolledWindow($editor))->expand())
+    ->start($editorScrolled)
     ->end($previewPage)
     ->expand()
     ->resizeStart(false);
+$scrollSync = new ScrollSync(
+    $editorScrolled->raw()->handle(),
+    $previewPage->raw()->handle(),
+);
 
 $togglePreview = function () use (
     $window,
@@ -106,6 +112,7 @@ $togglePreview = function () use (
     $markdownPreview,
     $previewPage,
     $editorSplit,
+    $scrollSync,
     &$previewVisible,
     &$currentFile,
 ): void {
@@ -130,12 +137,15 @@ $togglePreview = function () use (
     if ($width > 0) {
         $editorSplit->position((int) ($width * 0.55));
     }
+
+    Loop::after(0, fn () => $scrollSync->syncFromSource());
 };
 
 $syncPreview = function () use (
     $editor,
     $markdownPreview,
     $previewPage,
+    $scrollSync,
     &$previewVisible,
     &$currentFile,
 ): void {
@@ -148,6 +158,7 @@ $syncPreview = function () use (
     ) {
         $markdownPreview->render($editor->text());
         $previewPage->visible(true);
+        Loop::after(0, fn () => $scrollSync->syncFromSource());
         return;
     }
 
@@ -1278,7 +1289,10 @@ if (is_dir($root)) {
         $gitPanel->refresh();
     });
 
-    $window->raw()->onCloseRequest(fn () => $workspaceWatcher->cancel());
+    $window->raw()->onCloseRequest(function () use ($workspaceWatcher, $scrollSync): void {
+        $workspaceWatcher->cancel();
+        $scrollSync->detach();
+    });
 }
 
 // --- Onglet, éditeur, terminal --------------------------------------------

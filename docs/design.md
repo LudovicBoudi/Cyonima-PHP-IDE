@@ -213,7 +213,10 @@ citations, liens, images (affichées comme texte) et règles horizontales. Le
 texte est échappé avant l'application des styles, donc le HTML brut reste
 affiché littéralement. L'aperçu se rafraîchit à chaque modification et suit la
 bascule d'onglet ; il se ferme automatiquement quand le fichier actif n'est
-plus du Markdown. Le rendu est natif (Pango), sans WebKit.
+plus du Markdown. Le rendu est natif (Pango), sans WebKit. Le défilement
+vertical est synchronisé avec l'éditeur : la position relative est reproduite
+via les `GtkAdjustment`, avec un verrou anti-rétroaction et une
+resynchronisation à l'ouverture.
 
 Limites : pas de tableaux, de cases à cocher ni de HTML rendu ; les liens sont
 affichés mais pas ouverts par clic.

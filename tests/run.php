@@ -30,6 +30,7 @@ use Cyonima\Runtime\PhpIntellisense;
 use Cyonima\Runtime\Config;
 use Cyonima\Runtime\Diagnostics;
 use Cyonima\Runtime\FileWatcher;
+use Cyonima\Runtime\GtkScroll;
 use Cyonima\Runtime\GtkText;
 use Cyonima\Compiler\FormCompiler;
 use Cyonima\Compiler\Lexer\Lexer;
@@ -47,6 +48,7 @@ use Cyonima\Runtime\TextSearch;
 use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
+use Cyonima\Runtime\ScrollSync;
 use Cyonima\Runtime\WorkspaceWatcher;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
@@ -10738,6 +10740,73 @@ T::ok(str_contains($preview->markup(), 'Aperçu'), 'markdown UI : contenu');
 T::ok(str_contains($preview->markup(), '<b>fort</b>'), 'markdown UI : styles');
 $preview->render('');
 T::ok($preview->markup() === '', 'markdown UI : document vide');
+
+// ---------------------------------------------------------------------------
+T::section('76. IDE — défilement synchronisé');
+
+$syncWindow = new UI\Window('Défilement synchronisé', 600, 300);
+$syncSource = (new UI\ScrolledWindow(
+    (new UI\Label(implode("\n", range(1, 300))))->cssClass('output-text'),
+))->expand();
+$syncTarget = (new UI\ScrolledWindow(
+    (new UI\Label(implode("\n", range(1, 200))))->cssClass('output-text'),
+))->expand();
+$syncWindow->setChild(
+    (new UI\Box(Raw\Orientation::HORIZONTAL, 0))->append($syncSource, $syncTarget)->expand(),
+);
+$syncWindow->present();
+
+$syncActive = false;
+$syncTargetValue = null;
+$syncKeep = null;
+
+Loop::after(150, function () use (
+    $syncSource,
+    $syncTarget,
+    &$syncActive,
+    &$syncTargetValue,
+    &$syncKeep,
+): void {
+    $sourceAdjustment = GtkScroll::vadjustment($syncSource->raw()->handle());
+    $targetAdjustment = GtkScroll::vadjustment($syncTarget->raw()->handle());
+
+    if ($sourceAdjustment === null || $targetAdjustment === null) {
+        Loop::quit();
+        return;
+    }
+
+    $syncKeep = new ScrollSync(
+        $syncSource->raw()->handle(),
+        $syncTarget->raw()->handle(),
+    );
+    $syncActive = $syncKeep->active();
+    $span = GtkScroll::upper($sourceAdjustment)
+        - GtkScroll::pageSize($sourceAdjustment)
+        - GtkScroll::lower($sourceAdjustment);
+    GtkScroll::setValue(
+        $sourceAdjustment,
+        GtkScroll::lower($sourceAdjustment) + max(0.0, $span) * 0.5,
+    );
+
+    Loop::after(120, function () use ($targetAdjustment, &$syncTargetValue): void {
+        $syncTargetValue = GtkScroll::value($targetAdjustment);
+        Loop::quit();
+    });
+});
+Loop::after(3000, fn () => Loop::quit());
+Loop::run();
+
+T::ok($syncActive, 'défilement : synchronisation active');
+T::ok(
+    $syncTargetValue !== null && $syncTargetValue > 0.0,
+    'défilement : position propagée',
+);
+
+if ($syncKeep instanceof ScrollSync) {
+    $syncKeep->detach();
+}
+
+$syncWindow->raw()->close();
 
 $removeTree($templateRoot);
 

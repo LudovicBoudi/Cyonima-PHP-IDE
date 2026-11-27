@@ -1129,6 +1129,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   Limitations : tableaux, cases à cocher et HTML non rendus, liens non
   cliquables.
 
+109. **Défilement synchronisé de l’aperçu** : `GtkScroll` expose les
+  `GtkAdjustment` d’un `GtkScrolledWindow` (valeur, bornes, page), la
+  connexion/déconnexion de `value-changed` et une synchronisation par fraction
+  de la plage défilable. `ScrollSync` relie éditeur et aperçu dans les deux
+  sens avec un verrou anti-rétroaction et des callbacks conservés côté FFI.
+  L’aperçu est resynchronisé à l’ouverture et au changement d’onglet ; les
+  handlers sont détachés à la fermeture. Limitations : synchronisation
+  proportionnelle, pas alignement ligne à ligne, pas de synchronisation
+  horizontale.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |
