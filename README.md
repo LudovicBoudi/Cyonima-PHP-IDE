@@ -20,7 +20,7 @@ Deux axes, un même socle :
 | M2 — Runtime + façade OO | ✅ boucle à source unique, fibres, sous-processus, erreurs, `Application` |
 | M3 — libadwaita | ✅ HeaderBar, ToolbarView, Clamp, Preferences, SwitchRow, Toast |
 | M4 — GtkSourceView / VTE | ✅ éditeur PHP coloré, terminal PTY, mini-IDE de démonstration |
-| M5 — IDE MVP | ✅ design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition multi-onglets, navigation rapide, palette de commandes, panneaux Git/Problèmes/Sortie, terminal, LSP, Xdebug, recherche et remplacement projet |
+| M5 — IDE MVP | ✅ design inspiré de Visual Studio, fenêtre de démarrage, projets, licences de projet, assets, concepteur d’interface, édition multi-onglets, navigation rapide, palette de commandes, panneaux Git/Problèmes/Sortie/Diff, terminal, LSP, Xdebug, recherche et remplacement projet |
 | M6 — Packaging | ✅ portable, **Flatpak construit et exécuté**, **AppImage autonome (PHP + GTK, 56 Mo)** |
 
 Prérequis : PHP 8.3+ avec l'extension FFI, GTK4 (runtime), un serveur X/Wayland.
@@ -296,7 +296,7 @@ Interface inspirée de Visual Studio : fenêtre de démarrage avec modèles,
 barre de menus fonctionnelle (Fichier, Édition, Affichage, Exécuter, Aide),
 barre d'activité, panneau latéral redimensionnable (explorateur, recherche,
 git, débogage, assets, propriétés), onglets d'éditeur multiples, panneaux
-Problèmes LSP et Sortie, terminal et barre de statut bleue.
+Problèmes LSP, Sortie et Diff, terminal et barre de statut bleue.
 IntelliSense intégré (suggestions PHP sans serveur, ou LSP si configuré) avec
 filtrage de la liste pendant la frappe.
 La recherche projet parcourt les fichiers texte, exclut les dépendances et

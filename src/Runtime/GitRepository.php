@@ -133,6 +133,50 @@ final class GitRepository
         return $this->diff(null, true);
     }
 
+    /** Diff d'un fichier : indexé puis non indexé, contenu complet si non suivi. */
+    public function fileDiff(string $path): string
+    {
+        $parts = [];
+
+        $staged = $this->diff($path, true);
+        if (trim($staged) !== '') {
+            $parts[] = $staged;
+        }
+
+        $unstaged = $this->diff($path);
+        if (trim($unstaged) !== '') {
+            $parts[] = $unstaged;
+        }
+
+        if ($parts === [] && $this->isUntracked($path)) {
+            $result = $this->git([
+                'diff',
+                '--no-color',
+                '--no-index',
+                '--',
+                '/dev/null',
+                $this->root . '/' . $path,
+            ]);
+
+            if (trim($result['stdout']) !== '') {
+                $parts[] = $result['stdout'];
+            }
+        }
+
+        return implode("\n", $parts);
+    }
+
+    private function isUntracked(string $path): bool
+    {
+        foreach ($this->status() as $entry) {
+            if ($entry['path'] === $path) {
+                return $entry['index'] === '?';
+            }
+        }
+
+        return false;
+    }
+
     /** @param list<string> $paths */
     public function stage(array $paths): bool
     {

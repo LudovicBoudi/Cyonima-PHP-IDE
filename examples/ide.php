@@ -23,6 +23,7 @@ use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
 use Cyonima\UI\CompletionPopup;
 use Cyonima\UI\DebugPanel;
+use Cyonima\UI\DiffPanel;
 use Cyonima\App\DesignerWindow;
 use Cyonima\UI\FileBrowser;
 use Cyonima\UI\GitPanel;
@@ -432,6 +433,9 @@ $outputPanel = new OutputPanel();
 $outputPanel->append('Cyonima IDE prêt', 'IDE');
 $showOutput = null;
 
+$diffPanel = new DiffPanel();
+$showDiff = null;
+
 $statusBranch = null;
 $gitPanel = new GitPanel(
     $root,
@@ -451,16 +455,22 @@ $gitPanel = new GitPanel(
             ($showOutput)();
         }
     },
+    function (string $path, string $diff) use ($diffPanel, &$showDiff): void {
+        $diffPanel->show($path, $diff);
+
+        if ($showDiff !== null) {
+            ($showDiff)();
+        }
+    },
 );
 $refreshGit = function () use ($gitPanel): void {
     $gitPanel->refresh();
 };
-$showGitDiff = function () use ($gitPanel, $outputPanel, &$showOutput): void {
-    $diff = $gitPanel->diff();
-    $outputPanel->append($diff !== '' ? $diff : 'Git : aucune différence', 'Git');
+$showGitDiff = function () use ($gitPanel, $diffPanel, &$showDiff): void {
+    $diffPanel->show('Projet', $gitPanel->diff());
 
-    if ($showOutput !== null) {
-        ($showOutput)();
+    if ($showDiff !== null) {
+        ($showDiff)();
     }
 };
 
@@ -1120,18 +1130,20 @@ $editorArea = (new ScrolledWindow($editor))->expand();
 
 $panelProblemsTab = (new Button('PROBLÈMES'))->cssClass('panel-tab');
 $panelOutputTab = (new Button('SORTIE'))->cssClass('panel-tab');
+$panelDiffTab = (new Button('DIFF'))->cssClass('panel-tab');
 $panelTerminalTab = (new Button('TERMINAL'))->cssClass('panel-tab')->cssClass('active');
 
 $panelTabs = (new Box(Orientation::HORIZONTAL, 0))
     ->cssClass('panel-tabs')
-    ->append($panelProblemsTab, $panelOutputTab, $panelTerminalTab);
+    ->append($panelProblemsTab, $panelOutputTab, $panelDiffTab, $panelTerminalTab);
 
 $problemsPage = (new ScrolledWindow($problemsPanel))->expand()->visible(false);
 $outputPage = $outputPanel->expand()->visible(false);
+$diffPage = $diffPanel->expand()->visible(false);
 $terminalPage = $terminal->expand();
 
 $bottomPages = (new Box(Orientation::VERTICAL, 0))
-    ->append($problemsPage, $outputPage, $terminalPage)
+    ->append($problemsPage, $outputPage, $diffPage, $terminalPage)
     ->expand();
 
 $terminalVisible = true;
@@ -1142,9 +1154,11 @@ $terminalPanel = (new Box(Orientation::VERTICAL, 0))
 $showBottomTab = function (string $tab) use (
     $problemsPage,
     $outputPage,
+    $diffPage,
     $terminalPage,
     $panelProblemsTab,
     $panelOutputTab,
+    $panelDiffTab,
     $panelTerminalTab,
     $terminalPanel,
     &$terminalVisible,
@@ -1152,11 +1166,13 @@ $showBottomTab = function (string $tab) use (
     $pages = [
         'problems' => $problemsPage,
         'output' => $outputPage,
+        'diff' => $diffPage,
         'terminal' => $terminalPage,
     ];
     $tabs = [
         'problems' => $panelProblemsTab,
         'output' => $panelOutputTab,
+        'diff' => $panelDiffTab,
         'terminal' => $panelTerminalTab,
     ];
 
@@ -1178,10 +1194,15 @@ $showBottomTab = function (string $tab) use (
 
 $panelProblemsTab->onClicked(fn () => $showBottomTab('problems'));
 $panelOutputTab->onClicked(fn () => $showBottomTab('output'));
+$panelDiffTab->onClicked(fn () => $showBottomTab('diff'));
 $panelTerminalTab->onClicked(fn () => $showBottomTab('terminal'));
 
 $showOutput = function () use ($showBottomTab): void {
     ($showBottomTab)('output');
+};
+
+$showDiff = function () use ($showBottomTab): void {
+    ($showBottomTab)('diff');
 };
 
 $refreshProblemsTab = function () use ($diagnostics, $panelProblemsTab): void {
@@ -1332,6 +1353,7 @@ $commandPalette = new CommandPalette($window, [
     ['label' => 'Affichage : Recherche', 'action' => $showSearchPanel],
     ['label' => 'Affichage : Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
     ['label' => 'Affichage : Sortie', 'action' => fn () => ($showBottomTab)('output')],
+    ['label' => 'Affichage : Diff', 'action' => fn () => ($showBottomTab)('diff')],
     ['label' => 'Sortie : vider', 'action' => fn () => $outputPanel->clear()],
     ['label' => 'Affichage : Git', 'action' => fn () => $showGitPanel()],
     ['label' => 'Git : actualiser', 'action' => fn () => $refreshGit()],
@@ -1381,6 +1403,7 @@ $menuBar = (new MenuBar())
         ['label' => 'Recherche', 'action' => $showSearchPanel],
         ['label' => 'Problèmes', 'action' => fn () => ($showBottomTab)('problems')],
         ['label' => 'Sortie', 'action' => fn () => ($showBottomTab)('output')],
+        ['label' => 'Diff', 'action' => fn () => ($showBottomTab)('diff')],
         ['label' => 'Git', 'action' => fn () => $showGitPanel()],
         ['label' => 'Aller au fichier…', 'shortcut' => 'Ctrl+P', 'action' => fn () => $quickOpen->present()],
         ['label' => 'Débogage', 'action' => $showDebugPanel],
@@ -1466,6 +1489,10 @@ if ($auto) {
     Loop::after(215, fn () => ($showGitPanel)());
     Loop::after(225, fn () => ($showExplorer)());
     Loop::after(230, fn () => ($showBottomTab)('problems'));
+    Loop::after(235, function () use ($diffPanel): void {
+        $diffPanel->show('demo.php', "--- a/demo.php\n+++ b/demo.php\n@@ -1 +1 @@\n-old\n+new");
+    });
+    Loop::after(240, fn () => ($showBottomTab)('diff'));
     Loop::after(250, function () use ($outputPanel): void {
         $outputPanel->append('Sortie de démonstration', 'Auto');
         $outputPanel->append("Ligne 2\nLigne 3", 'Auto');

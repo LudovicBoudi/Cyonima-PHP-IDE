@@ -45,6 +45,7 @@ use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
 use Cyonima\UI\CodeEditor;
 use Cyonima\UI\CommandPalette;
+use Cyonima\UI\DiffPanel;
 use Cyonima\UI\GitPanel;
 use Cyonima\UI\OutputPanel;
 use Cyonima\UI\ProblemsPanel;
@@ -10197,6 +10198,10 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     T::same('a.txt', $gitStatus[0]['path'] ?? null, 'git : chemin relatif');
     T::same('?', $gitStatus[0]['index'] ?? null, 'git : état index');
     T::ok(!($gitStatus[0]['staged'] ?? true), 'git : non indexé');
+    T::ok(
+        str_contains($repository?->fileDiff('a.txt') ?? '', '+one'),
+        'git : diff fichier non suivi',
+    );
 
     T::ok($repository?->stageAll() ?? false, 'git : indexation globale');
     $gitStatus = $repository?->status() ?? [];
@@ -10216,10 +10221,15 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
         str_contains($repository?->diff() ?? '', '+two'),
         'git : diff non indexé',
     );
+    T::ok(
+        str_contains($repository?->fileDiff('a.txt') ?? '', '+two'),
+        'git : diff fichier',
+    );
 
     $gitOpened = null;
     $gitBranches = [];
     $gitMessages = [];
+    $gitDiff = null;
     $gitPanel = new GitPanel(
         $gitRoot,
         function (string $path) use (&$gitOpened): void {
@@ -10231,6 +10241,9 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
         function (string $message, bool $error) use (&$gitMessages): void {
             $gitMessages[] = [$message, $error];
         },
+        function (string $path, string $diff) use (&$gitDiff): void {
+            $gitDiff = [$path, $diff];
+        },
     );
 
     T::same(1, $gitPanel->count(), 'git UI : fichier modifié');
@@ -10241,6 +10254,11 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
         $gitOpened,
         'git UI : ouverture du fichier',
     );
+
+    T::ok($gitPanel->showDiff(0), 'git UI : diff demandé');
+    T::same('a.txt', $gitDiff[0] ?? null, 'git UI : chemin du diff');
+    T::ok(str_contains($gitDiff[1] ?? '', '+two'), 'git UI : contenu du diff');
+    T::ok(!$gitPanel->showDiff(99), 'git UI : diff de ligne invalide');
 
     T::ok($gitPanel->stageRow(0), 'git UI : indexation fichier');
     T::same('M', $gitPanel->entries()[0]['index'] ?? null, 'git UI : état indexé');
@@ -10264,6 +10282,14 @@ if (trim((string) shell_exec('command -v git 2>/dev/null')) === '') {
     T::same(0, $noRepositoryPanel->count(), 'git UI : dépôt absent');
     T::same('—', $noRepositoryPanel->branch(), 'git UI : branche absente');
     T::ok(!$noRepositoryPanel->commit()['ok'], 'git UI : commit sans dépôt');
+
+    $diffPanel = new DiffPanel();
+    $diffPanel->show('src/a.php', "--- a/src/a.php\n+++ b/src/a.php\n@@ -1 +1 @@\n-old\n+new");
+    T::same('Diff — src/a.php', $diffPanel->title(), 'diff : titre');
+    T::ok(str_contains($diffPanel->text(), '+new'), 'diff : contenu affiché');
+    $diffPanel->clear();
+    T::same('Aucun diff sélectionné', $diffPanel->title(), 'diff : remise à zéro');
+    T::same('', $diffPanel->text(), 'diff : texte vidé');
 
     $removeTree($gitRoot);
 }

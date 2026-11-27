@@ -33,7 +33,7 @@ Composants :
 | Panneau latéral | `EXPLORER`, `RECHERCHE`, `GIT`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
 | Onglets | un onglet par fichier, point de modification, fermeture, bascule |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
-| Panneau bas | onglets cliquables PROBLÈMES / SORTIE / TERMINAL, diagnostics, journal + VTE |
+| Panneau bas | onglets cliquables PROBLÈMES / SORTIE / DIFF / TERMINAL, diagnostics, journal, diff + VTE |
 | Barre de statut | bleue `#007acc`, position, encodage, version PHP |
 
 ## Palette
@@ -64,17 +64,21 @@ Le bouton Git de la barre d'activité ouvre le panneau `GIT`. `GitRepository`
 découvre la racine du dépôt, lit la branche et le statut porcelain, et expose
 indexation, désindexation, commit et diff. Le panneau affiche la branche, le
 nombre de modifications et les fichiers avec leurs codes d'état
-(`??`, `M`, `A`, `D`…). Chaque ligne propose **Ouvrir** et
+(`??`, `M`, `A`, `D`…). Chaque ligne propose **Ouvrir**, **Diff** et
 **Indexer**/**Désindexer** ; **Indexer tout** reste disponible dans la barre
 d'outils. Le champ de message et **Commit** créent le commit des fichiers
 indexés. La branche courante remplace le libellé statique dans la barre de
 statut, et le statut est rafraîchi après chaque sauvegarde. Les commandes
 Git sont aussi disponibles dans la palette : actualiser, indexer tout,
-afficher le diff (envoyé dans le panneau Sortie).
+afficher le diff du projet.
+
+Le diff d'un fichier s'ouvre dans l'onglet **DIFF** du panneau bas
+(`DiffPanel`) : vue en lecture seule colorée par GtkSourceView. Les fichiers
+suivis affichent leurs diffs indexé et non indexé ; un fichier non suivi est
+comparé à `/dev/null` pour montrer son contenu complet.
 
 Limites : pas de gestion de branches, de merge, de push/pull ni de résolution
-de conflits ; le diff par fichier n'est pas encore affiché dans une vue
-dédiée.
+de conflits ; le diff est textuel, sans édition ni navigation entre hunks.
 
 ## Onglets multiples
 
@@ -202,7 +206,7 @@ opérations réelles de l'IDE.
 |---|---|
 | Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Palette de commandes, Explorateur, Recherche, Git, Problèmes, Sortie, Aller au fichier, Débogage, Assets, Propriétés, terminal |
+| Affichage | Palette de commandes, Explorateur, Recherche, Git, Problèmes, Sortie, Diff, Aller au fichier, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 

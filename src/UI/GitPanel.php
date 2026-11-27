@@ -41,11 +41,15 @@ final class GitPanel extends Widget
     /** @var (\Closure(string, bool): void)|null */
     private ?\Closure $onMessage;
 
+    /** @var (\Closure(string, string): void)|null */
+    private ?\Closure $onDiff;
+
     public function __construct(
         string $root,
         callable $onOpen,
         ?callable $onStatus = null,
         ?callable $onMessage = null,
+        ?callable $onDiff = null,
     ) {
         parent::__construct(RawBox::new(Orientation::VERTICAL, 6));
 
@@ -54,6 +58,7 @@ final class GitPanel extends Widget
         $this->onOpen = $onOpen(...);
         $this->onStatus = $onStatus === null ? null : $onStatus(...);
         $this->onMessage = $onMessage === null ? null : $onMessage(...);
+        $this->onDiff = $onDiff === null ? null : $onDiff(...);
 
         $this->summaryLabel = RawLabel::new('');
         $this->summaryLabel->setXalign(0.0);
@@ -270,6 +275,31 @@ final class GitPanel extends Widget
         return implode("\n", $parts);
     }
 
+    public function diffAt(int $index): ?string
+    {
+        $entry = $this->entries[$index] ?? null;
+
+        return $entry === null ? null : $this->repository?->fileDiff($entry['path']);
+    }
+
+    /** Ouvre le diff d'un fichier via le callback fourni. */
+    public function showDiff(int $index): bool
+    {
+        $entry = $this->entries[$index] ?? null;
+
+        if ($entry === null) {
+            return false;
+        }
+
+        $diff = $this->repository?->fileDiff($entry['path']) ?? '';
+
+        if ($this->onDiff !== null) {
+            ($this->onDiff)($entry['path'], $diff);
+        }
+
+        return true;
+    }
+
     /** Simule l'activation d'un fichier. */
     public function activateRow(int $index): void
     {
@@ -304,6 +334,10 @@ final class GitPanel extends Widget
                 ->cssClass('git-row-action')
                 ->onClicked(fn (): int => $this->openIndex($position));
 
+            $diffButton = (new IconButton('view-reveal-symbolic', 'Diff'))
+                ->cssClass('git-row-action')
+                ->onClicked(fn (): bool => $this->showDiff($position));
+
             $fullyStaged = $entry['staged'] && $entry['worktree'] === ' ';
             $toggle = $fullyStaged
                 ? (new IconButton('list-remove-symbolic', 'Désindexer'))
@@ -314,7 +348,7 @@ final class GitPanel extends Widget
                     ->onClicked(fn (): bool => $this->stage($entry['path']));
 
             $content = (new Box(Orientation::HORIZONTAL, 4))
-                ->append($label, $open, $toggle);
+                ->append($label, $open, $diffButton, $toggle);
 
             $row = RawListBoxRow::new();
             $row->setChild($content->raw());

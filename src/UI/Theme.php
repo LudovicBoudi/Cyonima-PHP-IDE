@@ -408,6 +408,12 @@ list row:selected {
     color: #ffffff;
 }
 
+.diff-title {
+    color: #8a8a8a;
+    font-size: 11px;
+    padding: 4px 8px;
+}
+
 .quick-open {
     background-color: #252526;
     border: 1px solid #3f3f46;

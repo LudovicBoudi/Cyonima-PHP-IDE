@@ -1015,6 +1015,16 @@ Trois écarts assumés par rapport au miroir strict du C :
   fichier ; l'ouverture passe par le bouton dédié ou `activateRow()` côté API.
   L'indexation globale `Indexer tout` reste disponible.
 
+98. **Diff par fichier** : `GitRepository::fileDiff()` combine le diff indexé
+  et le diff non indexé d'un chemin ; pour un fichier non suivi, il utilise
+  `git diff --no-index -- /dev/null <path>` afin d'afficher le contenu complet
+  en ajout. `GitPanel` ajoute un bouton **Diff** par ligne, délègue via un
+  callback et expose `diffAt()`/`showDiff()`. L'IDE affiche le résultat dans
+  `DiffPanel`, un `CodeEditor` en lecture seule avec le langage GtkSourceView
+  `diff`, dans un nouvel onglet **DIFF** du panneau bas. La commande de palette
+  « afficher le diff du projet » cible désormais cet onglet. Limitations : pas
+  de navigation entre hunks, pas d'édition du patch, pas de diff binaire.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |
