@@ -35,6 +35,8 @@ final class GtkText
         void         gtk_text_buffer_get_iter_at_mark(void *buffer, CyonimaTextIter *iter, void *mark);
         void         gtk_text_buffer_place_cursor(void *buffer, const CyonimaTextIter *iter);
         void         gtk_text_buffer_get_iter_at_line(void *buffer, CyonimaTextIter *iter, int line_number);
+        void         gtk_text_buffer_get_iter_at_line_offset(
+            void *buffer, CyonimaTextIter *iter, int line_number, int char_offset);
         int          gtk_text_iter_get_offset(const CyonimaTextIter *iter);
         int          gtk_text_iter_get_line(const CyonimaTextIter *iter);
         int          gtk_text_iter_get_line_offset(const CyonimaTextIter *iter);
@@ -183,9 +185,19 @@ final class GtkText
 
     public static function moveCursorToLine(CData $buffer, int $line): void
     {
+        self::moveCursorTo($buffer, $line);
+    }
+
+    public static function moveCursorTo(CData $buffer, int $line, int $character = 0): void
+    {
         $ffi = self::ffi();
         $iter = $ffi->new('CyonimaTextIter');
-        $ffi->gtk_text_buffer_get_iter_at_line($buffer, FFI::addr($iter), max(0, $line));
+        $ffi->gtk_text_buffer_get_iter_at_line_offset(
+            $buffer,
+            FFI::addr($iter),
+            max(0, $line),
+            max(0, $character),
+        );
         $ffi->gtk_text_buffer_place_cursor($buffer, FFI::addr($iter));
     }
 

@@ -39,6 +39,7 @@ use Cyonima\Runtime\XdebugClient;
 use Cyonima\Runtime\Process;
 use Cyonima\Runtime\Scheduler;
 use Cyonima\UI;
+use Cyonima\UI\CodeEditor;
 use Cyonima\UI\SearchPanel;
 
 final class T
@@ -9882,6 +9883,26 @@ T::same(
 
 $removeTree($uiRoot);
 $removeTree($replaceRoot);
+
+// ---------------------------------------------------------------------------
+T::section('66. IDE — curseur par ligne et colonne');
+
+$tabEditor = new CodeEditor('php', "ligne 1\nligne 2\nligne 3");
+$tabEditor->moveCursorTo(1, 3);
+$cursor = $tabEditor->cursor();
+T::same(1, $cursor['line'], 'curseur : ligne');
+T::same(3, $cursor['character'], 'curseur : colonne');
+
+$tabEditor->moveCursorToLine(2);
+$cursor = $tabEditor->cursor();
+T::same(2, $cursor['line'], 'curseur : ligne seule');
+T::same(0, $cursor['character'], 'curseur : colonne remise à zéro');
+
+$tabEditor->moveCursorTo(999, 0);
+T::same(2, $tabEditor->cursor()['line'], 'curseur : ligne bornée');
+
+$tabEditor->moveCursorTo(0, 6);
+T::same(6, $tabEditor->cursor()['character'], 'curseur : colonne sur première ligne');
 
 $removeTree($templateRoot);
 

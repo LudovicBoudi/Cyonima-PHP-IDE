@@ -940,6 +940,18 @@ Trois écarts assumés par rapport au miroir strict du C :
   enregistrés. Limitations : pas d’aperçu diff, pas d’annulation globale, pas
   de remplacement sélectif par résultat.
 
+91. **Onglets multiples** : l’IDE garde un document par fichier (contenu,
+  langage, état modifié, ligne/colonne du curseur) dans l’ordre d’ouverture.
+  Un seul `CodeEditor` et un seul buffer sont réutilisés : le contenu du
+  document quitté est mémorisé, puis le document cible est rechargé avec
+  l’historique d’annulation neutralisé. Les onglets sont reconstruits à chaque
+  bascule, avec point de modification et fermeture. La fermeture d’un document
+  modifié est refusée ; la fermeture de l’onglet actif active le voisin.
+  Raccourcis : `Ctrl+W`, `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+Page_Up/Down`.
+  `CodeEditor::moveCursorTo(ligne, colonne)` restaure la position exacte.
+  Limitations : pas de réorganisation, pas de défilement horizontal de la
+  barre d’onglets, pas d’historique d’annulation par document.
+
 ## Références de version (machine de développement)
 
 | Composant | Version |

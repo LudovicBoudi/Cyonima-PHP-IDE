@@ -31,7 +31,7 @@ Composants :
 | Actions | `IconButton` (Enregistrer, Déboguer, Exécuter) |
 | Barre d'activité | `Box` vertical de 48 px, icônes symboliques, indicateur bleu |
 | Panneau latéral | `EXPLORER`, `RECHERCHE`, `DÉBOGAGE`, `ASSETS` ou `PROPRIÉTÉS` |
-| Onglet | nom du fichier, point de modification, fermeture |
+| Onglets | un onglet par fichier, point de modification, fermeture, bascule |
 | Éditeur | GtkSourceView + schéma `vs-dark` |
 | Panneau bas | onglets PROBLÈMES / SORTIE / TERMINAL + VTE |
 | Barre de statut | bleue `#007acc`, position, encodage, version PHP |
@@ -57,6 +57,23 @@ La zone latérale et l'éditeur sont dans un `GtkPaned` horizontal (position
 initiale 270 px, largeur minimale 180 px). `resize_start_child=false` : quand on
 redimensionne la fenêtre, c'est l'éditeur qui grandit, pas l'explorateur. Le
 séparateur se glisse à la souris.
+
+## Onglets multiples
+
+L'éditeur conserve un document par fichier dans l'ordre d'ouverture : contenu,
+langage, état de modification, ligne et colonne du curseur. Cliquer sur un
+onglet ou rouvrir un fichier déjà présent réactive son document sans relire le
+disque ; les modifications non enregistrées sont conservées en mémoire. Un
+onglet modifié affiche un point et son titre est suffixé `•` dans la barre de
+titre. La fermeture (`Ctrl+W` ou croix) est refusée tant que le document est
+modifié, pour éviter toute perte. `Ctrl+Tab`, `Ctrl+Shift+Tab`,
+`Ctrl+Page_Down` et `Ctrl+Page_Up` font le tour des onglets. Fermer l'onglet
+actif active le voisin ; fermer le dernier vide l'éditeur.
+
+Limites : pas de réorganisation par glisser-déposer, pas de barre d'onglets
+défilante au-delà de la largeur de la fenêtre, pas d'historique d'annulation
+propre à chaque document (le buffer est partagé et son historique est remis à
+zéro à la bascule).
 
 ## Recherche projet
 
@@ -122,14 +139,14 @@ opérations réelles de l'IDE.
 
 | Menu | Actions |
 |---|---|
-| Fichier | Enregistrer, Fermer l'onglet, Quitter |
+| Fichier | Enregistrer, Fermer l'onglet, onglet suivant/précédent, Quitter |
 | Édition | Annuler, Rétablir, Tout sélectionner |
-| Affichage | Explorateur, Débogage, Assets, Propriétés, terminal |
+| Affichage | Explorateur, Recherche, Débogage, Assets, Propriétés, terminal |
 | Exécuter | Exécuter le fichier, Déboguer, Arrêter le débogage |
 | Aide | Raccourcis clavier, À propos, Licence MIT |
 
-Raccourcis : `Ctrl+S`, `Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`,
-`Ctrl+Espace` et `F5`.
+Raccourcis : `Ctrl+S`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`,
+`Ctrl+Z`, `Ctrl+Shift+Z`/`Ctrl+Y`, `Ctrl+A`, `Ctrl+Espace` et `F5`.
 
 ## Concepteur d'interface
 
@@ -221,5 +238,6 @@ constante suffit à changer le thème, aucune ressource externe n'est requise.
   mais restent gérés par l'IDE plutôt que par des `GAction` partagées ;
 - la barre de titre garde les boutons de fenêtre GNOME, simplement aplatis ;
 - la recherche projet est un parcours de fichiers sans index ni aperçu diff ;
+- les onglets ne se réorganisent pas par glisser-déposer et ne défilent pas ;
 - pas encore de gestion de solutions (plusieurs projets dans une même session) ;
 - les couleurs du terminal VTE viennent du thème système, pas du CSS.

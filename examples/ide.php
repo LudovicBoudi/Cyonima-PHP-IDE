@@ -61,22 +61,6 @@ $debugPanel = new DebugPanel();
 
 Theme::apply($window, $editor);
 
-// --- Chrome : onglet et barre de statut ------------------------------------
-$tabLabel = (new Label('Bienvenue'))->cssClass('tab-label');
-$tabDot = (new Label('●'))->cssClass('tab-dot')->visible(false);
-$tabClose = (new IconButton('window-close-symbolic', 'Fermer'))->cssClass('tab-close');
-$statusPos = (new Label('Ln 1, Col 1'))->cssClass('status-item');
-
-$updateTab = function (?string $path, bool $isDirty) use ($tabLabel, $tabDot): void {
-    $tabLabel->text($path !== null ? basename($path) : 'Bienvenue');
-    $tabDot->visible($isDirty);
-};
-
-$updateCursor = function () use ($editor, $statusPos): void {
-    $cursor = $editor->cursor();
-    $statusPos->text(sprintf('Ln %d, Col %d', $cursor['line'] + 1, $cursor['character'] + 1));
-};
-
 // --- État ------------------------------------------------------------------
 $spawnPid = null;
 $currentFile = null;
@@ -85,10 +69,272 @@ $loading = false;
 
 $lsp = null;
 $lspReady = false;
+/** @var array<string, true> $lspDocuments */
+$lspDocuments = [];
 $diagnosticCount = 0;
 $completionItems = 0;
 
 $popup = new CompletionPopup($editor);
+
+$statusPos = (new Label('Ln 1, Col 1'))->cssClass('status-item');
+
+$updateCursor = function () use ($editor, $statusPos): void {
+    $cursor = $editor->cursor();
+    $statusPos->text(sprintf('Ln %d, Col %d', $cursor['line'] + 1, $cursor['character'] + 1));
+};
+
+// --- Documents ouverts (onglets) -------------------------------------------
+/** @var array<string, array{path: string, content: string, dirty: bool, line: int, character: int, language: string}> $documents */
+$documents = [];
+/** @var list<string> $documentOrder */
+$documentOrder = [];
+/** @var list<Box> $tabWidgets */
+$tabWidgets = [];
+/** @var array<string, Label> $tabDots */
+$tabDots = [];
+/** @var array<string, Box> $tabContainers */
+$tabContainers = [];
+
+$tabBar = (new Box(Orientation::HORIZONTAL, 0))->cssClass('tab-bar');
+
+$activateDocument = null;
+$closeDocument = null;
+
+$storeCurrentDocument = function () use (
+    $editor,
+    &$documents,
+    &$currentFile,
+    &$dirty,
+): void {
+    if ($currentFile === null || !isset($documents[$currentFile])) {
+        return;
+    }
+
+    $cursor = $editor->cursor();
+    $documents[$currentFile]['content'] = $editor->text();
+    $documents[$currentFile]['dirty'] = $dirty;
+    $documents[$currentFile]['line'] = $cursor['line'];
+    $documents[$currentFile]['character'] = $cursor['character'];
+};
+
+$renderTabs = function () use (
+    $tabBar,
+    $documents,
+    $documentOrder,
+    &$currentFile,
+    &$tabWidgets,
+    &$tabDots,
+    &$tabContainers,
+    &$activateDocument,
+    &$closeDocument,
+): void {
+    foreach ($tabWidgets as $widget) {
+        $tabBar->remove($widget);
+    }
+
+    $tabWidgets = [];
+    $tabDots = [];
+    $tabContainers = [];
+
+    foreach ($documentOrder as $path) {
+        if (!isset($documents[$path])) {
+            continue;
+        }
+
+        $label = (new Label(basename($path)))->cssClass('tab-label');
+        $dot = (new Label('●'))->cssClass('tab-dot')->visible($documents[$path]['dirty']);
+        $close = (new IconButton('window-close-symbolic', 'Fermer'))->cssClass('tab-close');
+        $close->onClicked(fn () => ($closeDocument)($path));
+
+        $tab = (new Box(Orientation::HORIZONTAL, 6))
+            ->cssClass('tab')
+            ->tooltip($path)
+            ->append($label, $dot, $close);
+
+        if ($path === $currentFile) {
+            $tab->cssClass('active');
+        }
+
+        $tab->onClick(fn () => ($activateDocument)($path));
+
+        $tabBar->append($tab);
+        $tabWidgets[] = $tab;
+        $tabDots[$path] = $dot;
+        $tabContainers[$path] = $tab;
+    }
+};
+
+$updateTab = function (?string $path, bool $isDirty) use (
+    &$documents,
+    &$currentFile,
+    &$dirty,
+    &$tabDots,
+    $window,
+): void {
+    if ($path !== null) {
+        if (isset($documents[$path])) {
+            $documents[$path]['dirty'] = $isDirty;
+        }
+
+        if ($path === $currentFile) {
+            $dirty = $isDirty;
+        }
+
+        if (isset($tabDots[$path])) {
+            $tabDots[$path]->visible($isDirty);
+        }
+
+        $window->subtitle(basename($path) . ($isDirty ? ' •' : ''));
+        return;
+    }
+
+    $window->subtitle('');
+};
+
+$activateDocument = function (string $path, int $line = 0) use (
+    $editor,
+    $window,
+    $popup,
+    $updateCursor,
+    &$documents,
+    &$currentFile,
+    &$dirty,
+    &$loading,
+    &$lsp,
+    &$lspReady,
+    &$lspDocuments,
+    &$storeCurrentDocument,
+    &$renderTabs,
+): void {
+    if (!isset($documents[$path])) {
+        return;
+    }
+
+    $switched = $currentFile !== $path;
+
+    if ($switched) {
+        ($storeCurrentDocument)();
+
+        $document = $documents[$path];
+        $loading = true;
+        $editor->language($document['language']);
+        $editor->setText($document['content']);
+        $loading = false;
+
+        $currentFile = $path;
+        $dirty = $document['dirty'];
+
+        if ($lsp !== null && $lspReady && !isset($lspDocuments[$path])) {
+            $lsp->didOpen('file://' . $path, $document['language'], $document['content']);
+            $lspDocuments[$path] = true;
+        }
+    }
+
+    if ($line > 0) {
+        $editor->moveCursorToLine($line - 1);
+    } elseif ($switched) {
+        $document = $documents[$path];
+        $editor->moveCursorTo($document['line'], $document['character']);
+    }
+
+    $popup->hide();
+    $window->subtitle(basename($path) . ($dirty ? ' •' : ''));
+    ($renderTabs)();
+    $updateCursor();
+    $editor->grabFocus();
+};
+
+$closeDocument = function (string $path) use (
+    $editor,
+    $window,
+    $popup,
+    $updateCursor,
+    &$documents,
+    &$documentOrder,
+    &$currentFile,
+    &$dirty,
+    &$loading,
+    &$lsp,
+    &$lspReady,
+    &$lspDocuments,
+    &$renderTabs,
+    &$activateDocument,
+): void {
+    if (!isset($documents[$path])) {
+        return;
+    }
+
+    if ($documents[$path]['dirty']) {
+        $window->toast('Enregistrez ou annulez les modifications avant de fermer');
+        return;
+    }
+
+    $index = array_search($path, $documentOrder, true);
+    unset($documents[$path]);
+    $documentOrder = array_values(array_filter(
+        $documentOrder,
+        fn (string $candidate): bool => $candidate !== $path,
+    ));
+
+    if ($lsp !== null && $lspReady && isset($lspDocuments[$path])) {
+        $lsp->didClose('file://' . $path);
+        unset($lspDocuments[$path]);
+    }
+
+    if ($currentFile !== $path) {
+        ($renderTabs)();
+        return;
+    }
+
+    $popup->hide();
+    $currentFile = null;
+    $dirty = false;
+
+    $next = $documentOrder[$index] ?? null;
+
+    if ($next === null && $documentOrder !== []) {
+        $next = $documentOrder[count($documentOrder) - 1];
+    }
+
+    if ($next !== null) {
+        ($activateDocument)($next);
+        return;
+    }
+
+    $loading = true;
+    $editor->setText('');
+    $loading = false;
+    $editor->language('php');
+    $window->subtitle('');
+    ($renderTabs)();
+    $updateCursor();
+};
+
+$nextTab = function (int $direction) use (
+    &$documentOrder,
+    &$currentFile,
+    &$activateDocument,
+): void {
+    if (count($documentOrder) < 2 || $currentFile === null) {
+        return;
+    }
+
+    $index = array_search($currentFile, $documentOrder, true);
+
+    if ($index === false) {
+        return;
+    }
+
+    $count = count($documentOrder);
+    $target = ($index + $direction + $count) % $count;
+    ($activateDocument)($documentOrder[$target]);
+};
+
+$closeTab = function () use (&$currentFile, &$closeDocument): void {
+    if ($currentFile !== null) {
+        ($closeDocument)($currentFile);
+    }
+};
 
 $terminal
     ->spawn(['/bin/bash'], $root, function (int $pid, ?string $error) use (&$spawnPid): void {
@@ -102,17 +348,16 @@ $terminal
     });
 
 // --- Ouverture / modification / sauvegarde --------------------------------
-$openFile = function (string $path, int $line = 0) use (
+$openFile = function (string $path, int $line = 0, bool $reload = false) use (
     $editor,
     $window,
     $popup,
-    $updateTab,
-    $updateCursor,
+    &$documents,
+    &$documentOrder,
     &$currentFile,
     &$dirty,
     &$loading,
-    &$lsp,
-    &$lspReady,
+    &$activateDocument,
 ): void {
     $popup->hide();
 
@@ -121,41 +366,46 @@ $openFile = function (string $path, int $line = 0) use (
         return;
     }
 
-    $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-    $language = match ($extension) {
-        'php' => 'php',
-        'md' => 'markdown',
-        'json' => 'json',
-        'css' => 'css',
-        'svg', 'xml' => 'xml',
-        'js' => 'js',
-        'html' => 'html',
-        'sh' => 'sh',
-        'txt' => 'text',
-        default => 'php',
-    };
+    $path = realpath($path) ?: $path;
 
-    $loading = true;
-    $editor->language($language);
-    $editor->setText((string) file_get_contents($path));
+    if (!isset($documents[$path])) {
+        $extension = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $language = match ($extension) {
+            'php' => 'php',
+            'md' => 'markdown',
+            'json' => 'json',
+            'css' => 'css',
+            'svg', 'xml' => 'xml',
+            'js' => 'js',
+            'html' => 'html',
+            'sh' => 'sh',
+            'txt' => 'text',
+            default => 'php',
+        };
 
-    if ($line > 0) {
-        $editor->moveCursorToLine($line - 1);
-    } else {
-        $editor->moveCursorToEnd();
+        $documents[$path] = [
+            'path' => $path,
+            'content' => (string) file_get_contents($path),
+            'dirty' => false,
+            'line' => 0,
+            'character' => 0,
+            'language' => $language,
+        ];
+        $documentOrder[] = $path;
+    } elseif ($reload) {
+        $content = (string) file_get_contents($path);
+        $documents[$path]['content'] = $content;
+        $documents[$path]['dirty'] = false;
+
+        if ($currentFile === $path) {
+            $loading = true;
+            $editor->setText($content);
+            $loading = false;
+            $dirty = false;
+        }
     }
 
-    $loading = false;
-
-    $currentFile = $path;
-    $dirty = false;
-    $window->subtitle(basename($path));
-    $updateTab($path, false);
-    $updateCursor();
-
-    if ($lsp !== null && $lspReady) {
-        $lsp->didOpen('file://' . $path, $language, $editor->text());
-    }
+    ($activateDocument)($path, $line);
 };
 
 $complete = null;
@@ -234,14 +484,21 @@ $editor->onChanged(function () use (
     });
 });
 
-$save = function () use ($editor, $window, $updateTab, &$currentFile, &$dirty): bool {
+$save = function () use ($editor, $window, $updateTab, &$documents, &$currentFile, &$dirty): bool {
     if ($currentFile === null) {
         $window->toast('Aucun fichier ouvert');
         return false;
     }
 
-    file_put_contents($currentFile, $editor->text());
+    $content = $editor->text();
+    file_put_contents($currentFile, $content);
     $dirty = false;
+
+    if (isset($documents[$currentFile])) {
+        $documents[$currentFile]['content'] = $content;
+        $documents[$currentFile]['dirty'] = false;
+    }
+
     $window->subtitle(basename($currentFile));
     $updateTab($currentFile, false);
     $window->toast('Enregistré : ' . basename($currentFile));
@@ -399,6 +656,8 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
     $updateCursor,
     $save,
     $run,
+    $closeTab,
+    $nextTab,
 ): bool {
     Loop::after(0, $updateCursor);
 
@@ -420,6 +679,22 @@ $editor->onKeyPressed(function (CodeEditor $editor, int $keyval, int $state) use
         }
         if ($keyval === 0x61) { // Ctrl+A
             $editor->selectAll();
+            return true;
+        }
+        if ($keyval === 0x77) { // Ctrl+W
+            $closeTab();
+            return true;
+        }
+        if ($keyval === 0xff09 || $keyval === 0xfe20) { // Ctrl+Tab
+            $nextTab($shift || $keyval === 0xfe20 ? -1 : 1);
+            return true;
+        }
+        if ($keyval === 0xff56) { // Ctrl+Page_Down
+            $nextTab(1);
+            return true;
+        }
+        if ($keyval === 0xff55) { // Ctrl+Page_Up
+            $nextTab(-1);
             return true;
         }
     }
@@ -582,7 +857,7 @@ $searchPanel = new SearchPanel(
                 return;
             }
 
-            $openFile($absolute);
+            $openFile($absolute, 0, true);
             return;
         }
     },
@@ -781,26 +1056,6 @@ $designerActivity->onClicked(fn () => $openDesigner());
 $settingsButton->onClicked(fn () => $showPropertiesPanel());
 
 // --- Onglet, éditeur, terminal --------------------------------------------
-$tab = (new Box(Orientation::HORIZONTAL, 6))
-    ->cssClass('tab')
-    ->cssClass('active')
-    ->append($tabLabel, $tabDot, $tabClose);
-
-$tabBar = (new Box(Orientation::HORIZONTAL, 0))
-    ->cssClass('tab-bar')
-    ->append($tab);
-
-$closeTab = function () use ($editor, $window, $popup, $updateTab, &$currentFile, &$dirty): void {
-    $popup->hide();
-    $currentFile = null;
-    $dirty = false;
-    $editor->setText('');
-    $window->subtitle('');
-    $updateTab(null, false);
-};
-
-$tabClose->onClicked($closeTab);
-
 $editorArea = (new ScrolledWindow($editor))->expand();
 
 $panelTabs = (new Box(Orientation::HORIZONTAL, 0))
@@ -946,7 +1201,9 @@ $debugButton = (new IconButton('applications-engineering-symbolic', 'Déboguer')
 $menuBar = (new MenuBar())
     ->addMenu('Fichier', [
         ['label' => 'Enregistrer', 'shortcut' => 'Ctrl+S', 'action' => $save],
-        ['label' => 'Fermer l\'onglet', 'action' => $closeTab],
+        ['label' => 'Fermer l\'onglet', 'shortcut' => 'Ctrl+W', 'action' => $closeTab],
+        ['label' => 'Onglet suivant', 'shortcut' => 'Ctrl+Tab', 'action' => fn () => $nextTab(1)],
+        ['label' => 'Onglet précédent', 'shortcut' => 'Ctrl+Shift+Tab', 'action' => fn () => $nextTab(-1)],
         ['separator' => true],
         ['label' => 'Exporter l’application (AppImage)', 'action' => $exportApplication],
         ['label' => 'Exporter l’application (Flatpak)', 'action' => fn () => $exportApplication(ProjectBuilder::FORMAT_FLATPAK)],
@@ -988,7 +1245,7 @@ $menuBar = (new MenuBar())
     ])
     ->addMenu('Aide', [
         ['label' => 'Raccourcis clavier', 'action' => fn () => $window->toast(
-            'Ctrl+S Enregistrer · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
+            'Ctrl+S Enregistrer · Ctrl+W Fermer · Ctrl+Tab Onglet suivant · Ctrl+Z Annuler · Ctrl+Y Rétablir · Ctrl+A Tout sélectionner · Ctrl+Espace IntelliSense · F5 Exécuter',
             8000,
         )],
         ['label' => 'À propos de Cyonima IDE', 'action' => fn () => $window->toast(
@@ -1008,10 +1265,12 @@ $window->headerEnd($runButton, $debugButton, $exportButton, $saveButton);
 $window->present();
 
 $sample = null;
+$sampleSecond = null;
 
 if ($auto) {
     // On travaille sur une copie : le scénario automatique sauvegarde.
     $sample = sys_get_temp_dir() . '/cyonima_ide_demo.php';
+    $sampleSecond = sys_get_temp_dir() . '/cyonima_ide_demo2.php';
     $source = $root . '/hello.php';
 
     if (is_file($source) && is_readable($source)) {
@@ -1020,7 +1279,11 @@ if ($auto) {
         file_put_contents($sample, "<?php\n\ndeclare(strict_types=1);\n\necho \"Cyonima\\n\";\n");
     }
 
+    file_put_contents($sampleSecond, "<?php\n\necho \"Second onglet\\n\";\n");
+
     Loop::after(300, fn () => $openFile($sample));
+    Loop::after(380, fn () => $openFile($sampleSecond));
+    Loop::after(450, fn () => $openFile($sample));
     Loop::after(500, fn () => $runButton->click());
     Loop::after(700, function () use ($editor): void {
         $editor->setText($editor->text() . "\nstr");
@@ -1029,6 +1292,7 @@ if ($auto) {
     Loop::after(950, fn () => $complete(false));
     Loop::after(1250, fn () => $popup->chooseCurrent());
     Loop::after(1600, fn () => $save());
+    Loop::after(1750, fn () => $closeDocument(realpath($sampleSecond) ?: $sampleSecond));
     Loop::after(1950, fn () => $window->raw()->close());
 }
 
@@ -1037,8 +1301,10 @@ $app->run();
 $lsp?->stop();
 $debug?->close();
 
-if ($sample !== null && is_file($sample)) {
-    @unlink($sample);
+foreach ([$sample, $sampleSecond] as $temporary) {
+    if ($temporary !== null && is_file($temporary)) {
+        @unlink($temporary);
+    }
 }
 
 printf(

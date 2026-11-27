@@ -145,6 +145,13 @@ final class CodeEditor extends Widget
         return $this;
     }
 
+    /** Ligne et colonne 0-indexées. La colonne est bornée par GTK à la ligne. */
+    public function moveCursorTo(int $line, int $character = 0): static
+    {
+        GtkText::moveCursorTo($this->buffer->handle(), $line, $character);
+        return $this;
+    }
+
     /**
      * Handler : function (CodeEditor $editor, int $keyval, int $state): bool
      * Retourner true consomme la touche.
